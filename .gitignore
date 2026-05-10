@@ -1,0 +1,74 @@
+# R
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+*.Rproj.user/
+*.Rcheck/
+*-Ex.R
+.Rprofile
+.Renviron
+*.tar.gz
+*.tar
+*.Rdata
+
+# Session, uploads, results — never commit user data
+sessions/
+uploads/
+results/
+grn_cache/
+*.session
+
+# Logs
+*.log
+logs/
+shiny_logs/
+nginx_logs/
+
+# Reference data — too large for git, see scripts/02_download_references.sh
+data/tcga/
+data/hisat2_indexes/
+data/annotations/
+data/genomes/
+data/opentargets/
+data/string/
+data/tcga_precomputed/
+data/salmon_indices/
+
+# SSL
+ssl/
+certbot-webroot/
+*.pem
+*.key
+*.crt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Env
+.env
+.env.local
+*.local
+
+# Python (used in some scripts)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Backup files
+*.bak
+*.backup_*
+*.crap.*
+*.orig
+
+# Build artifacts
+node_modules/
+dist/

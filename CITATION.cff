@@ -1,0 +1,60 @@
+cff-version: 1.2.0
+message: "If you use TransXplorer in your research, please cite the following work."
+title: "TransXplorer: an integrated RNA-seq analysis platform with translational drug-target mapping and multi-organism regulatory network inference"
+abstract: >
+  TransXplorer is a free, no-login web platform that integrates the entire
+  RNA-seq translational workflow — FASTQ processing, GEO import, automated
+  batch-effect detection, differential expression, pathway enrichment, PPI
+  networks with CytoHubba consensus hub detection, auto-optimized WGCNA,
+  cell-type deconvolution, hybrid DoRothEA + TFLink regulatory network
+  inference across 11 organisms, real-time DGIdb + OpenTargets drug-target
+  mapping, and TCGA clinical validation across 33 cohorts — into a single
+  R Shiny environment.
+authors:
+  - family-names: Verma
+    given-names: Varinder M
+    affiliation: University of Alberta
+    email: varinde2@ualberta.ca
+  - family-names: Mason
+    given-names: Andrew L
+    affiliation: University of Alberta
+  - family-names: Wishart
+    given-names: David
+    affiliation: University of Alberta
+  - family-names: Wong
+    given-names: Gane Ka-Shu
+    affiliation: University of Alberta
+url: "https://transxplorer.org"
+repository-code: "https://github.com/varinder-madhav/transxplorer"
+license: MIT
+version: "1.0.0"
+date-released: "2026-05-10"
+keywords:
+  - RNA-seq
+  - bioinformatics
+  - gene regulatory networks
+  - drug-target mapping
+  - WGCNA
+  - cell-type deconvolution
+  - TCGA
+  - DoRothEA
+  - TFLink
+  - DGIdb
+  - OpenTargets
+  - Shiny
+preferred-citation:
+  type: article
+  title: "TransXplorer: an integrated RNA-seq analysis platform with translational drug-target mapping and multi-organism regulatory network inference"
+  authors:
+    - family-names: Verma
+      given-names: Varinder M
+    - family-names: Mason
+      given-names: Andrew L
+    - family-names: Wishart
+      given-names: David
+    - family-names: Wong
+      given-names: Gane Ka-Shu
+  year: 2026
+  journal: "bioRxiv (preprint)"
+  url: "https://transxplorer.org"
+  notes: "DOI to be updated upon preprint posting."

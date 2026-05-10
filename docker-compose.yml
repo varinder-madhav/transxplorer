@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # Main Shiny App
+  transxplorer:
+    build: .
+    container_name: transxplorer_app
+    restart: unless-stopped
+    ports:
+      - "3838:3838"
+    volumes:
+      # Mount reference data (read-only for security)
+      - /srv/transxplorer/data/tcga:/srv/shinydata:ro
+      - /srv/transxplorer/data/hisat2_indexes:/srv/hisat2_indexes:ro
+      - /srv/transxplorer/data/annotations:/srv/annotations:ro
+      - /srv/transxplorer/data/genomes:/srv/genomes:ro
+
+      # OpenTargets and STRING local data (read-only)
+      - /srv/transxplorer/data/opentargets:/srv/opentargets:ro
+      - /srv/transxplorer/data/string:/srv/string_data:ro
+      # Pre-computed TCGA data for fast boxplot/survival analysis
+      - /srv/transxplorer/data/tcga_precomputed:/srv/tcga_precomputed:ro
+      # Salmon transcriptome indices
+      - /srv/transxplorer/data/salmon_indices:/srv/salmon_indices
+
+      # Mount upload, results, and session directories (read-write)
+      - /srv/transxplorer/uploads:/srv/transxplorer/uploads
+      - /srv/transxplorer/results:/srv/transxplorer/results
+      - /srv/transxplorer/sessions:/srv/transxplorer/sessions
+
+      # Logs
+      - /srv/transxplorer/logs:/var/log/shiny-server
+
+      # Docker socket for spawning worker containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - SHINY_LOG_STDERR=1
+      - SHINY_LOG_LEVEL=INFO
+      - MAX_UPLOAD_SIZE=10737418240
+      - HISAT2_HG38_INDEX=/srv/hisat2_indexes/hg38/genome
+      - HISAT2_MM10_INDEX=/srv/hisat2_indexes/mm10/genome
+      - HISAT2_RN6_INDEX=/srv/hisat2_indexes/rn6/genome
+      - GENCODE_HG38_GTF=/srv/annotations/gencode.v47.annotation.gtf
+      - GENCODE_MM10_GTF=/srv/annotations/gencode.vM36.annotation.gtf
+      - RAT_RN6_GTF=/srv/annotations/Rattus_norvegicus.mRatBN7.2.111.gtf
+      # R-specific optimizations
+      - R_MAX_NUM_DLLS=300
+      - OMP_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      # Local data paths for OpenTargets and STRING
+      - OPENTARGETS_DATA_PATH=/srv/opentargets
+      - STRING_DATA_PATH=/srv/string_data
+      - TCGA_PRECOMPUTED_PATH=/srv/tcga_precomputed
+    networks:
+      - transxplorer_network
+    deploy:
+      resources:
+        limits:
+          cpus: '28'
+          memory: 110G
+        reservations:
+          cpus: '14'
+          memory: 64G
+    healthcheck:
+      # FIXED: Check root URL since shiny-server now serves app at both / and /transxplorer
+      test: ["CMD", "curl", "-f", "http://localhost:3838/"]
+      interval: 30s
+      timeout: 30s           # Increased timeout
+      retries: 10            # More retries for heavy app
+      start_period: 300s     # 5 minutes for initial startup (app is large!)
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 65536
+        hard: 65536
+
+  # Nginx Reverse Proxy  
+  nginx:
+    image: nginx:alpine
+    container_name: transxplorer_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./certbot-webroot:/var/www/certbot:ro
+      - /srv/transxplorer/logs/nginx:/var/log/nginx
+    depends_on:
+      transxplorer:
+        condition: service_healthy
+    networks:
+      - transxplorer_network
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+networks:
+  transxplorer_network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1500
+
+volumes:
+  shiny_logs:
+  nginx_logs:
