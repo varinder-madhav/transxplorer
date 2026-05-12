@@ -1,6 +1,6 @@
 #!/bin/bash
 # TransXplorer Server Setup Script
-# Run this on your fresh Ubuntu server: ssh ubuntu@135.125.171.30
+# Run this on your fresh Ubuntu server: ssh ubuntu@<your-server-ip>
 
 set -e  # Exit on any error
 
@@ -80,7 +80,7 @@ echo "✓ Phase 1 Complete!"
 echo "==================================================="
 echo "IMPORTANT: Log out and log back in for Docker group changes to take effect"
 echo "Run: exit"
-echo "Then: ssh ubuntu@135.125.171.30"
+echo "Then: ssh ubuntu@<your-server-ip>"
 echo ""
 echo "After logging back in, verify Docker works:"
 echo "docker run hello-world"
