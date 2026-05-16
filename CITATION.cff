@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use TransXplorer in your research, please cite the following work."
-title: "TransXplorer: an integrated RNA-seq analysis platform with translational drug-target mapping and multi-organism regulatory network inference"
+title: "TransXplorer: An automated translational discovery platform for RNA-seq data"
 abstract: >
   TransXplorer is a free, no-login web platform that integrates the entire
   RNA-seq translational workflow — FASTQ processing, GEO import, automated
@@ -12,14 +12,26 @@ abstract: >
   R Shiny environment.
 authors:
   - family-names: Verma
-    given-names: Varinder M
+    given-names: Varinder Madhav
     affiliation: University of Alberta
     email: varinde2@ualberta.ca
+  - family-names: Oler
+    given-names: Eponine
+    affiliation: University of Alberta
+  - family-names: Syed
+    given-names: Hussain
+    affiliation: University of Alberta
+  - family-names: Han
+    given-names: Scott
+    affiliation: University of Alberta
+  - family-names: Berjanskii
+    given-names: Mark
+    affiliation: University of Alberta
   - family-names: Mason
     given-names: Andrew L
     affiliation: University of Alberta
   - family-names: Wishart
-    given-names: David
+    given-names: David Scott
     affiliation: University of Alberta
   - family-names: Wong
     given-names: Gane Ka-Shu
@@ -44,17 +56,25 @@ keywords:
   - Shiny
 preferred-citation:
   type: article
-  title: "TransXplorer: an integrated RNA-seq analysis platform with translational drug-target mapping and multi-organism regulatory network inference"
+  title: "TransXplorer: An automated translational discovery platform for RNA-seq data"
   authors:
     - family-names: Verma
-      given-names: Varinder M
+      given-names: Varinder Madhav
+    - family-names: Oler
+      given-names: Eponine
+    - family-names: Syed
+      given-names: Hussain
+    - family-names: Han
+      given-names: Scott
+    - family-names: Berjanskii
+      given-names: Mark
     - family-names: Mason
       given-names: Andrew L
     - family-names: Wishart
-      given-names: David
+      given-names: David Scott
     - family-names: Wong
       given-names: Gane Ka-Shu
   year: 2026
-  journal: "bioRxiv (preprint)"
-  url: "https://transxplorer.org"
-  notes: "DOI to be updated upon preprint posting."
+  journal: "bioRxiv"
+  doi: "10.64898/2026.05.15.724657"
+  url: "https://doi.org/10.64898/2026.05.15.724657"

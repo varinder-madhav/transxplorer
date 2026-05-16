@@ -90,13 +90,11 @@ See [`docs/installation.md`](docs/installation.md) for full details, reference-d
 
 ## How to cite
 
-A bioRxiv preprint is in preparation; this section will be updated with the DOI as soon as it is live.
+If you use TransXplorer in your research, please cite the bioRxiv preprint:
 
-For the time being, please cite as:
+> Verma VM, Oler E, Syed H, Han S, Berjanskii M, Mason AL, Wishart DS, Wong GK. TransXplorer: An automated translational discovery platform for RNA-seq data. *bioRxiv*. 2026. doi:[10.64898/2026.05.15.724657](https://doi.org/10.64898/2026.05.15.724657)
 
-> Verma VM, Mason AL, Wishart D, Wong GK. TransXplorer: an integrated RNA-seq analysis platform with translational drug-target mapping and multi-organism regulatory network inference. *Manuscript in preparation*. https://transxplorer.org
-
-The version of the source code corresponding to this release will be archived at Zenodo at preprint time and assigned a code DOI.
+A versioned source-code snapshot corresponding to the preprint is tagged at [`v0.1.0-preprint`](https://github.com/varinder-madhav/transxplorer/releases/tag/v0.1.0-preprint).
 
 ---
 
@@ -127,7 +125,7 @@ TransXplorer integrates the following community resources. Please cite the under
 
 ## Authors and contact
 
-Developed by **Varinder M Verma**, **Andrew L. Mason**, **David Wishart**, **Gane Ka-Shu Wong** at the University of Alberta.
+Developed by **Varinder Madhav Verma**, **Eponine Oler**, **Hussain Syed**, **Scott Han**, **Mark Berjanskii**, **Andrew L. Mason**, **David Scott Wishart**, and **Gane Ka-Shu Wong** at the University of Alberta.
 
 Contact: [varinde2@ualberta.ca](mailto:varinde2@ualberta.ca)
 
