@@ -21504,21 +21504,32 @@ ui <- fluidPage(
                div(
                  style = "max-width: 1100px; margin: 40px auto 0 auto; padding: 24px 28px; background: linear-gradient(135deg, #f0f7ff 0%, #e8f4fd 100%); border: 1px solid #bee5eb; border-left: 4px solid #0c5460; border-radius: 10px;",
                  h4(icon("quote-left"), " How to Cite TransXplorer", style = "margin-top: 0; color: #0c5460; font-weight: 600;"),
-                 p(style = "color: #0c5460; line-height: 1.6; margin-bottom: 8px;",
-                   "If you use TransXplorer in your research, please cite our work."
+                 p(style = "color: #0c5460; line-height: 1.6; margin-bottom: 12px;",
+                   "If you use TransXplorer in your research, please cite our bioRxiv preprint:"
                  ),
-                 p(style = "font-size: 0.95em; color: #0c5460; line-height: 1.6; margin-bottom: 0;",
-                   strong("Preprint: "),
-                   "A formal citation is being prepared for archive submission. In the meantime, please reference ",
-                   a(href = "https://transxplorer.org", "https://transxplorer.org", style = "color: #0c5460; text-decoration: underline;"),
-                   " and we will update this section with the DOI as soon as the preprint is live."
+                 div(
+                   style = "font-family: 'Source Code Pro', 'Menlo', 'Courier New', monospace; font-size: 0.92em; color: #0c5460; background: rgba(255,255,255,0.65); padding: 14px 16px; border-radius: 6px; line-height: 1.55; margin-bottom: 12px;",
+                   "Verma VM, Oler E, Syed H, Han S, Berjanskii M, Mason AL, Wishart DS, Wong GK. ",
+                   em("TransXplorer: An automated translational discovery platform for RNA-seq data."),
+                   " bioRxiv. 2026. doi: ",
+                   a(href = "https://doi.org/10.64898/2026.05.15.724657",
+                     "10.64898/2026.05.15.724657",
+                     style = "color: #0c5460; text-decoration: underline;",
+                     target = "_blank", rel = "noopener")
+                 ),
+                 p(style = "font-size: 0.88em; color: #0c5460; margin-bottom: 0;",
+                   icon("external-link-alt"), " ",
+                   a(href = "https://doi.org/10.64898/2026.05.15.724657",
+                     "View on bioRxiv →",
+                     style = "color: #0c5460; text-decoration: underline; font-weight: 600;",
+                     target = "_blank", rel = "noopener")
                  )
                ),
                tags$footer(
                  class = "modern-footer",
                  div(
                    class = "modern-footer-content",
-                   p("Developed by Varinder M Verma, Andrew L. Mason, David Wishart, Gane Ka-Shu Wong @ University of Alberta"),
+                   p("Developed by Varinder Madhav Verma, Eponine Oler, Hussain Syed, Scott Han, Mark Berjanskii, Andrew L. Mason, David Scott Wishart, and Gane Ka-Shu Wong @ University of Alberta"),
                    p("Contact: varinde2@ualberta.ca | ", a(href = "https://transxplorer.org", "transxplorer.org"))
                  )
                )
@@ -26582,9 +26593,9 @@ ui <- fluidPage(
                                " Biological pathways and functions enriched in TFs and their target genes."
                            ),
                            
-                           # Enrichment Type Selector
+                           # Enrichment Controls (Row 1: View / Top N / Plot Type)
                            fluidRow(
-                             column(6,
+                             column(4,
                                     radioButtons("grn_standalone_enrichment_type",
                                                  "View Enrichment For:",
                                                  choices = c(
@@ -26594,20 +26605,54 @@ ui <- fluidPage(
                                                  selected = "tf",
                                                  inline = TRUE)
                              ),
-                             column(6,
+                             column(4,
                                     numericInput("grn_standalone_enrichment_top",
                                                  "Top Terms to Show",
                                                  value = 20,
                                                  min = 5,
                                                  max = 50,
                                                  step = 5)
+                             ),
+                             column(4,
+                                    radioButtons("grn_standalone_enrichment_plot_type",
+                                                 "Plot Type:",
+                                                 choices = c(
+                                                   "Lollipop (Percent Dysregulated)" = "lollipop",
+                                                   "Bar (-log10 Adj. P)" = "bar"
+                                                 ),
+                                                 selected = "lollipop",
+                                                 inline = FALSE)
                              )
                            ),
-                           
+
+                           # Enrichment Controls (Row 2: Database Filter — dynamic)
+                           fluidRow(
+                             column(12,
+                                    uiOutput("grn_standalone_enrichment_db_filter")
+                             )
+                           ),
+
                            # Enrichment Plot
                            div(style = "background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;",
                                h4("Enrichment Plot", style = "margin-top: 0;"),
-                               plotOutput("grn_standalone_enrichment_plot", height = "600px")
+                               plotOutput("grn_standalone_enrichment_plot", height = "600px"),
+                               # Download controls — high-resolution export
+                               div(style = "display: flex; align-items: flex-end; gap: 10px; margin-top: 14px; flex-wrap: wrap;",
+                                   div(style = "flex: 0 0 180px;",
+                                       selectInput("grn_standalone_enrichment_plot_format",
+                                                   "Download Format:",
+                                                   choices = c("PNG (600 dpi)" = "png",
+                                                               "PDF (vector)"  = "pdf",
+                                                               "SVG (vector)"  = "svg"),
+                                                   selected = "png",
+                                                   width = "100%")
+                                   ),
+                                   div(style = "padding-bottom: 2px;",
+                                       downloadButton("download_grn_standalone_enrichment_plot",
+                                                      HTML("&#128229; Download Plot"),
+                                                      class = "btn-primary")
+                                   )
+                               )
                            ),
                            
                            # Enrichment Table
@@ -40241,12 +40286,37 @@ server <- function(input, output, session) {
   })
   
   # Enrichment plot - switches between TF and Target based on radio button
+  # Database filter UI (dynamic based on databases present in enrichment data)
+  output$grn_standalone_enrichment_db_filter <- renderUI({
+    req(grn_standalone_rv$grn_results)
+    enrichment_type <- input$grn_standalone_enrichment_type %||% "tf"
+    enrichment_data <- if (enrichment_type == "tf") {
+      grn_standalone_rv$grn_results$tf_pathway_enrichment
+    } else {
+      grn_standalone_rv$grn_results$target_pathway_enrichment
+    }
+    if (is.null(enrichment_data) || !"database" %in% colnames(enrichment_data)) return(NULL)
+    available_dbs <- sort(unique(as.character(enrichment_data$database)))
+    if (length(available_dbs) == 0) return(NULL)
+    selectizeInput(
+      "grn_standalone_enrichment_databases",
+      label = "Filter by Database (deselect to hide; empty = show all):",
+      choices = available_dbs,
+      selected = available_dbs,
+      multiple = TRUE,
+      width = "100%",
+      options = list(plugins = list("remove_button"), placeholder = "All databases shown")
+    )
+  })
+
   output$grn_standalone_enrichment_plot <- renderPlot({
     req(grn_standalone_rv$grn_results)
-    
+
     enrichment_type <- input$grn_standalone_enrichment_type %||% "tf"
     n_top <- input$grn_standalone_enrichment_top %||% 20
-    
+    plot_type <- input$grn_standalone_enrichment_plot_type %||% "lollipop"
+    selected_dbs <- input$grn_standalone_enrichment_databases  # may be NULL on first render
+
     # Get appropriate enrichment data based on selection
     if (enrichment_type == "tf") {
       req(grn_standalone_rv$grn_results$tf_pathway_enrichment)
@@ -40257,47 +40327,216 @@ server <- function(input, output, session) {
       enrichment_data <- grn_standalone_rv$grn_results$target_pathway_enrichment
       title_text <- "Target Gene Pathway Enrichment"
     }
-    
-    # Prepare data for plotting
+
+    # Apply database filter
+    if (!is.null(selected_dbs) && length(selected_dbs) > 0 && "database" %in% colnames(enrichment_data)) {
+      enrichment_data <- enrichment_data[as.character(enrichment_data$database) %in% selected_dbs, ]
+    }
+
+    # Prepare data for plotting: keep only significant, sort, take top N
     plot_data <- enrichment_data %>%
-      filter(Adjusted.P.value < 0.05) %>%  # Only significant
+      filter(Adjusted.P.value < 0.05) %>%
       arrange(Adjusted.P.value) %>%
-      head(n_top) %>%
-      mutate(
-        neg_log10_p = -log10(Adjusted.P.value),
-        Term_short = ifelse(nchar(Term) > 50, 
-                            paste0(substr(Term, 1, 47), "..."), 
-                            Term)
-      )
-    
+      head(n_top)
+
     if (nrow(plot_data) == 0) {
-      # No significant pathways
       plot.new()
-      text(0.5, 0.5, "No significant pathways found (p < 0.05)", cex = 1.2)
+      text(0.5, 0.5, "No significant pathways found for the selected database filter (adj. p < 0.05)", cex = 1.2)
       return()
     }
-    
-    # Create enrichment bar plot
-    ggplot(plot_data, aes(x = reorder(Term_short, neg_log10_p), y = neg_log10_p)) +
-      geom_col(aes(fill = neg_log10_p), show.legend = FALSE) +
-      scale_fill_gradient(low = "#3498db", high = "#e74c3c") +
-      coord_flip() +
-      geom_hline(yintercept = -log10(0.05), linetype = "dashed", 
-                 color = "darkgray", size = 0.5) +
-      labs(
-        title = title_text,
-        x = "",
-        y = "-log10(Adjusted P-value)"
-      ) +
-      theme_minimal(base_size = 12) +
-      theme(
-        plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
-        axis.text.y = element_text(size = 10),
-        panel.grid.major.y = element_blank(),
-        panel.grid.minor = element_blank()
+
+    # Compute gene counts and PercentDysregulated from Overlap ("k/K" string)
+    if ("Overlap" %in% colnames(plot_data)) {
+      plot_data <- plot_data %>%
+        mutate(
+          Count = as.numeric(sapply(strsplit(as.character(Overlap), "/"), `[`, 1)),
+          TotalGenes = as.numeric(sapply(strsplit(as.character(Overlap), "/"), `[`, 2)),
+          GeneRatio = ifelse(!is.na(TotalGenes) & TotalGenes > 0, Count / TotalGenes, NA_real_),
+          PercentDysregulated = GeneRatio * 100
+        )
+    } else {
+      # Fallback: derive Count from Genes column; no Overlap → no PercentDysregulated
+      plot_data <- plot_data %>%
+        mutate(
+          Count = lengths(strsplit(as.character(Genes), ";")),
+          PercentDysregulated = NA_real_
+        )
+    }
+
+    plot_data <- plot_data %>%
+      mutate(
+        neg_log_p = -log10(Adjusted.P.value),
+        Term_wrapped = stringr::str_wrap(gsub("_", " ", Term), width = 50),
+        Description_wrapped = factor(Term_wrapped, levels = rev(Term_wrapped))
       )
+
+    # Choose plot type. Fall back to bar if Lollipop is requested but PercentDysregulated is unavailable.
+    use_lollipop <- (plot_type == "lollipop") && all(!is.na(plot_data$PercentDysregulated))
+
+    if (use_lollipop) {
+      # Reuse the same helper used by the transcriptome-analysis enrichment section
+      p <- build_enrichment_lollipop(plot_data, mode = "ora",
+                                     top_n = nrow(plot_data),
+                                     base_size = 14) +
+        ggplot2::labs(title = title_text,
+                      subtitle = if (length(selected_dbs) > 0) paste("Databases:", paste(selected_dbs, collapse = ", ")) else NULL)
+      return(p)
+    } else {
+      # Improved bar plot: x = -log10(adj p), fill = Gene Count (color now encodes a DIFFERENT variable from x)
+      ggplot(plot_data, aes(x = reorder(Term_wrapped, neg_log_p), y = neg_log_p)) +
+        geom_col(aes(fill = Count), alpha = 0.9) +
+        scale_fill_viridis_c(option = "viridis", name = "Gene Count") +
+        coord_flip() +
+        geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+                   color = "darkgray", size = 0.5) +
+        labs(
+          title = title_text,
+          subtitle = if (length(selected_dbs) > 0) paste("Databases:", paste(selected_dbs, collapse = ", ")) else NULL,
+          x = NULL,
+          y = "-log10(Adjusted P-value)"
+        ) +
+        theme_minimal(base_size = 12) +
+        theme(
+          plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+          plot.subtitle = element_text(hjust = 0.5, size = 10, color = "grey40"),
+          axis.text.y = element_text(size = 10),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor = element_blank(),
+          legend.position = "bottom"
+        )
+    }
   })
-  
+
+  # Download handler for the GRN enrichment plot — high-res PNG / vector PDF / SVG
+  output$download_grn_standalone_enrichment_plot <- downloadHandler(
+    filename = function() {
+      enrichment_type <- input$grn_standalone_enrichment_type %||% "tf"
+      plot_type <- input$grn_standalone_enrichment_plot_type %||% "lollipop"
+      fmt <- input$grn_standalone_enrichment_plot_format %||% "png"
+      paste0("grn_", enrichment_type, "_enrichment_", plot_type, "_", Sys.Date(), ".", fmt)
+    },
+    content = function(file) {
+      req(grn_standalone_rv$grn_results)
+
+      enrichment_type <- input$grn_standalone_enrichment_type %||% "tf"
+      n_top <- input$grn_standalone_enrichment_top %||% 20
+      plot_type <- input$grn_standalone_enrichment_plot_type %||% "lollipop"
+      selected_dbs <- input$grn_standalone_enrichment_databases
+      fmt <- input$grn_standalone_enrichment_plot_format %||% "png"
+
+      # Re-derive the same data the on-screen plot uses
+      enrichment_data <- if (enrichment_type == "tf") {
+        grn_standalone_rv$grn_results$tf_pathway_enrichment
+      } else {
+        grn_standalone_rv$grn_results$target_pathway_enrichment
+      }
+      title_text <- if (enrichment_type == "tf") "Master TF Pathway Enrichment" else "Target Gene Pathway Enrichment"
+
+      if (!is.null(selected_dbs) && length(selected_dbs) > 0 && "database" %in% colnames(enrichment_data)) {
+        enrichment_data <- enrichment_data[as.character(enrichment_data$database) %in% selected_dbs, ]
+      }
+
+      plot_data <- enrichment_data %>%
+        filter(Adjusted.P.value < 0.05) %>%
+        arrange(Adjusted.P.value) %>%
+        head(n_top)
+
+      if (nrow(plot_data) == 0) {
+        # Produce a "no data" image rather than failing the download
+        ggplot2::ggsave(file,
+          plot = ggplot2::ggplot() +
+            ggplot2::annotate("text", x = 1, y = 1,
+                              label = "No significant pathways for the current filter (adj. p < 0.05)",
+                              size = 6) +
+            ggplot2::theme_void(),
+          width = 10, height = 4, units = "in", bg = "white",
+          device = if (fmt == "png") "png" else if (fmt == "pdf") "pdf" else "svg",
+          dpi = if (fmt == "png") 600 else NA_real_)
+        return()
+      }
+
+      if ("Overlap" %in% colnames(plot_data)) {
+        plot_data <- plot_data %>%
+          mutate(
+            Count = as.numeric(sapply(strsplit(as.character(Overlap), "/"), `[`, 1)),
+            TotalGenes = as.numeric(sapply(strsplit(as.character(Overlap), "/"), `[`, 2)),
+            GeneRatio = ifelse(!is.na(TotalGenes) & TotalGenes > 0, Count / TotalGenes, NA_real_),
+            PercentDysregulated = GeneRatio * 100
+          )
+      } else {
+        plot_data <- plot_data %>%
+          mutate(Count = lengths(strsplit(as.character(Genes), ";")), PercentDysregulated = NA_real_)
+      }
+
+      # Tighter wrap (40 chars) keeps most labels to 1-2 lines, avoiding row collisions
+      plot_data <- plot_data %>%
+        mutate(
+          neg_log_p = -log10(Adjusted.P.value),
+          Term_wrapped = stringr::str_wrap(gsub("_", " ", Term), width = 40),
+          Description_wrapped = factor(Term_wrapped, levels = rev(Term_wrapped))
+        )
+
+      use_lollipop <- (plot_type == "lollipop") && all(!is.na(plot_data$PercentDysregulated))
+      subtitle_text <- if (!is.null(selected_dbs) && length(selected_dbs) > 0) paste("Databases:", paste(selected_dbs, collapse = ", ")) else NULL
+
+      if (use_lollipop) {
+        p <- build_enrichment_lollipop(plot_data, mode = "ora",
+                                       top_n = nrow(plot_data),
+                                       base_size = 18) +
+          ggplot2::labs(title = title_text, subtitle = subtitle_text)
+      } else {
+        p <- ggplot(plot_data, aes(x = reorder(Term_wrapped, neg_log_p), y = neg_log_p)) +
+          geom_col(aes(fill = Count), alpha = 0.9) +
+          scale_fill_viridis_c(option = "viridis", name = "Gene Count") +
+          coord_flip() +
+          geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+                     color = "darkgray", size = 0.5) +
+          labs(title = title_text, subtitle = subtitle_text,
+               x = NULL, y = "-log10(Adjusted P-value)") +
+          theme_minimal(base_size = 16) +
+          theme(
+            plot.title = element_text(face = "bold", hjust = 0.5, size = 18),
+            plot.subtitle = element_text(hjust = 0.5, size = 12, color = "grey40"),
+            axis.text.y = element_text(size = 13),
+            axis.text.x = element_text(size = 13),
+            axis.title.x = element_text(size = 14),
+            panel.grid.major.y = element_blank(),
+            panel.grid.minor = element_blank(),
+            legend.position = "bottom"
+          )
+      }
+
+      # Dynamic sizing: width grows with longest label; height grows with # pathways
+      # (~0.5 inch per pathway accommodates 2-line wrapped labels without collisions)
+      n_path <- nrow(plot_data)
+      max_label_chars <- max(nchar(as.character(plot_data$Term_wrapped)), na.rm = TRUE)
+      max_label_lines <- max(stringr::str_count(as.character(plot_data$Term_wrapped), "\n") + 1, na.rm = TRUE)
+      plot_width  <- max(14, 11 + (max_label_chars / 18))
+      plot_height <- max(10, 2 + n_path * 0.5 * max_label_lines * 0.7)
+      # Cap height so ggsave never builds an absurd canvas
+      plot_height <- min(plot_height, 30)
+
+      tryCatch({
+        if (fmt == "svg") {
+          ggplot2::ggsave(file, plot = p, device = "svg",
+                          width = plot_width, height = plot_height, units = "in", bg = "white")
+        } else if (fmt == "pdf") {
+          ggplot2::ggsave(file, plot = p, device = grDevices::cairo_pdf,
+                          width = plot_width, height = plot_height, units = "in", bg = "white")
+        } else {
+          ggplot2::ggsave(file, plot = p, device = "png",
+                          width = plot_width, height = plot_height, units = "in",
+                          dpi = 600, bg = "white")
+        }
+      }, error = function(e) {
+        # Vector device missing on the host → fall back to PNG at 600 dpi
+        ggplot2::ggsave(file, plot = p, device = "png",
+                        width = plot_width, height = plot_height, units = "in",
+                        dpi = 600, bg = "white")
+      })
+    }
+  )
+
   # Enrichment table - switches between TF and Target
   output$grn_standalone_enrichment_table <- DT::renderDataTable({
     req(grn_standalone_rv$grn_results)
