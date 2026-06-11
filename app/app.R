@@ -7,6 +7,16 @@ library(shinyWidgets)
 library(shinyBS)
 library(shinycssloaders)
 
+# ---- Feedback feature: load server-side secrets (kept OUT of the public repo) ----
+# Reads an env-style file defining TX_SMTP_USER / TX_SMTP_APP_PASSWORD /
+# TX_FEEDBACK_TO / TX_FEEDBACK_BCC. If absent, the feedback form degrades
+# gracefully (the button shows an "unavailable" message) instead of erroring.
+local({
+  for (.p in c(Sys.getenv("TX_SECRETS_FILE"), "/etc/transxplorer/secrets.env")) {
+    if (nzchar(.p) && file.exists(.p)) { try(readRenviron(.p), silent = TRUE); break }
+  }
+})
+
 # Essential Data Handling 
 library(DT)
 library(dplyr)
@@ -20916,6 +20926,57 @@ $(document).ready(function() {
 ")
 
 # Updated UI code with interactive elements
+# ============================================================================
+#  What's New (changelog) + Feedback footer  -- rendered on every page
+# ============================================================================
+
+# ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
+# tag must be one of: "New", "Improved", "Fixed"
+tx_changelog <- list(
+  list(date = "2026-06-11", tag = "New",      text = "Added this What's New feed and a feedback form to the footer."),
+  list(date = "2026-06-10", tag = "Improved", text = "GSEA visualisations (classic + dot plot) and PCA/UMAP plot downloads."),
+  list(date = "2026-06-09", tag = "Improved", text = "Volcano plot symmetric x-axis and a heatmap usability bundle (paste-list, manual genes, orientation toggle).")
+)
+
+tx_tag_colours <- c(New = "#2e7d32", Improved = "#1565c0", Fixed = "#e65100")
+
+tx_changelog_entry <- function(e) {
+  col <- tx_tag_colours[[e$tag]]
+  if (is.null(col)) col <- "#555"
+  tags$div(
+    class = "tx-cl-entry",
+    tags$span(class = "tx-cl-chip", style = sprintf("background:%s;", col), e$tag),
+    tags$span(class = "tx-cl-date", e$date),
+    tags$span(class = "tx-cl-text", e$text)
+  )
+}
+
+tx_changelog_footer <- function(n = 3) tagList(lapply(head(tx_changelog, n), tx_changelog_entry))
+tx_changelog_full   <- function()      tagList(lapply(tx_changelog,         tx_changelog_entry))
+
+# Footer passed to navbarPage(footer = ...) so it appears on EVERY tab.
+tx_footer_ui <- tags$footer(
+  class = "tx-app-footer",
+  tags$div(
+    class = "tx-footer-grid",
+    tags$div(
+      class = "tx-footer-col",
+      tags$div(class = "tx-footer-h", icon("bullhorn"), " What's New"),
+      tx_changelog_footer(3),
+      actionLink("tx_changelog_seeall", "See all updates \u2192", class = "tx-cl-seeall")
+    ),
+    tags$div(
+      class = "tx-footer-col",
+      tags$div(class = "tx-footer-h", icon("comment-dots"), " Feedback & questions"),
+      tags$p(class = "tx-fb-prompt", "Found a bug, have a question, or an idea? We'd love to hear it."),
+      actionButton("tx_feedback_open", tagList(icon("paper-plane"), " Send feedback"), class = "tx-fb-btn")
+    )
+  ),
+  tags$div(class = "tx-footer-base",
+           "TransXplorer \u00b7 University of Alberta \u00b7 ",
+           tags$a(href = "https://transxplorer.org", "transxplorer.org", target = "_blank", rel = "noopener"))
+)
+
 ui <- fluidPage(
   useShinyjs(),
   extendShinyjs(text = "
@@ -20942,7 +21003,7 @@ ui <- fluidPage(
     tags$script(HTML("
       // Safe Shiny input setter - queues action if Shiny isn't connected yet
       function safeSetInput(name, value) {
-        if (typeof Shiny !== 'undefined' && Shiny.shinyapp && 
+        if (typeof Shiny !== 'undefined' && Shiny.shinyapp &&
             Shiny.shinyapp.$socket && Shiny.shinyapp.$socket.readyState === 1) {
           Shiny.setInputValue(name, value);
         } else {
@@ -20950,7 +21011,48 @@ ui <- fluidPage(
           setTimeout(function() { safeSetInput(name, value); }, 500);
         }
       }
-    "))
+
+      // Inject 'Learn' link into the main navbar (right of the existing tabs).
+      // Polls until the navbar is rendered, then appends a plain anchor that
+      // navigates to the public Learn section. Avoids Shiny's tab-activation
+      // logic by being a real <a href>, not a tabPanel.
+      function injectLearnNavLink() {
+        var nav = document.querySelector('.navbar-nav');
+        if (!nav) { setTimeout(injectLearnNavLink, 150); return; }
+        if (document.getElementById('tx-learn-navlink')) return;
+        var li = document.createElement('li');
+        li.id = 'tx-learn-navlink';
+        var a = document.createElement('a');
+        a.href = 'https://transxplorer.org/learn/';
+        a.innerHTML = '<i class=\"fas fa-book-open\" style=\"margin-right: 6px;\"></i>Learn';
+        a.title = 'Tutorials and concept guides for RNA-seq analysis';
+        li.appendChild(a);
+        nav.appendChild(li);
+      }
+      document.addEventListener('DOMContentLoaded', injectLearnNavLink);
+    ")),
+    # ---- What's New + Feedback footer styles (kept in <head>, never inside the navbar) ----
+    tags$style(HTML("
+      .tx-app-footer { background:#f8f9fb; border-top:1px solid #e3e7ee; margin-top:40px; padding:24px 28px 14px; font-family:'Inter',sans-serif; }
+      .tx-footer-grid { display:flex; flex-wrap:wrap; gap:36px; max-width:1180px; margin:0 auto; align-items:flex-start; }
+      .tx-footer-col { flex:1 1 320px; min-width:280px; }
+      .tx-footer-h { font-weight:700; font-size:1rem; color:#1a2b4a; margin-bottom:12px; }
+      .tx-cl-entry { display:flex; align-items:baseline; gap:9px; margin-bottom:8px; font-size:0.86rem; line-height:1.45; }
+      .tx-cl-chip { color:#fff; font-size:0.66rem; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:2px 8px; border-radius:11px; flex:0 0 auto; }
+      .tx-cl-date { color:#8a93a6; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+      .tx-cl-text { color:#34405a; }
+      .tx-cl-seeall { display:inline-block; margin-top:8px; font-size:0.83rem; font-weight:600; color:#1565c0; cursor:pointer; text-decoration:none; }
+      .tx-cl-seeall:hover { text-decoration:underline; }
+      .tx-fb-prompt { font-size:0.86rem; color:#34405a; margin-bottom:12px; }
+      .tx-fb-btn { background:#1565c0 !important; color:#fff !important; border:none; font-weight:600; font-size:0.86rem; padding:8px 18px; border-radius:8px; }
+      .tx-fb-btn:hover { background:#0d47a1 !important; color:#fff !important; }
+      .tx-fb-note { font-size:0.78rem; color:#8a93a6; margin-top:-8px; margin-bottom:12px; }
+      .tx-footer-base { text-align:center; color:#9aa3b2; font-size:0.78rem; margin-top:18px; padding-top:12px; border-top:1px solid #eef1f6; }
+      .tx-cl-modal .tx-cl-entry { margin-bottom:11px; font-size:0.9rem; }
+      @media (max-width:640px){ .tx-footer-grid{ flex-direction:column; gap:20px; } }
+    ")),
+    # Umami analytics — privacy-friendly, self-hosted, no cookies
+    HTML('<script async defer src="/umami/script.js" data-website-id="f36cf0d0-02d4-4d2e-b41d-a994589d94b3"></script>')
   ),
   
   
@@ -24334,6 +24436,15 @@ ui <- fluidPage(
                                                                    downloadButton("download_volcano_main", "Download Plot",
                                                                                   class = "btn btn-secondary", style = "margin-left: 10px;")
                                                                ),
+                                                               fluidRow(
+                                                                 column(12,
+                                                                        div(style = "margin-bottom: 10px; padding: 8px 12px; background-color: #f1f8ff; border-left: 3px solid #0066cc; border-radius: 3px;",
+                                                                            checkboxInput("volcano_symmetric_x",
+                                                                                          tagList(icon("arrows-alt-h"), " Symmetric X-axis (center at log2FC = 0)"),
+                                                                                          value = FALSE)
+                                                                        )
+                                                                 )
+                                                               ),
                                                                plotlyOutput("volcano_plot_main", height = "600px") %>% withSpinner()
                                                         )
                                                       )
@@ -24389,65 +24500,87 @@ ui <- fluidPage(
                                                                    )
                                                                  ),
                                                                  
-                                                                 # Row 2: Manual Selection (conditional)
-                                                                 conditionalPanel(
-                                                                   condition = "input.gene_selection_method_main == 'current_degs'",
-                                                                   hr(style = "margin: 15px 0;"),
-                                                                   fluidRow(
-                                                                     column(12,
-                                                                            div(
-                                                                              style = "background-color: #e7f3ff; padding: 15px; border-radius: 5px; border-left: 4px solid #0066cc;",
-                                                                              checkboxInput("manual_gene_selection", 
-                                                                                            strong(icon("hand-pointer"), "Enable Manual Gene Selection"), 
-                                                                                            value = FALSE),
-                                                                              conditionalPanel(
-                                                                                condition = "input.manual_gene_selection",
+                                                                 # Row 2: Manual Selection (universal across all gene-selection methods)
+                                                                 hr(style = "margin: 15px 0;"),
+                                                                 fluidRow(
+                                                                   column(12,
+                                                                          div(
+                                                                            style = "background-color: #e7f3ff; padding: 15px; border-radius: 5px; border-left: 4px solid #0066cc;",
+                                                                            checkboxInput("manual_gene_selection",
+                                                                                          strong(icon("hand-pointer"), "Enable Manual Gene Selection"),
+                                                                                          value = FALSE),
+                                                                            conditionalPanel(
+                                                                              condition = "input.manual_gene_selection",
+                                                                              div(
+                                                                                style = "margin-top: 10px;",
+                                                                                # Bulk paste-list input (Feature 2)
                                                                                 div(
-                                                                                  style = "margin-top: 10px;",
-                                                                                  selectizeInput("selected_gene_ids", 
-                                                                                                 "Select Specific Genes:",
-                                                                                                 choices = NULL,
-                                                                                                 multiple = TRUE,
-                                                                                                 options = list(
-                                                                                                   placeholder = "Start typing gene name or ID...",
-                                                                                                   maxItems = 100,
-                                                                                                   plugins = list('remove_button')
-                                                                                                 )),
-                                                                                  helpText(icon("info-circle"), " Search and select genes from your current DEG results. Showing gene names with IDs.")
-                                                                                )
+                                                                                  style = "margin-bottom: 10px; padding: 10px; background-color: #ffffff; border: 1px solid #cce5ff; border-radius: 4px;",
+                                                                                  textAreaInput("heatmap_gene_paste",
+                                                                                                tagList(icon("paste"), " Paste gene list (one per line, or comma/space-separated):"),
+                                                                                                value = "",
+                                                                                                rows = 3,
+                                                                                                width = "100%",
+                                                                                                placeholder = "GATA4\nMYL7\nNKX2-5\nTBX5\n... or: GATA4, MYL7, NKX2-5\n... or: GATA4 MYL7 NKX2-5"),
+                                                                                  actionButton("heatmap_parse_genes",
+                                                                                               tagList(icon("plus"), " Add Pasted Genes"),
+                                                                                               class = "btn-sm btn-info",
+                                                                                               style = "margin-bottom: 4px;")
+                                                                                ),
+                                                                                selectizeInput("selected_gene_ids",
+                                                                                               "Select Specific Genes:",
+                                                                                               choices = NULL,
+                                                                                               multiple = TRUE,
+                                                                                               options = list(
+                                                                                                 placeholder = "Start typing gene name or ID...",
+                                                                                                 maxItems = 1000,
+                                                                                                 plugins = list('remove_button')
+                                                                                               )),
+                                                                                helpText(icon("info-circle"), " Manual selection works across all gene-selection methods. Paste a list above or search/type to add individual genes.")
                                                                               )
                                                                             )
-                                                                     )
+                                                                          )
                                                                    )
                                                                  ),
                                                                  
                                                                  # Row 3: Clustering Options
                                                                  hr(style = "margin: 15px 0;"),
                                                                  fluidRow(
-                                                                   column(4,
+                                                                   column(3,
                                                                           h5(icon("project-diagram"), "Clustering Method", style = "color: #495057; margin-bottom: 15px;"),
-                                                                          selectInput("heatmap_clustering_main", 
-                                                                                      "Clustering:", 
+                                                                          selectInput("heatmap_clustering_main",
+                                                                                      "Clustering:",
                                                                                       choices = c(
                                                                                         "Ward.D2" = "ward.D2",
                                                                                         "Complete" = "complete",
                                                                                         "Average" = "average",
                                                                                         "Single" = "single",
                                                                                         "McQuitty" = "mcquitty"
-                                                                                      ), 
+                                                                                      ),
                                                                                       selected = "ward.D2")
                                                                    ),
-                                                                   column(4,
+                                                                   column(3,
                                                                           h5(icon("toggle-on"), "Row Clustering", style = "color: #495057; margin-bottom: 15px;"),
-                                                                          checkboxInput("enable_row_clustering_main", 
-                                                                                        "Enable Row Clustering", 
+                                                                          checkboxInput("enable_row_clustering_main",
+                                                                                        "Enable Row Clustering",
                                                                                         value = TRUE)
                                                                    ),
-                                                                   column(4,
+                                                                   column(3,
                                                                           h5(icon("toggle-on"), "Column Clustering", style = "color: #495057; margin-bottom: 15px;"),
-                                                                          checkboxInput("enable_col_clustering_main", 
-                                                                                        "Enable Column Clustering", 
+                                                                          checkboxInput("enable_col_clustering_main",
+                                                                                        "Enable Column Clustering",
                                                                                         value = TRUE)
+                                                                   ),
+                                                                   column(3,
+                                                                          h5(icon("sync-alt"), "Orientation", style = "color: #495057; margin-bottom: 15px;"),
+                                                                          radioButtons("heatmap_orientation_main",
+                                                                                       label = NULL,
+                                                                                       choices = c(
+                                                                                         "Standard (genes ↓ samples →)" = "standard",
+                                                                                         "Flipped (samples ↓ genes →)" = "flipped"
+                                                                                       ),
+                                                                                       selected = "standard",
+                                                                                       inline = FALSE)
                                                                    )
                                                                  ),
                                                                  
@@ -29461,7 +29594,9 @@ ui <- fluidPage(
                          column(4,
                                 selectInput("enrichment_viz_type", "Visualization type:",
                                             choices = c("Lollipop Plot" = "lollipop",
-                                                        "Bar Plot" = "barplot"))
+                                                        "Bar Plot" = "barplot",
+                                                        "Dot Plot (NES bubble)" = "dotplot",
+                                                        "GSEA Enrichment Plot (Running ES)" = "gsea_classic"))
                          ),
                          column(4,
                                 selectInput("enrichment_viz_database", "Database:",
@@ -29469,6 +29604,20 @@ ui <- fluidPage(
                          ),
                          column(4,
                                 numericInput("enrichment_viz_top", "Top N terms:", 20, min = 5, max = 50)
+                         )
+                       ),
+                       conditionalPanel(
+                         condition = "input.enrichment_viz_type == 'gsea_classic'",
+                         fluidRow(
+                           column(12,
+                                  div(style = "margin-top: 10px;",
+                                      selectizeInput("enrichment_classic_pathway",
+                                                     "Select pathway for Classic GSEA plot:",
+                                                     choices = NULL,
+                                                     multiple = FALSE,
+                                                     options = list(placeholder = "Type to search pathways..."))
+                                  )
+                           )
                          )
                        ),
                        br(),
@@ -29660,9 +29809,10 @@ ui <- fluidPage(
           style = "opacity: 0; transition: opacity 0.3s ease;"
         )
       )
-    )
-    
-    
+    ),
+
+    # ---- Footer on EVERY tab: What's New + Feedback ----
+    footer = tx_footer_ui
   ),
   
   # At the end of your UI
@@ -29768,6 +29918,105 @@ convertGeneIDs <- function(gene_data, input_id_type, organism_db) {
 
 # Define server function
 server <- function(input, output, session) {
+
+  # ===== What's New + Feedback (footer feature) =====
+  observeEvent(input$tx_changelog_seeall, {
+    showModal(modalDialog(
+      title = tagList(icon("bullhorn"), " What's New in TransXplorer"),
+      tags$div(class = "tx-cl-modal", tx_changelog_full()),
+      easyClose = TRUE, size = "l", footer = modalButton("Close")
+    ))
+  })
+
+  # Feedback config from environment (loaded from the secrets file at startup)
+  tx_feedback_cfg <- list(
+    user = Sys.getenv("TX_SMTP_USER"),
+    pass = Sys.getenv("TX_SMTP_APP_PASSWORD"),
+    to   = Sys.getenv("TX_FEEDBACK_TO", "varinde2+transxplorer@ualberta.ca"),
+    bcc  = Sys.getenv("TX_FEEDBACK_BCC", "dev.vmadhav@gmail.com")
+  )
+  tx_feedback_ready <- nzchar(tx_feedback_cfg$user) && nzchar(tx_feedback_cfg$pass) &&
+    requireNamespace("emayili", quietly = TRUE)
+
+  tx_fb_times <- reactiveVal(numeric(0))  # per-session rate-limit timestamps
+
+  observeEvent(input$tx_feedback_open, {
+    if (!isTRUE(tx_feedback_ready)) {
+      showModal(modalDialog(
+        title = tagList(icon("comment-dots"), " Feedback"),
+        tags$p("Feedback submission is temporarily unavailable. Please email ",
+               tags$a(href = "mailto:varinde2@ualberta.ca", "varinde2@ualberta.ca"),
+               " directly \u2014 sorry for the inconvenience!"),
+        easyClose = TRUE, footer = modalButton("Close")
+      ))
+      return()
+    }
+    showModal(modalDialog(
+      title = tagList(icon("comment-dots"), " Send feedback or a question"),
+      tags$p(class = "tx-fb-prompt", "Tell us what you think, what broke, or what you'd like to see. Thanks for helping improve TransXplorer!"),
+      textInput("tx_fb_name", "Name", placeholder = "optional"),
+      textInput("tx_fb_email", "Email", placeholder = "optional"),
+      tags$div(class = "tx-fb-note", "We'll only use your email to reply to you."),
+      selectInput("tx_fb_category", "Category",
+                  choices = c("Bug", "Question", "Suggestion", "Other"), selected = "Question"),
+      textAreaInput("tx_fb_message", "Message", rows = 5, placeholder = "Your feedback or question..."),
+      tags$div(style = "position:absolute; left:-9999px; top:-9999px;",
+               textInput("tx_fb_website", "Leave this empty", value = "")),
+      easyClose = FALSE,
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("tx_fb_submit", tagList(icon("paper-plane"), " Send"), class = "tx-fb-btn")
+      )
+    ))
+  })
+
+  observeEvent(input$tx_fb_submit, {
+    if (nzchar(input$tx_fb_website %||% "")) {  # honeypot filled -> silent fake-success
+      removeModal(); showNotification("Thanks \u2014 your feedback was sent!", type = "message"); return()
+    }
+    msg <- trimws(input$tx_fb_message %||% "")
+    if (!nzchar(msg)) { showNotification("Please enter a message before sending.", type = "warning"); return() }
+
+    now <- as.numeric(Sys.time())
+    recent <- tx_fb_times(); recent <- recent[recent > now - 60]
+    if (length(recent) >= 3) {
+      showNotification("You're sending feedback very quickly \u2014 please wait a moment and try again.", type = "warning"); return()
+    }
+
+    sender   <- trimws(input$tx_fb_email %||% "")
+    name     <- trimws(input$tx_fb_name %||% "")
+    category <- input$tx_fb_category %||% "Other"
+
+    body <- paste0(
+      "New TransXplorer feedback\n-------------------------\n",
+      "Category: ", category, "\n",
+      "Name:     ", ifelse(nzchar(name),   name,   "(not provided)"), "\n",
+      "Email:    ", ifelse(nzchar(sender), sender, "(not provided)"), "\n",
+      "Time UTC: ", format(as.POSIXct(now, origin = "1970-01-01", tz = "UTC"), "%Y-%m-%d %H:%M:%S"), "\n",
+      "-------------------------\n\n", msg, "\n"
+    )
+
+    ok <- tryCatch({
+      e <- emayili::envelope()
+      e <- emayili::from(e, tx_feedback_cfg$user)
+      e <- emayili::to(e, tx_feedback_cfg$to)
+      if (nzchar(tx_feedback_cfg$bcc)) e <- emayili::bcc(e, tx_feedback_cfg$bcc)
+      if (nzchar(sender)) e <- emayili::reply(e, sender)
+      e <- emayili::subject(e, paste0("[TransXplorer Feedback] ", category))
+      e <- emayili::text(e, body)
+      smtp <- emayili::server(host = "smtp.gmail.com", port = 587,
+                              username = tx_feedback_cfg$user, password = tx_feedback_cfg$pass)
+      smtp(e, verbose = FALSE)
+      TRUE
+    }, error = function(err) { message("[feedback] send failed: ", conditionMessage(err)); FALSE })
+
+    if (isTRUE(ok)) {
+      tx_fb_times(c(recent, now)); removeModal()
+      showNotification("Thanks \u2014 your feedback was sent!", type = "message")
+    } else {
+      showNotification("Sorry, we couldn't send your feedback right now. Please try again later or email varinde2@ualberta.ca.", type = "error")
+    }
+  })
 
   # ===== DIAGNOSTIC TRACE =====
   # Writes tagged lines to stderr and flushes immediately so traces survive
@@ -46631,8 +46880,32 @@ server <- function(input, output, session) {
           tryCatch(writeLines(paste0(percent, "|", step), params$progress_file), error = function(e) NULL)
         }
 
+        # Dynamic thread allocation: 4 (default) <= n <= 8, leaving 2 cores for system/Shiny.
+        # Falls back to 4 if detectCores() fails (e.g., in a cgroup with hidden limits).
+        n_threads <- tryCatch(
+          max(4, min(8, parallel::detectCores() - 2)),
+          error = function(e) 4L
+        )
+
+        # Wrap system() with explicit return-code check.
+        # On non-zero exit: write to log + abort the pipeline cleanly.
+        run_cmd_or_fail <- function(cmd, step, sample_name = NULL) {
+          rc <- tryCatch(system(cmd, intern = FALSE), error = function(e) -1L)
+          if (!is.null(rc) && is.numeric(rc) && rc != 0) {
+            msg <- if (!is.null(sample_name)) {
+              paste0(step, " failed for sample '", sample_name, "' (exit code ", rc, ")")
+            } else {
+              paste0(step, " failed (exit code ", rc, ")")
+            }
+            write_log(msg, "error")
+            stop(msg)
+          }
+          invisible(rc)
+        }
+
         tryCatch({
           write_log("Starting FASTQ processing pipeline", "info")
+          write_log(paste("Using", n_threads, "threads per process"), "info")
           write_progress(5, "Initializing pipeline...")
 
           input_dir <- file.path(params$tmp_dir, "input")
@@ -46777,7 +47050,7 @@ server <- function(input, output, session) {
               write_log("Building Salmon index from transcriptome...", "progress")
               dir.create(salmon_index_dir, recursive = TRUE, showWarnings = FALSE)
               idx_cmd <- paste("salmon index -t", shQuote(transcriptome_fa),
-                "-i", shQuote(salmon_index_dir), "-p 4 --gencode 2>&1")
+                "-i", shQuote(salmon_index_dir), "-p", n_threads, "--gencode 2>&1")
               idx_result <- system(idx_cmd, intern = FALSE)
               if (idx_result != 0) stop("Failed to build Salmon index")
               # Cache the index for future use
@@ -46804,8 +47077,9 @@ server <- function(input, output, session) {
                 sample_dir <- file.path(salmon_output_dir, base)
                 salmon_cmd <- paste("salmon quant -i", shQuote(salmon_index_dir),
                   "-l A -1", shQuote(r1_trimmed[j]), "-2", shQuote(r2_trimmed[j]),
-                  "-p 4 --validateMappings -o", shQuote(sample_dir), "2>&1")
-                system(salmon_cmd, intern = FALSE)
+                  "--gcBias --seqBias --validateMappings",
+                  "-p", n_threads, "-o", shQuote(sample_dir), "2>&1")
+                run_cmd_or_fail(salmon_cmd, "Salmon quantification", base)
                 quant_dirs <- c(quant_dirs, sample_dir)
                 write_log(paste("Salmon quantified:", base), "success")
                 write_progress(72 + round(j/length(r1_trimmed) * 10), paste("Salmon: sample", j, "of", length(r1_trimmed)))
@@ -46817,8 +47091,9 @@ server <- function(input, output, session) {
                 sample_dir <- file.path(salmon_output_dir, base)
                 salmon_cmd <- paste("salmon quant -i", shQuote(salmon_index_dir),
                   "-l A -r", shQuote(f),
-                  "-p 4 --validateMappings -o", shQuote(sample_dir), "2>&1")
-                system(salmon_cmd, intern = FALSE)
+                  "--gcBias --seqBias --validateMappings",
+                  "-p", n_threads, "-o", shQuote(sample_dir), "2>&1")
+                run_cmd_or_fail(salmon_cmd, "Salmon quantification", base)
                 quant_dirs <- c(quant_dirs, sample_dir)
                 write_log(paste("Salmon quantified:", base), "success")
               }
@@ -46891,13 +47166,17 @@ server <- function(input, output, session) {
               sam_file <- file.path(output_dir, "aligned", paste0(base, ".sam"))
               bam_file <- file.path(output_dir, "aligned", paste0(base, ".bam"))
               sorted_bam <- file.path(output_dir, "aligned", paste0(base, "_sorted.bam"))
-              hisat_cmd <- paste("hisat2 -p 4 --dta -x", shQuote(hisat2_index),
+              hisat_cmd <- paste("hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index),
                 "-1", shQuote(r1_trimmed[j]), "-2", shQuote(r2_trimmed[j]),
                 "-S", shQuote(sam_file), "2>&1")
-              system(hisat_cmd, intern = FALSE)
-              system(paste("samtools view -bS", shQuote(sam_file), "|",
-                           "samtools sort -o", shQuote(sorted_bam)), intern = FALSE)
-              system(paste("samtools index", shQuote(sorted_bam)), intern = FALSE)
+              run_cmd_or_fail(hisat_cmd, "HISAT2 alignment", base)
+              run_cmd_or_fail(
+                paste("set -o pipefail; samtools view -bS", shQuote(sam_file), "|",
+                      "samtools sort -@", n_threads, "-o", shQuote(sorted_bam)),
+                "samtools sort", base
+              )
+              run_cmd_or_fail(paste("samtools index", shQuote(sorted_bam)),
+                              "samtools index", base)
               if (file.exists(sam_file)) file.remove(sam_file)
               bam_files <- c(bam_files, sorted_bam)
               write_log(paste("Aligned:", base), "success")
@@ -46909,12 +47188,16 @@ server <- function(input, output, session) {
               base <- sub("_trimmed.*", "", basename(f))
               sam_file <- file.path(output_dir, "aligned", paste0(base, ".sam"))
               sorted_bam <- file.path(output_dir, "aligned", paste0(base, "_sorted.bam"))
-              hisat_cmd <- paste("hisat2 -p 4 --dta -x", shQuote(hisat2_index),
+              hisat_cmd <- paste("hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index),
                 "-U", shQuote(f), "-S", shQuote(sam_file), "2>&1")
-              system(hisat_cmd, intern = FALSE)
-              system(paste("samtools view -bS", shQuote(sam_file), "|",
-                           "samtools sort -o", shQuote(sorted_bam)), intern = FALSE)
-              system(paste("samtools index", shQuote(sorted_bam)), intern = FALSE)
+              run_cmd_or_fail(hisat_cmd, "HISAT2 alignment", base)
+              run_cmd_or_fail(
+                paste("set -o pipefail; samtools view -bS", shQuote(sam_file), "|",
+                      "samtools sort -@", n_threads, "-o", shQuote(sorted_bam)),
+                "samtools sort", base
+              )
+              run_cmd_or_fail(paste("samtools index", shQuote(sorted_bam)),
+                              "samtools index", base)
               if (file.exists(sam_file)) file.remove(sam_file)
               bam_files <- c(bam_files, sorted_bam)
               write_log(paste("Aligned:", base), "success")
@@ -46934,10 +47217,10 @@ server <- function(input, output, session) {
           counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
           bam_existing <- bam_files[file.exists(bam_files)]
           pe_flag <- if (params$sequencing_type == "paired") "-p --countReadPairs" else ""
-          fc_cmd <- paste("featureCounts -T 4", pe_flag,
+          fc_cmd <- paste("featureCounts -T", n_threads, pe_flag,
             "-a", shQuote(gtf_file), "-o", shQuote(counts_file),
             paste(shQuote(bam_existing), collapse = " "))
-          system(fc_cmd, intern = FALSE)
+          run_cmd_or_fail(fc_cmd, "featureCounts quantification")
           write_log("Gene expression quantification completed", "success")
 
           }  # End of HISAT2/Salmon branch
@@ -54356,7 +54639,11 @@ document.addEventListener("DOMContentLoaded", function() {
         
         # Calculate variance explained
         var_explained <- summary(pca_res)$importance[2, ]
-        
+
+        # Save underlying data + variance for static publication-quality download
+        rv_deg_main$pca_data <- pca_df
+        rv_deg_main$pca_var_explained <- var_explained
+
         # ============================================================================
         # CREATE PCA PLOTS (Multiple versions based on available data)
         # ============================================================================
@@ -54560,7 +54847,10 @@ document.addEventListener("DOMContentLoaded", function() {
         
         # Merge with plot metadata
         umap_df <- merge(umap_df, plot_metadata, by = "SampleID", all.x = TRUE)
-        
+
+        # Save underlying data for static publication-quality download
+        rv_deg_main$umap_data <- umap_df
+
         # ============================================================================
         # CREATE UMAP PLOTS (Multiple versions based on available data)
         # ============================================================================
@@ -55148,25 +55438,99 @@ document.addEventListener("DOMContentLoaded", function() {
     }
   })
   
-  # Download handlers for PCA and UMAP (adapt from your old ones)
+  # Download handlers for PCA and UMAP
+  # Renders a static publication-quality ggplot from the stored coordinates
+  # (rv_deg_main$pca_data / $umap_data) at 600 dpi PNG. Plotly version remains
+  # for interactive viewing; this is the high-res figure for manuscripts.
+
+  # Helper: shared theme for dim-reduction download figures
+  build_dim_red_theme <- function(base = 16) {
+    ggplot2::theme_minimal(base_size = base) +
+      ggplot2::theme(
+        plot.background  = ggplot2::element_rect(fill = "white", color = NA),
+        panel.background = ggplot2::element_rect(fill = "white", color = NA),
+        panel.grid.minor = ggplot2::element_blank(),
+        panel.grid.major = ggplot2::element_line(color = "grey92", linewidth = 0.4),
+        plot.title       = ggplot2::element_text(face = "bold", hjust = 0.5, size = base + 2),
+        legend.position  = "right",
+        legend.title     = ggplot2::element_text(face = "bold", size = base - 3),
+        legend.text      = ggplot2::element_text(size = base - 4),
+        axis.title       = ggplot2::element_text(size = base - 2),
+        axis.text        = ggplot2::element_text(size = base - 4),
+        plot.margin      = ggplot2::margin(16, 16, 16, 16)
+      )
+  }
+
   output$download_pca_main <- downloadHandler(
-    filename = function() { "pca_plot_main.png" },
+    filename = function() { paste0("pca_plot_", Sys.Date(), ".png") },
     content = function(file) {
       load_export_packages()
-      req(rv_deg_main$pca_plot)
-      # Use orca or plotly::export ensuring dependencies are met on server
-      tryCatch(plotly::export(rv_deg_main$pca_plot, file = file), error = function(e) {
-        showNotification(paste("PCA plot download failed. Ensure Orca/Kaleido is installed.", e$message), type="error")
+      req(rv_deg_main$pca_data)
+
+      tryCatch({
+        pca_df <- rv_deg_main$pca_data
+        ve <- rv_deg_main$pca_var_explained
+        pc1_lab <- if (!is.null(ve) && length(ve) >= 1 && !is.na(ve[1])) sprintf("PC1 (%.1f%%)", ve[1] * 100) else "PC1"
+        pc2_lab <- if (!is.null(ve) && length(ve) >= 2 && !is.na(ve[2])) sprintf("PC2 (%.1f%%)", ve[2] * 100) else "PC2"
+
+        has_batch <- "Batch" %in% names(pca_df) && length(unique(pca_df$Batch)) > 1
+
+        if (has_batch) {
+          p <- ggplot2::ggplot(pca_df, ggplot2::aes(x = PC1, y = PC2, color = Group, shape = Batch)) +
+            ggplot2::geom_point(size = 4.5, alpha = 0.88, stroke = 0.7) +
+            ggplot2::scale_shape_manual(values = c(16, 17, 15, 18, 8, 7, 11, 13)) +
+            ggplot2::scale_color_brewer(palette = "Set1")
+        } else {
+          p <- ggplot2::ggplot(pca_df, ggplot2::aes(x = PC1, y = PC2, color = Group)) +
+            ggplot2::geom_point(size = 4.5, alpha = 0.88, stroke = 0.7) +
+            ggplot2::scale_color_brewer(palette = "Set1")
+        }
+
+        p <- p +
+          ggplot2::labs(x = pc1_lab, y = pc2_lab, title = "Principal Component Analysis") +
+          build_dim_red_theme(16)
+
+        ggplot2::ggsave(file, plot = p,
+                        width = 10, height = 7, units = "in",
+                        dpi = 600, bg = "white", device = "png")
+      }, error = function(e) {
+        showNotification(paste("PCA download failed:", conditionMessage(e)),
+                         type = "error", duration = 10)
       })
     }
   )
+
   output$download_umap_main <- downloadHandler(
-    filename = function() { "umap_plot_main.png" },
+    filename = function() { paste0("umap_plot_", Sys.Date(), ".png") },
     content = function(file) {
       load_export_packages()
-      req(rv_deg_main$umap_plot)
-      tryCatch(plotly::export(rv_deg_main$umap_plot, file = file), error = function(e) {
-        showNotification(paste("UMAP plot download failed. Ensure Orca/Kaleido is installed.", e$message), type="error")
+      req(rv_deg_main$umap_data)
+
+      tryCatch({
+        umap_df <- rv_deg_main$umap_data
+        has_batch <- "Batch" %in% names(umap_df) && length(unique(umap_df$Batch)) > 1
+
+        if (has_batch) {
+          p <- ggplot2::ggplot(umap_df, ggplot2::aes(x = UMAP1, y = UMAP2, color = Group, shape = Batch)) +
+            ggplot2::geom_point(size = 4.5, alpha = 0.88, stroke = 0.7) +
+            ggplot2::scale_shape_manual(values = c(16, 17, 15, 18, 8, 7, 11, 13)) +
+            ggplot2::scale_color_brewer(palette = "Set1")
+        } else {
+          p <- ggplot2::ggplot(umap_df, ggplot2::aes(x = UMAP1, y = UMAP2, color = Group)) +
+            ggplot2::geom_point(size = 4.5, alpha = 0.88, stroke = 0.7) +
+            ggplot2::scale_color_brewer(palette = "Set1")
+        }
+
+        p <- p +
+          ggplot2::labs(x = "UMAP1", y = "UMAP2", title = "UMAP Projection") +
+          build_dim_red_theme(16)
+
+        ggplot2::ggsave(file, plot = p,
+                        width = 10, height = 7, units = "in",
+                        dpi = 600, bg = "white", device = "png")
+      }, error = function(e) {
+        showNotification(paste("UMAP download failed:", conditionMessage(e)),
+                         type = "error", duration = 10)
       })
     }
   )
@@ -62203,7 +62567,16 @@ document.addEventListener("DOMContentLoaded", function() {
   
   output$volcano_plot_main <- renderPlotly({
     # No req(rv_deg_main$volcano_plot_obj) here, so it renders NULL initially
-    rv_deg_main$volcano_plot_obj # Render the stored plotly object
+    p <- rv_deg_main$volcano_plot_obj
+    if (is.null(p)) return(NULL)
+    if (isTRUE(input$volcano_symmetric_x) && !is.null(rv_deg_main$volcano_data) &&
+        "log2FC" %in% colnames(rv_deg_main$volcano_data)) {
+      xmax <- tryCatch(max(abs(rv_deg_main$volcano_data$log2FC), na.rm = TRUE) * 1.05,
+                       error = function(e) 1, warning = function(w) 1)
+      if (!is.finite(xmax) || xmax == 0) xmax <- 1
+      p <- p %>% plotly::layout(xaxis = list(title = "log2 Fold Change", range = c(-xmax, xmax)))
+    }
+    p # Render the (possibly relaid-out) plotly object
   })
   
   # Auto-update volcano plot when parameters change (optional feature)
@@ -62475,8 +62848,10 @@ document.addEventListener("DOMContentLoaded", function() {
   )
   
   # Observer to populate the selectizeInput
+  # NOTE: gating on gene_selection_method_main was removed (Feature 3) so manual
+  # selection is available regardless of the selected method.
   observe({
-    req(deg_data(), input$gene_selection_method_main == "current_degs")
+    req(deg_data())
     
     if (isTRUE(input$manual_gene_selection)) {
       
@@ -62585,6 +62960,107 @@ document.addEventListener("DOMContentLoaded", function() {
     }
   })
   
+  # ============================================================
+  # FEATURE 2: Bulk paste-list parser for the heatmap gene picker
+  # ============================================================
+  observeEvent(input$heatmap_parse_genes, {
+    raw <- input$heatmap_gene_paste
+    if (is.null(raw) || nchar(trimws(raw)) == 0) {
+      showNotification("Paste a gene list first.", type = "warning", duration = 4)
+      return()
+    }
+    # Auto-detect separator: newline, comma, semicolon, tab, or whitespace
+    tokens <- unlist(strsplit(raw, "[\n,;\t[:space:]]+", perl = TRUE))
+    tokens <- toupper(trimws(tokens))
+    tokens <- tokens[nchar(tokens) > 0]
+    tokens <- unique(tokens)
+    
+    if (length(tokens) == 0) {
+      showNotification("No valid gene tokens found.", type = "warning", duration = 4)
+      return()
+    }
+    
+    # Get the universe of available genes from the current DEG results
+    deg_df <- tryCatch(deg_data(), error = function(e) NULL)
+    if (is.null(deg_df) || nrow(deg_df) == 0) {
+      showNotification("No DEG results available yet. Run DEG analysis first.",
+                       type = "warning", duration = 6)
+      return()
+    }
+    
+    # Convert IDs to symbols on the fly so paste-list users can use symbols
+    if (!"gene_symbol" %in% colnames(deg_df) ||
+        all(is.na(deg_df$gene_symbol)) ||
+        all(deg_df$gene_symbol == "" | deg_df$gene_symbol == "-")) {
+      conv <- tryCatch(
+        convert_gene_ids_to_symbols_deg(deg_df$gene_id, input$organism_deg_main),
+        error = function(e) NULL
+      )
+      if (!is.null(conv) && is.data.frame(conv) && "gene_symbol" %in% colnames(conv)) {
+        mapping <- setNames(conv$gene_symbol, conv$original_id)
+        deg_df$gene_symbol <- mapping[deg_df$gene_id]
+        bad <- is.na(deg_df$gene_symbol) | deg_df$gene_symbol == "-" | deg_df$gene_symbol == ""
+        deg_df$gene_symbol[bad] <- deg_df$gene_id[bad]
+      } else {
+        deg_df$gene_symbol <- deg_df$gene_id
+      }
+    }
+    
+    # Build a symbol->gene_id lookup (uppercased keys for case-insensitive match)
+    sym_keys <- toupper(as.character(deg_df$gene_symbol))
+    id_keys  <- toupper(as.character(deg_df$gene_id))
+    name_keys <- if ("gene_name" %in% colnames(deg_df)) toupper(as.character(deg_df$gene_name)) else character(0)
+    
+    sym_to_id  <- setNames(deg_df$gene_id, sym_keys)
+    id_to_id   <- setNames(deg_df$gene_id, id_keys)
+    name_to_id <- if (length(name_keys) > 0) setNames(deg_df$gene_id, name_keys) else NULL
+    
+    matched_ids <- character(0)
+    unmatched   <- character(0)
+    for (tok in tokens) {
+      hit <- NA_character_
+      if (tok %in% names(sym_to_id))  hit <- sym_to_id[[tok]]
+      else if (tok %in% names(id_to_id)) hit <- id_to_id[[tok]]
+      else if (!is.null(name_to_id) && tok %in% names(name_to_id)) hit <- name_to_id[[tok]]
+      if (is.na(hit)) {
+        unmatched <- c(unmatched, tok)
+      } else {
+        matched_ids <- c(matched_ids, hit)
+      }
+    }
+    matched_ids <- unique(matched_ids)
+    
+    # Merge with existing selection
+    existing <- input$selected_gene_ids
+    if (is.null(existing)) existing <- character(0)
+    combined <- unique(c(existing, matched_ids))
+    
+    # Build choice labels (symbol shown, gene_id is the value)
+    label_lookup <- setNames(as.character(deg_df$gene_symbol), as.character(deg_df$gene_id))
+    combined_labels <- ifelse(is.na(label_lookup[combined]) | label_lookup[combined] == "",
+                              combined, label_lookup[combined])
+    choices_named <- setNames(combined, combined_labels)
+    
+    updateSelectizeInput(session, "selected_gene_ids",
+                         choices  = choices_named,
+                         selected = combined,
+                         server   = TRUE)
+    
+    # Make sure manual-selection toggle is on so the picker is visible/used
+    updateCheckboxInput(session, "manual_gene_selection", value = TRUE)
+    
+    msg <- paste0("Added ", length(matched_ids), " of ", length(tokens), " gene(s).")
+    if (length(unmatched) > 0) {
+      n_show <- min(length(unmatched), 8)
+      msg <- paste0(msg, " Not found: ",
+                    paste(head(unmatched, n_show), collapse = ", "),
+                    if (length(unmatched) > n_show) paste0(" (+", length(unmatched) - n_show, " more)") else "")
+    }
+    showNotification(msg,
+                     type     = if (length(matched_ids) > 0) "message" else "warning",
+                     duration = 8)
+  })
+  
   # Reactive expression for heatmap data preparation
   heatmap_data <- eventReactive(input$generate_heatmap_main, {
     req(deg_data(), rv_deg_main$raw_counts)
@@ -62610,9 +63086,19 @@ document.addEventListener("DOMContentLoaded", function() {
         pval_info <- get_pvalue_info(pvalue_type)
         p_col <- pval_info$column
         
+        # Feature 3: Universal manual override. If manual selection is enabled
+        # and the user has selected genes, use those regardless of gene_selection_method.
+        manual_override <- isTRUE(input$manual_gene_selection) &&
+                           !is.null(input$selected_gene_ids) &&
+                           length(input$selected_gene_ids) > 0
+        
         # ✅ FIX #2: Select genes WITHOUT additional filtering
         # deg_data() is already filtered, just sort and take top N
-        selected_genes <- switch(
+        selected_genes <- if (manual_override) {
+          print(paste("   [universal manual override] Using",
+                      length(input$selected_gene_ids), "manually selected genes"))
+          input$selected_gene_ids
+        } else switch(
           gene_selection_method,
           "pvalue" = {
             # Sort by p-value, then by absolute fold change
@@ -62890,6 +63376,20 @@ document.addEventListener("DOMContentLoaded", function() {
       
       print(paste("📊 Matrix dimensions:", nrow(matrix_data), "genes x", ncol(matrix_data), "samples"))
       
+      # Feature 4: Orientation toggle. "flipped" -> samples on rows, genes on cols.
+      orientation <- input$heatmap_orientation_main %||% "standard"
+      flipped <- isTRUE(orientation == "flipped")
+      
+      # Capture clustering choices and swap them when flipped so users still
+      # get “row clustering”/“column clustering” behavior matching their mental model.
+      cluster_rows_choice    <- input$enable_row_clustering_main %||% TRUE
+      cluster_columns_choice <- input$enable_col_clustering_main %||% TRUE
+      if (flipped) {
+        tmp <- cluster_rows_choice
+        cluster_rows_choice <- cluster_columns_choice
+        cluster_columns_choice <- tmp
+      }
+      
       # Clustering method
       clustering_method <- input$heatmap_clustering_main %||% "ward.D2"
       
@@ -62953,30 +63453,57 @@ document.addEventListener("DOMContentLoaded", function() {
         c("blue", "white", "red")
       )
       
+      # Feature 4: Build orientation-aware annotation + matrix.
+      # In "standard" view: rows=genes, cols=samples, group annotation on top.
+      # In "flipped"  view: rows=samples, cols=genes, group annotation on left.
+      if (flipped) {
+        matrix_data_oriented <- t(matrix_data)
+        row_ha_flipped <- rowAnnotation(
+          df = annotation_df,
+          col = annotation_colors,
+          annotation_name_side = "top",
+          annotation_legend_param = legend_params
+        )
+        top_anno_arg   <- NULL
+        left_anno_arg  <- row_ha_flipped
+        row_split_arg  <- annotation_df$Group
+        col_split_arg  <- NULL
+        title_text     <- paste("Heatmap of Top", ncol(matrix_data_oriented), "DEGs (flipped)")
+      } else {
+        matrix_data_oriented <- matrix_data
+        top_anno_arg   <- column_ha
+        left_anno_arg  <- NULL
+        row_split_arg  <- NULL
+        col_split_arg  <- annotation_df$Group
+        title_text     <- paste("Heatmap of Top", nrow(matrix_data_oriented), "DEGs")
+      }
+      
       # Create heatmap
       ht <- Heatmap(
-        matrix_data,
+        matrix_data_oriented,
         name = "Z-score",  # ✅ Changed from "Expression"
         col = col_fun,
-        top_annotation = column_ha,
-        cluster_rows = input$enable_row_clustering_main %||% TRUE,
+        top_annotation = top_anno_arg,
+        left_annotation = left_anno_arg,
+        cluster_rows = cluster_rows_choice,
         
         # --- KEY CHANGES ---
-        cluster_columns = input$enable_col_clustering_main %||% TRUE,
-        column_split = annotation_df$Group, # Group columns by the 'Group' annotation
+        cluster_columns = cluster_columns_choice,
+        row_split = row_split_arg,
+        column_split = col_split_arg,
         
-        # Row settings (genes)
-        show_row_names = nrow(matrix_data) <= 50,
-        row_names_gp = gpar(fontsize = max(6, min(10, 300 / nrow(matrix_data)))),
+        # Row settings
+        show_row_names = nrow(matrix_data_oriented) <= 50,
+        row_names_gp = gpar(fontsize = max(6, min(10, 300 / nrow(matrix_data_oriented)))),
         row_dend_width = unit(2, "cm"),
         
-        # Column settings (samples)
+        # Column settings
         show_column_names = TRUE,
         column_names_gp = gpar(fontsize = 8),
         column_dend_height = unit(2, "cm"),
         
         # Title
-        column_title = paste("Heatmap of Top", nrow(matrix_data), "DEGs"),
+        column_title = title_text,
         column_title_gp = gpar(fontsize = 14, fontface = "bold"),
         
         # Legend
@@ -63198,7 +63725,15 @@ document.addEventListener("DOMContentLoaded", function() {
   # Add these to your server code
   fetch_opentargets_data <- function(gene_id) {
     if (is.null(gene_id) || gene_id == "") return(NULL)
-    
+
+    # Strip Ensembl version suffix (e.g., ENSG00000139618.15 -> ENSG00000139618)
+    # OpenTargets uses unversioned IDs; versioned IDs return no results.
+    gene_id_original <- gene_id
+    gene_id <- sub("\\.[0-9]+$", "", gene_id)
+    if (gene_id != gene_id_original) {
+      print(paste("Stripped version:", gene_id_original, "->", gene_id))
+    }
+
     print(paste("Querying OpenTargets for gene ID:", gene_id))
     
     query_string <- sprintf('
@@ -72882,6 +73417,14 @@ document.addEventListener("DOMContentLoaded", function() {
     if (!requireNamespace("arrow", quietly = TRUE)) {
       print("arrow package not available, falling back to API...")
       return(run_opentargets_api_fallback(ensembl_ids, max_drugs_per_gene))
+    }
+
+    # Strip Ensembl version suffixes (e.g., ENSG00000139618.15 -> ENSG00000139618)
+    # Local OT parquet files use unversioned IDs; versioned IDs would match nothing.
+    n_before <- length(ensembl_ids)
+    ensembl_ids <- unique(sub("\\.[0-9]+$", "", as.character(ensembl_ids)))
+    if (length(ensembl_ids) != n_before) {
+      print(paste("Cleaned Ensembl IDs:", n_before, "->", length(ensembl_ids), "(deduplicated after version strip)"))
     }
 
     print(paste("Processing", length(ensembl_ids), "ENSEMBL IDs from local OpenTargets data"))
@@ -111969,6 +112512,10 @@ document.addEventListener("DOMContentLoaded", function() {
           return()
         }
         
+        # Store ranked gene vector and per-DB gene set lists for Classic GSEA plot
+        enrichment_rv$ranked_genes <- ranked_genes
+        enrichment_rv$gene_sets <- list()
+        
         incProgress(0.3, detail = "Running GSEA...")
         
         # Run GSEA for each selected database
@@ -111994,6 +112541,9 @@ document.addEventListener("DOMContentLoaded", function() {
               print(paste("No gene sets available for", db, "- skipping"))
               next
             }
+            
+            # Store gene sets for this DB so Classic GSEA plot can look up members
+            enrichment_rv$gene_sets[[db]] <- gene_sets
             
             print(paste("Running fgseaMultilevel for", db, "with", length(gene_sets), "pathways"))
             
@@ -113007,6 +113557,10 @@ document.addEventListener("DOMContentLoaded", function() {
             plot.title = element_text(face = "bold", hjust = 0.5)
           )
 
+      } else if (input$enrichment_viz_type %in% c("dotplot", "gsea_classic")) {
+        # GSEA-only visualizations chosen while in ORA mode
+        plot.new()
+        text(0.5, 0.5, "This visualization requires GSEA mode.\nRe-run analysis in GSEA mode to use it.", cex = 1.3)
       } else {
         # Default simple plot
         plot.new()
@@ -113061,12 +113615,115 @@ document.addEventListener("DOMContentLoaded", function() {
             axis.text.y = element_text(size = 11),
             plot.title = element_text(face = "bold", hjust = 0.5)
           )
+      } else if (input$enrichment_viz_type == "dotplot") {
+        # Need Count column for size. If not present (some DBs), use setSize.
+        if (!"Count" %in% names(plot_df)) {
+          plot_df$Count <- if ("setSize" %in% names(plot_df)) plot_df$setSize else 10
+        }
+        ggplot(plot_df, aes(x = NES, y = Description_wrapped, size = Count, color = neg_log_p)) +
+          geom_point(alpha = 0.85) +
+          scale_color_viridis_c(name = "-log10(adj. p)", option = "plasma") +
+          scale_size_continuous(name = "Gene Count", range = c(4, 14)) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "gray60") +
+          labs(x = "Normalized Enrichment Score (NES)", y = NULL,
+               title = paste("Top", input$enrichment_viz_top, "Enriched Pathways (GSEA)")) +
+          theme_minimal(base_size = 14) +
+          theme(
+            plot.background = element_rect(fill = "white", color = NA),
+            panel.background = element_rect(fill = "white", color = NA),
+            axis.text.y = element_text(size = 11),
+            plot.title = element_text(face = "bold", hjust = 0.5),
+            legend.position = "right"
+          )
+      } else if (input$enrichment_viz_type == "gsea_classic") {
+        # Classic 3-panel GSEA running enrichment-score plot for one pathway
+        if (is.null(enrichment_rv$ranked_genes) || is.null(enrichment_rv$gene_sets)) {
+          plot.new()
+          text(0.5, 0.5, "Gene set data not available; re-run GSEA to use this visualization.", cex = 1.2)
+          return()
+        }
+        req(input$enrichment_classic_pathway)
+        selected_pathway <- input$enrichment_classic_pathway
+        
+        # Find which database holds this pathway
+        pathway_db <- NULL
+        for (db_name in names(enrichment_rv$results)) {
+          res_df <- enrichment_rv$results[[db_name]]
+          if (!is.null(res_df) && "pathway" %in% names(res_df) &&
+              selected_pathway %in% res_df$pathway) {
+            pathway_db <- db_name
+            break
+          }
+        }
+        if (is.null(pathway_db)) {
+          plot.new()
+          text(0.5, 0.5, "Selected pathway not found in results", cex = 1.2)
+          return()
+        }
+        
+        gene_sets_db <- enrichment_rv$gene_sets[[pathway_db]]
+        if (is.null(gene_sets_db) || !(selected_pathway %in% names(gene_sets_db))) {
+          plot.new()
+          text(0.5, 0.5, "Gene set members not available for this pathway", cex = 1.2)
+          return()
+        }
+        pathway_members <- gene_sets_db[[selected_pathway]]
+        
+        ranked_gene_names <- names(enrichment_rv$ranked_genes)
+        pathway_positions <- which(ranked_gene_names %in% pathway_members)
+        
+        if (length(pathway_positions) < 3) {
+          plot.new()
+          text(0.5, 0.5, "Too few pathway members found in ranked list", cex = 1.2)
+          return()
+        }
+        
+        pathway_row <- enrichment_rv$results[[pathway_db]][
+          enrichment_rv$results[[pathway_db]]$pathway == selected_pathway, ]
+        nes_val <- if ("NES" %in% names(pathway_row)) pathway_row$NES[1] else NA
+        pval_val <- if ("padj" %in% names(pathway_row)) pathway_row$padj[1] else NA
+        if (is.null(nes_val) || is.na(nes_val)) nes_val <- pathway_row$ES[1]
+        
+        createInteractiveGSEAPlot(
+          ranked_genes = enrichment_rv$ranked_genes,
+          pathway_positions = pathway_positions,
+          pathway_name = selected_pathway,
+          nes = nes_val,
+          pvalue = pval_val
+        )
       } else {
         plot.new()
         text(0.5, 0.5, "Select Lollipop Plot or Bar Plot for visualization", cex = 1.2)
       }
     }
   }, height = 600)
+  
+  # Populate Classic GSEA pathway selector whenever GSEA results change
+  observe({
+    req(enrichment_rv$results)
+    req(identical(enrichment_rv$mode, "gsea"))
+    
+    # Combine pathways from all dbs, sort by padj ascending, take top N
+    combined <- tryCatch({
+      do.call(rbind, lapply(enrichment_rv$results, function(df) {
+        if (is.null(df) || nrow(df) == 0) return(NULL)
+        if (!all(c("pathway", "padj") %in% names(df))) return(NULL)
+        df[, c("pathway", "padj"), drop = FALSE]
+      }))
+    }, error = function(e) NULL)
+    
+    if (is.null(combined) || nrow(combined) == 0) return()
+    combined <- combined[order(combined$padj), , drop = FALSE]
+    top_n <- if (!is.null(input$enrichment_viz_top)) input$enrichment_viz_top else 20
+    combined <- head(combined, max(50, top_n))
+    
+    pathway_choices <- unique(combined$pathway)
+    top_pathway <- pathway_choices[1]
+    updateSelectizeInput(session, "enrichment_classic_pathway",
+                         choices = pathway_choices,
+                         selected = top_pathway,
+                         server = TRUE)
+  })
   
   output$download_enrichment_all <- downloadHandler(
     filename = function() {
@@ -113215,6 +113872,14 @@ document.addEventListener("DOMContentLoaded", function() {
           p <- build_enrichment_lollipop(plot_df, mode = "ora",
                                          top_n = input$enrichment_viz_top,
                                          base_size = 16)
+        } else if (input$enrichment_viz_type %in% c("dotplot", "gsea_classic")) {
+          # GSEA-only viz selected while in ORA mode: emit a small notice image.
+          p <- ggplot() +
+            annotate("text", x = 0.5, y = 0.5,
+                     label = "This visualization requires GSEA mode.",
+                     size = 6) +
+            theme_void() +
+            theme(plot.background = element_rect(fill = "white", color = NA))
         } else {
           p <- ggplot(plot_df, aes(x = neg_log_p, y = Description_wrapped, fill = Count)) +
             geom_col() +
@@ -113248,6 +113913,60 @@ document.addEventListener("DOMContentLoaded", function() {
           p <- build_enrichment_lollipop(plot_df, mode = "gsea",
                                          top_n = input$enrichment_viz_top,
                                          base_size = 16)
+        } else if (input$enrichment_viz_type == "dotplot") {
+          if (!"Count" %in% names(plot_df)) {
+            plot_df$Count <- if ("setSize" %in% names(plot_df)) plot_df$setSize else 10
+          }
+          p <- ggplot(plot_df, aes(x = NES, y = Description_wrapped, size = Count, color = neg_log_p)) +
+            geom_point(alpha = 0.85) +
+            scale_color_viridis_c(name = "-log10(adj. p)", option = "plasma") +
+            scale_size_continuous(name = "Gene Count", range = c(4, 14)) +
+            geom_vline(xintercept = 0, linetype = "dashed", color = "gray60") +
+            labs(x = "Normalized Enrichment Score (NES)", y = NULL,
+                 title = paste("Top", input$enrichment_viz_top, "Enriched Pathways (GSEA)")) +
+            theme_minimal(base_size = 14) +
+            theme(
+              plot.background = element_rect(fill = "white", color = NA),
+              panel.background = element_rect(fill = "white", color = NA),
+              axis.text.y = element_text(size = 11, lineheight = 0.9),
+              plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+              plot.margin = margin(14, 14, 14, 14)
+            )
+        } else if (input$enrichment_viz_type == "gsea_classic") {
+          # Build the classic 3-panel plot for the currently selected pathway
+          if (is.null(enrichment_rv$ranked_genes) || is.null(enrichment_rv$gene_sets) ||
+              is.null(input$enrichment_classic_pathway)) {
+            return(NULL)
+          }
+          selected_pathway <- input$enrichment_classic_pathway
+          pathway_db <- NULL
+          for (db_name in names(enrichment_rv$results)) {
+            res_df <- enrichment_rv$results[[db_name]]
+            if (!is.null(res_df) && "pathway" %in% names(res_df) &&
+                selected_pathway %in% res_df$pathway) {
+              pathway_db <- db_name
+              break
+            }
+          }
+          if (is.null(pathway_db)) return(NULL)
+          gene_sets_db <- enrichment_rv$gene_sets[[pathway_db]]
+          if (is.null(gene_sets_db) || !(selected_pathway %in% names(gene_sets_db))) return(NULL)
+          pathway_members <- gene_sets_db[[selected_pathway]]
+          ranked_gene_names <- names(enrichment_rv$ranked_genes)
+          pathway_positions <- which(ranked_gene_names %in% pathway_members)
+          if (length(pathway_positions) < 3) return(NULL)
+          pathway_row <- enrichment_rv$results[[pathway_db]][
+            enrichment_rv$results[[pathway_db]]$pathway == selected_pathway, ]
+          nes_val <- if ("NES" %in% names(pathway_row)) pathway_row$NES[1] else NA
+          pval_val <- if ("padj" %in% names(pathway_row)) pathway_row$padj[1] else NA
+          if (is.null(nes_val) || is.na(nes_val)) nes_val <- pathway_row$ES[1]
+          p <- createInteractiveGSEAPlot(
+            ranked_genes = enrichment_rv$ranked_genes,
+            pathway_positions = pathway_positions,
+            pathway_name = selected_pathway,
+            nes = nes_val,
+            pvalue = pval_val
+          )
         } else {
           p <- ggplot(plot_df, aes(x = NES, y = Description_wrapped, fill = NES)) +
             geom_col() +
@@ -113268,9 +113987,15 @@ document.addEventListener("DOMContentLoaded", function() {
       }
 
       # Publication-quality dimensions; width widens for long pathway labels.
-      max_label_chars <- max(nchar(as.character(plot_df$Description_wrapped)))
-      plot_width  <- max(14, 10 + (max_label_chars / 18))
-      plot_height <- max(9, input$enrichment_viz_top * 0.45)
+      # Classic GSEA uses fixed dimensions, multi-pathway plots scale by labels/top-N.
+      if (identical(input$enrichment_viz_type, "gsea_classic")) {
+        plot_width  <- 12
+        plot_height <- 9
+      } else {
+        max_label_chars <- max(nchar(as.character(plot_df$Description_wrapped)))
+        plot_width  <- max(14, 10 + (max_label_chars / 18))
+        plot_height <- max(9, input$enrichment_viz_top * 0.45)
+      }
 
       save_ok <- tryCatch({
         if (fmt == "svg") {
@@ -113598,10 +114323,27 @@ document.addEventListener("DOMContentLoaded", function() {
   
   observeEvent(input$open_gsea_config_modal, {
     req(gsea_expression_preview())
-    
-    data <- gsea_expression_preview()
-    col_names <- colnames(data)
-    numeric_cols <- col_names[sapply(data, is.numeric)]
+
+    tryCatch({
+      data <- gsea_expression_preview()
+
+      if (is.null(data) || !is.data.frame(data) || nrow(data) == 0 || ncol(data) == 0) {
+        showNotification(
+          tagList(icon("exclamation-triangle"), " Uploaded file is empty or could not be parsed. Try saving as CSV with a header row."),
+          type = "error", duration = 10)
+        return(invisible(NULL))
+      }
+
+      col_names <- colnames(data)
+      numeric_cols <- col_names[sapply(data, is.numeric)]
+
+      if (length(numeric_cols) == 0) {
+        showNotification(
+          tagList(icon("exclamation-triangle"),
+                  " No numeric columns detected. GSEA needs at least one numeric column for ranking (e.g. log2FC, t-statistic, signed -log10(p)). Check that your file has a header row and the ranking column is numeric, not text."),
+          type = "error", duration = 12)
+        return(invisible(NULL))
+      }
     
     # Auto-detect gene column
     gene_col_guess <- col_names[1]
@@ -113657,11 +114399,11 @@ document.addEventListener("DOMContentLoaded", function() {
                    style = "display: flex; gap: 15px; margin-bottom: 20px;",
                    div(style = "text-align: center; padding: 10px; background: white; border-radius: 8px; flex: 1;",
                        h3(nrow(data), style = "margin: 0; color: #667eea;"),
-                       small("Rows", style = "color: #666;")
+                       tags$small("Rows", style = "color: #666;")
                    ),
                    div(style = "text-align: center; padding: 10px; background: white; border-radius: 8px; flex: 1;",
                        h3(ncol(data), style = "margin: 0; color: #28a745;"),
-                       small("Columns", style = "color: #666;")
+                       tags$small("Columns", style = "color: #666;")
                    )
                  ),
                  
@@ -113736,8 +114478,16 @@ document.addEventListener("DOMContentLoaded", function() {
                      class = "btn-success", icon = icon("check"))
       )
     ))
+    }, error = function(e) {
+      showNotification(
+        tagList(icon("times-circle"),
+                paste0(" Could not open column configuration: ",
+                       conditionMessage(e),
+                       ". Your file may be malformed; try a smaller CSV with a clear header row.")),
+        type = "error", duration = 15)
+    })
   })
-  
+
   output$gsea_modal_preview_table <- DT::renderDataTable({
     req(gsea_expression_preview())
     
