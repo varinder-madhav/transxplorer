@@ -202,7 +202,8 @@ RUN R -e "BiocManager::install(c( \
 # Install additional Bioconductor packages
 RUN R -e "BiocManager::install(c( \
     'dorothea', 'impute', 'preprocessCore', 'STRINGdb', 'rWikiPathways', 'GEOquery', 'tximport', \
-    'GSEABase', 'GSVA', 'fgsea', 'qvalue' \
+    'GSEABase', 'GSVA', 'fgsea', 'qvalue', \
+    'AnnotationHub', 'BiocFileCache' \
 ), ask=FALSE, update=FALSE)"
 
 # Install specialized CRAN packages
@@ -228,7 +229,7 @@ RUN R -e "BiocManager::install('drugTargetInteractions', ask=FALSE, update=FALSE
 RUN R -e "devtools::install_gitlab('medbio/disgenet2r', force=TRUE)"
 
 # Copy custom Shiny Server configuration
-COPY docker/shiny-server.conf /etc/shiny-server/shiny-server.conf
+COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 
 # Increase max upload size and timeout
 RUN echo "options(shiny.maxRequestSize=10*1024^3)" >> /usr/local/lib/R/etc/Rprofile.site && \
@@ -243,12 +244,10 @@ RUN mkdir -p /srv/shiny-server/transxplorer && \
     mkdir -p /srv/transxplorer/results
 
 # Copy your application
-COPY app/app.R /srv/shiny-server/transxplorer/app.R
-COPY docker/queue_manager.R /srv/shiny-server/transxplorer/queue_manager.R
-# Optional static assets — uncomment if you have a www/ folder for app static files:
-# COPY www/ /srv/shiny-server/transxplorer/www/
-# Optional bundled data — uncomment if you ship reference data inside the image:
-# COPY data/ /srv/shiny-server/transxplorer/data/
+COPY test_standalones.R /srv/shiny-server/transxplorer/app.R
+COPY queue_manager.R /srv/shiny-server/transxplorer/queue_manager.R
+COPY www/ /srv/shiny-server/transxplorer/www/
+COPY data/ /srv/shiny-server/transxplorer/data/
 
 # Set permissions
 RUN chown -R shiny:shiny /srv/shiny-server && \

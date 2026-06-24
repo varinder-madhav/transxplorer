@@ -20977,6 +20977,40 @@ tx_footer_ui <- tags$footer(
            tags$a(href = "https://transxplorer.org", "transxplorer.org", target = "_blank", rel = "noopener"))
 )
 
+# ===== Multi-species enrichment: on-demand AnnotationHub OrgDb support =====
+Sys.setenv(ANNOTATION_HUB_CACHE = "/srv/transxplorer/results/.annotationhub_cache")
+tx_species_index <- tryCatch(readRDS(file.path("data", "tx_species_index.rds")),
+                             error = function(e) NULL)
+tx_orgdb_cache <- new.env(parent = emptyenv())
+tx_curated_keys <- c("hsapiens","mmusculus","rnorvegicus","drerio","dmelanogaster",
+                     "celegans","scerevisiae","athaliana","ggallus","sscrofa",
+                     "btaurus","xlaevis","cfamiliaris","ecoli")
+
+# Map arbitrary gene IDs -> ENTREZID via an OrgDb keytype (handles versioned RefSeq XP_).
+tx_map_to_entrez <- function(gene_ids, orgdb) {
+  gene_ids <- unique(trimws(as.character(gene_ids)))
+  gene_ids <- gene_ids[!is.na(gene_ids) & gene_ids != ""]
+  if (!length(gene_ids) || is.null(orgdb)) return(character(0))
+  det <- tryCatch(detect_gene_id_type(gene_ids), error = function(e) list(id_type = "symbol"))
+  if (identical(det$id_type, "entrez")) return(gene_ids)
+  ktm <- c(ensembl_gene = "ENSEMBL", ensembl_transcript = "ENSEMBLTRANS",
+           ensembl_protein = "ENSEMBLPROT", symbol = "SYMBOL",
+           uniprot = "UNIPROT", refseq = "REFSEQ")
+  kt <- ktm[[det$id_type]]
+  avail <- tryCatch(AnnotationDbi::keytypes(orgdb), error = function(e) character(0))
+  if (is.null(kt) || !(kt %in% avail)) {
+    if ("SYMBOL" %in% avail) kt <- "SYMBOL" else return(character(0))
+  }
+  do_map <- function(keys) suppressMessages(tryCatch(
+    AnnotationDbi::mapIds(orgdb, keys = keys, column = "ENTREZID",
+                          keytype = kt, multiVals = "first"),
+    error = function(e) setNames(rep(NA, length(keys)), keys)))
+  m1 <- do_map(gene_ids)
+  m2 <- do_map(sub("\\.[0-9]+$", "", gene_ids))
+  best <- if (sum(!is.na(m2)) > sum(!is.na(m1))) m2 else m1
+  unique(as.character(best[!is.na(best)]))
+}
+
 ui <- fluidPage(
   useShinyjs(),
   extendShinyjs(text = "
@@ -29314,8 +29348,17 @@ ui <- fluidPage(
                                  "Cow (Bos taurus)" = "btaurus",
                                  "Frog (Xenopus laevis)" = "xlaevis",
                                  "Dog (Canis familiaris)" = "cfamiliaris",
-                                 "E. coli (K-12)" = "ecoli"
+                                 "E. coli (K-12)" = "ecoli",
+                                 "Other species (search\u2026)" = "__other__"
                                )),
+                   conditionalPanel(
+                     condition = "input.enrichment_organism == '__other__'",
+                     selectizeInput("enrichment_species_other", "Species (type a Latin name):",
+                                    choices = NULL,
+                                    options = list(placeholder = "e.g. Cicer arietinum")),
+                     div(style = "font-size:0.8rem; color:#555; margin:-6px 0 10px;",
+                         textOutput("enrichment_caps"))
+                   ),
                    
                    # Database selection with checkboxes
                    h5("Select Databases:", style = "margin-bottom: 10px;"),
@@ -112535,6 +112578,17 @@ document.addEventListener("DOMContentLoaded", function() {
           incProgress(0.1, detail = paste("Analyzing", db, "..."))
           
           tryCatch({
+            if (!isTRUE(tx_enr_key() %in% tx_curated_keys)) {
+              gdf <- tx_run_gsea(db, ranked_genes, tx_enr_key(),
+                                 input$enrichment_minGS, input$enrichment_maxGS)
+              if (!is.null(gdf) && nrow(gdf) > 0) {
+                results_list[[db]] <- gdf
+                enrichment_rv$gene_sets[[db]] <- attr(gdf, "gene_sets")
+              } else {
+                print(paste("No GSEA results for", db, "(species/db unsupported or too few mapped genes)"))
+              }
+              next
+            }
             gene_sets <- get_gene_sets(db, input$enrichment_organism)
             
             if (length(gene_sets) == 0) {
@@ -112662,6 +112716,11 @@ document.addEventListener("DOMContentLoaded", function() {
           incProgress(0.1, detail = paste("Analyzing", db, "..."))
           print(paste("ORA: Processing database:", db))
           
+          if (!isTRUE(tx_enr_key() %in% tx_curated_keys) && db %in% c("REACTOME","WP","HALLMARK")) {
+            errors_list[[db]] <- paste(db, "is available for human and common model organisms only")
+            next
+          }
+          
           ora_result <- NULL
           
           tryCatch({
@@ -112670,40 +112729,17 @@ document.addEventListener("DOMContentLoaded", function() {
               ont <- sub("GO_", "", db)
               print(paste("ORA: Running GO", ont, "analysis"))
               
-              ora_result <- clusterProfiler::enrichGO(
-                gene = gene_list,
-                OrgDb = get_orgdb(input$enrichment_organism),
-                keyType = get_gene_keytype(input$enrichment_organism),
-                ont = ont,
-                pvalueCutoff = 1,  # Get ALL results, filter later
-                qvalueCutoff = 1,
-                pAdjustMethod = input$enrichment_correction,
-                minGSSize = input$enrichment_minGS,
-                maxGSSize = input$enrichment_maxGS
-              )
+              ora_result <- tx_run_enrichGO(gene_list, tx_enr_key(), ont,
+                input$enrichment_correction, input$enrichment_minGS, input$enrichment_maxGS)
               
             } else if (db == "KEGG") {
               # KEGG analysis - requires Entrez IDs
-              print("ORA: Converting genes to Entrez IDs for KEGG")
-              
-              entrez_genes <- convert_to_entrez(gene_list, input$enrichment_organism)
-              print(paste("ORA: Converted to", length(entrez_genes), "Entrez IDs"))
-              
-              if (length(entrez_genes) < 5) {
-                print("ORA: Not enough Entrez IDs for KEGG analysis")
-                errors_list[[db]] <- "Could not convert enough genes to Entrez IDs"
+              ora_result <- tx_run_enrichKEGG(gene_list, tx_enr_key(),
+                input$enrichment_correction, input$enrichment_minGS, input$enrichment_maxGS)
+              if (is.null(ora_result)) {
+                errors_list[[db]] <- "KEGG unavailable for this species or too few mapped genes"
                 next
               }
-              
-              ora_result <- clusterProfiler::enrichKEGG(
-                gene = entrez_genes,
-                organism = get_kegg_org(input$enrichment_organism),
-                pvalueCutoff = 1,  # Get ALL results
-                qvalueCutoff = 1,
-                pAdjustMethod = input$enrichment_correction,
-                minGSSize = input$enrichment_minGS,
-                maxGSSize = input$enrichment_maxGS
-              )
               
             } else if (db == "REACTOME") {
               # Reactome analysis - requires Entrez IDs
@@ -114149,6 +114185,120 @@ document.addEventListener("DOMContentLoaded", function() {
            "ecoli" = org.EcK12.eg.db::org.EcK12.eg.db,
            org.Hs.eg.db::org.Hs.eg.db)  # Default to human
   }
+
+  # ---- Multi-species enrichment: curated fast-path + AnnotationHub on-demand ----
+  tx_get_orgdb <- function(key) {
+    if (is.null(key) || !nzchar(key)) return(NULL)
+    if (key %in% tx_curated_keys) return(get_orgdb(key))
+    if (exists(key, envir = tx_orgdb_cache, inherits = FALSE)) return(get(key, envir = tx_orgdb_cache))
+    if (is.null(tx_species_index)) return(NULL)
+    row <- tx_species_index[tx_species_index$ah_accession == key |
+                            tx_species_index$scientific_name == key, , drop = FALSE]
+    if (!nrow(row)) return(NULL)
+    db <- tryCatch(suppressMessages({
+      ah <- AnnotationHub::AnnotationHub(); ah[[row$ah_accession[1]]]
+    }), error = function(e) NULL)
+    if (!is.null(db)) assign(key, db, envir = tx_orgdb_cache)
+    db
+  }
+  tx_get_kegg_code <- function(key) {
+    if (is.null(key) || !nzchar(key)) return(NULL)
+    if (key %in% tx_curated_keys) return(get_kegg_org(key))
+    if (is.null(tx_species_index)) return(NULL)
+    row <- tx_species_index[tx_species_index$ah_accession == key |
+                            tx_species_index$scientific_name == key, , drop = FALSE]
+    if (!nrow(row) || is.na(row$kegg_code[1])) return(NULL)
+    row$kegg_code[1]
+  }
+  tx_enr_key <- function() {
+    if (isTRUE(input$enrichment_organism == "__other__")) {
+      sp <- input$enrichment_species_other
+      if (is.null(sp) || !nzchar(sp) || is.null(tx_species_index)) return(NULL)
+      return(tx_species_index$ah_accession[match(sp, tx_species_index$scientific_name)])
+    }
+    input$enrichment_organism
+  }
+  tx_run_enrichGO <- function(genes, key, ont, padj, minGS, maxGS) {
+    orgdb <- tx_get_orgdb(key); if (is.null(orgdb)) return(NULL)
+    if (key %in% tx_curated_keys) {
+      clusterProfiler::enrichGO(gene = genes, OrgDb = orgdb,
+        keyType = get_gene_keytype(key), ont = ont, pvalueCutoff = 1, qvalueCutoff = 1,
+        pAdjustMethod = padj, minGSSize = minGS, maxGSSize = maxGS)
+    } else {
+      ent <- tx_map_to_entrez(genes, orgdb); if (length(ent) < 3) return(NULL)
+      clusterProfiler::enrichGO(gene = ent, OrgDb = orgdb, keyType = "ENTREZID", ont = ont,
+        pvalueCutoff = 1, qvalueCutoff = 1, pAdjustMethod = padj,
+        minGSSize = minGS, maxGSSize = maxGS, readable = TRUE)
+    }
+  }
+  tx_run_enrichKEGG <- function(genes, key, padj, minGS, maxGS) {
+    code <- tx_get_kegg_code(key); if (is.null(code)) return(NULL)
+    ent <- if (key %in% tx_curated_keys) convert_to_entrez(genes, key)
+           else tx_map_to_entrez(genes, tx_get_orgdb(key))
+    if (length(ent) < 3) return(NULL)
+    clusterProfiler::enrichKEGG(gene = ent, organism = code, pvalueCutoff = 1,
+      qvalueCutoff = 1, pAdjustMethod = padj, minGSSize = minGS, maxGSSize = maxGS)
+  }
+  # ---- GSEA for non-curated species: rank->ENTREZID then gseGO / gseKEGG ----
+  tx_rank_to_entrez <- function(ranked, orgdb) {
+    nm <- names(ranked)
+    det <- tryCatch(detect_gene_id_type(nm), error = function(e) list(id_type = "symbol"))
+    if (identical(det$id_type, "entrez")) return(sort(ranked, decreasing = TRUE))
+    ktm <- c(ensembl_gene = "ENSEMBL", ensembl_transcript = "ENSEMBLTRANS",
+             ensembl_protein = "ENSEMBLPROT", symbol = "SYMBOL",
+             uniprot = "UNIPROT", refseq = "REFSEQ")
+    kt <- ktm[[det$id_type]]
+    avail <- tryCatch(AnnotationDbi::keytypes(orgdb), error = function(e) character(0))
+    if (is.null(kt) || !(kt %in% avail)) { if ("SYMBOL" %in% avail) kt <- "SYMBOL" else return(NULL) }
+    dm <- function(keys) suppressMessages(tryCatch(
+      AnnotationDbi::mapIds(orgdb, keys = keys, column = "ENTREZID", keytype = kt, multiVals = "first"),
+      error = function(e) setNames(rep(NA, length(keys)), keys)))
+    m <- dm(nm); if (sum(!is.na(m)) == 0) m <- dm(sub("\\.[0-9]+$", "", nm))
+    ent <- as.character(m); ok <- !is.na(ent)
+    if (!any(ok)) return(NULL)
+    v <- ranked[ok]; names(v) <- ent[ok]
+    v <- tapply(v, names(v), function(x) x[which.max(abs(x))])
+    sort(v, decreasing = TRUE)
+  }
+  tx_run_gsea <- function(db, ranked, key, minGS, maxGS) {
+    orgdb <- tx_get_orgdb(key); if (is.null(orgdb)) return(NULL)
+    rk <- tx_rank_to_entrez(ranked, orgdb); if (is.null(rk) || length(rk) < 10) return(NULL)
+    res <- tryCatch({
+      if (grepl("^GO", db)) {
+        clusterProfiler::gseGO(geneList = rk, OrgDb = orgdb, keyType = "ENTREZID",
+          ont = sub("GO_", "", db), minGSSize = minGS, maxGSSize = maxGS,
+          pvalueCutoff = 1, verbose = FALSE)
+      } else if (db == "KEGG") {
+        code <- tx_get_kegg_code(key); if (is.null(code)) return(NULL)
+        clusterProfiler::gseKEGG(geneList = rk, organism = code, keyType = "ncbi-geneid",
+          minGSSize = minGS, maxGSSize = maxGS, pvalueCutoff = 1, verbose = FALSE)
+      } else NULL
+    }, error = function(e) { message("tx_run_gsea ", db, " err: ", conditionMessage(e)); NULL })
+    if (is.null(res)) return(NULL)
+    gs <- tryCatch(res@geneSets, error = function(e) NULL)
+    if (grepl("^GO", db)) res <- tryCatch(clusterProfiler::setReadable(res, orgdb, "ENTREZID"),
+                                          error = function(e) res)
+    df <- as.data.frame(res); if (nrow(df) == 0) return(NULL)
+    df$Database <- db
+    if (!"Description" %in% names(df)) df$Description <- df$ID
+    df$pathway <- df$ID
+    if (!"setSize" %in% names(df)) df$setSize <- NA
+    df$Count <- df$setSize
+    attr(df, "gene_sets") <- gs
+    df
+  }
+  updateSelectizeInput(session, "enrichment_species_other",
+    choices = if (!is.null(tx_species_index)) sort(tx_species_index$scientific_name) else character(0),
+    server = TRUE)
+  output$enrichment_caps <- renderText({
+    k <- tx_enr_key(); if (is.null(k) || is.na(k)) return("")
+    go <- (k %in% tx_curated_keys) ||
+          (!is.null(tx_species_index) && k %in% tx_species_index$ah_accession)
+    kg <- !is.null(tx_get_kegg_code(k))
+    paste0("Available for this species: GO ", if (go) "\u2713" else "\u2717",
+           " | KEGG ", if (kg) "\u2713" else "\u2717",
+           "  (Reactome / WikiPathways / Hallmark: human & common models only)")
+  })
   
   # Get KEGG organism code
   get_kegg_org <- function(organism) {
