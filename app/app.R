@@ -20957,25 +20957,45 @@ tx_changelog_full   <- function()      tagList(lapply(tx_changelog,         tx_c
 
 # Footer passed to navbarPage(footer = ...) so it appears on EVERY tab.
 tx_footer_ui <- tags$footer(
-  class = "tx-app-footer",
+  class = "tx-home-footer",
   tags$div(
-    class = "tx-footer-grid",
+    class = "tx-hf-inner",
     tags$div(
-      class = "tx-footer-col",
-      tags$div(class = "tx-footer-h", icon("bullhorn"), " What's New"),
-      tx_changelog_footer(3),
-      actionLink("tx_changelog_seeall", "See all updates \u2192", class = "tx-cl-seeall")
+      class = "tx-hf-top",
+      tags$div(
+        class = "tx-hf-about",
+        tags$div(class = "tx-hf-logo",
+                 tags$span(class = "tx-hf-mark", "TX"), tags$span("TransXplorer")),
+        tags$p("TransXplorer is developed by Verma, Oler, Syed, Han, Berjanskii, Mason, Wishart, and Wong \u2014 a free, browser-based RNA-seq analysis platform built for biologists.")
+      ),
+      tags$div(
+        class = "tx-hf-col",
+        tags$h4("What's New"),
+        tags$div(class = "tx-hf-cl", tx_changelog_footer(3)),
+        actionLink("tx_changelog_seeall", "See all updates \u2192", class = "tx-hf-link")
+      ),
+      tags$div(
+        class = "tx-hf-col",
+        tags$h4("Feedback & questions"),
+        tags$p(class = "tx-hf-fbtext", "Found a bug, have a question, or an idea? We'd love to hear it."),
+        actionButton("tx_feedback_open", tagList(icon("paper-plane"), " Send feedback"), class = "tx-hf-btn")
+      )
     ),
     tags$div(
-      class = "tx-footer-col",
-      tags$div(class = "tx-footer-h", icon("comment-dots"), " Feedback & questions"),
-      tags$p(class = "tx-fb-prompt", "Found a bug, have a question, or an idea? We'd love to hear it."),
-      actionButton("tx_feedback_open", tagList(icon("paper-plane"), " Send feedback"), class = "tx-fb-btn")
+      class = "tx-hf-cite",
+      tags$button(class = "tx-hf-copy",
+                  onclick = "navigator.clipboard.writeText(document.getElementById('tx-hf-cite-text').innerText); var b=this; b.innerText='Copied'; setTimeout(function(){b.innerText='Copy';},1500);",
+                  "Copy"),
+      tags$div(class = "tx-hf-cite-label", "Cite us"),
+      tags$span(id = "tx-hf-cite-text",
+                "Verma VM, Oler E, Syed H, Han S, Berjanskii M, Mason AL, Wishart DS, Wong GK. TransXplorer: An automated translational discovery platform for RNA-seq data. bioRxiv. 2026. doi:10.64898/2026.05.15.724657")
+    ),
+    tags$div(
+      class = "tx-hf-bottom",
+      tags$span("\u00a9 2026 TransXplorer authors \u00b7 University of Alberta \u00b7 MIT License"),
+      tags$a(href = "https://transxplorer.org", "transxplorer.org", target = "_blank", rel = "noopener")
     )
-  ),
-  tags$div(class = "tx-footer-base",
-           "TransXplorer \u00b7 University of Alberta \u00b7 ",
-           tags$a(href = "https://transxplorer.org", "transxplorer.org", target = "_blank", rel = "noopener"))
+  )
 )
 
 # ===== Multi-species enrichment: on-demand AnnotationHub OrgDb support =====
@@ -21105,6 +21125,33 @@ ui <- fluidPage(
       .modern-footer-content p { font-size:1rem !important; line-height:1.6 !important; color:#3a4660 !important; margin:0 0 8px !important; }
       .modern-footer-content p:last-child { color:#5a6580 !important; }
       .modern-footer-content a { color:#1565c0 !important; }
+    ")),
+    tags$style(HTML("
+      .tx-home-footer { background:linear-gradient(180deg,#0f172a 0%,#0b1226 100%); color:#cbd5e1; padding:56px 28px 26px; margin-top:48px; font-family:'Inter',sans-serif; }
+      .tx-hf-inner { max-width:1180px; margin:0 auto; }
+      .tx-hf-top { display:grid; grid-template-columns:1.7fr 1fr 1fr; gap:48px; padding-bottom:32px; border-bottom:1px solid rgba(255,255,255,0.10); }
+      .tx-hf-about .tx-hf-logo { display:flex; align-items:center; gap:10px; color:#fff; font-weight:700; font-size:1.3rem; margin-bottom:14px; }
+      .tx-hf-mark { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,#38bdf8,#34d399); color:#06203a; font-weight:800; font-size:0.92rem; }
+      .tx-hf-about p { font-size:0.92rem; line-height:1.65; color:#94a3b8; max-width:380px; }
+      .tx-hf-col h4 { font-weight:700; font-size:0.8rem; letter-spacing:0.08em; text-transform:uppercase; color:#e2e8f0; margin:0 0 16px; }
+      .tx-hf-fbtext { font-size:0.9rem; color:#94a3b8; line-height:1.55; margin-bottom:14px; }
+      .tx-hf-link { color:#7cc4ff !important; font-size:0.9rem; font-weight:600; text-decoration:none; cursor:pointer; display:inline-block; margin-top:8px; }
+      .tx-hf-link:hover { color:#fff !important; text-decoration:none; }
+      .tx-hf-btn { background:#2563eb !important; color:#fff !important; border:none; font-weight:600; font-size:0.9rem; padding:9px 18px; border-radius:8px; }
+      .tx-hf-btn:hover { background:#1d4ed8 !important; color:#fff !important; }
+      .tx-hf-cl .tx-cl-entry { display:flex; align-items:baseline; gap:9px; margin-bottom:11px; font-size:0.88rem; line-height:1.45; }
+      .tx-hf-cl .tx-cl-chip { color:#fff; font-size:0.62rem; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:2px 8px; border-radius:11px; flex:0 0 auto; }
+      .tx-hf-cl .tx-cl-date { color:#7c8aa3; font-variant-numeric:tabular-nums; flex:0 0 auto; font-size:0.82rem; }
+      .tx-hf-cl .tx-cl-text { color:#c3cede; }
+      .tx-hf-cite { margin-top:28px; padding:18px 22px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; font-family:'Source Code Pro','Menlo','Courier New',monospace; font-size:0.8rem; line-height:1.6; color:#cbd5e1; position:relative; }
+      .tx-hf-cite-label { font-size:0.7rem; letter-spacing:0.08em; text-transform:uppercase; color:#94a3b8; margin-bottom:6px; font-weight:700; font-family:'Inter',sans-serif; }
+      .tx-hf-copy { position:absolute; top:14px; right:14px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); color:#cbd5e1; border-radius:6px; font-size:0.78rem; padding:4px 12px; cursor:pointer; }
+      .tx-hf-copy:hover { background:rgba(59,130,246,0.25); color:#fff; }
+      .tx-hf-bottom { margin-top:24px; padding-top:20px; display:flex; justify-content:space-between; align-items:center; gap:16px; font-size:0.8rem; color:#64748b; flex-wrap:wrap; }
+      .tx-hf-bottom a { color:#94a3b8; }
+      .tx-hf-bottom a:hover { color:#fff; }
+      @media (max-width:860px){ .tx-hf-top { grid-template-columns:1fr 1fr; gap:28px; } .tx-hf-about { grid-column:1 / -1; } }
+      @media (max-width:560px){ .tx-hf-top { grid-template-columns:1fr; } }
     ")),
     # Umami analytics — privacy-friendly, self-hosted, no cookies
     HTML('<script async defer src="/umami/script.js" data-website-id="f36cf0d0-02d4-4d2e-b41d-a994589d94b3"></script>')
@@ -21658,38 +21705,7 @@ ui <- fluidPage(
                                      )
                             )
                ),
-               div(
-                 style = "max-width: 1100px; margin: 40px auto 0 auto; padding: 24px 28px; background: linear-gradient(135deg, #f0f7ff 0%, #e8f4fd 100%); border: 1px solid #bee5eb; border-left: 4px solid #0c5460; border-radius: 10px;",
-                 h4(icon("quote-left"), " How to Cite TransXplorer", style = "margin-top: 0; color: #0c5460; font-weight: 600;"),
-                 p(style = "color: #0c5460; line-height: 1.6; margin-bottom: 12px;",
-                   "If you use TransXplorer in your research, please cite our bioRxiv preprint:"
-                 ),
-                 div(
-                   style = "font-family: 'Source Code Pro', 'Menlo', 'Courier New', monospace; font-size: 0.92em; color: #0c5460; background: rgba(255,255,255,0.65); padding: 14px 16px; border-radius: 6px; line-height: 1.55; margin-bottom: 12px;",
-                   "Verma VM, Oler E, Syed H, Han S, Berjanskii M, Mason AL, Wishart DS, Wong GK. ",
-                   em("TransXplorer: An automated translational discovery platform for RNA-seq data."),
-                   " bioRxiv. 2026. doi: ",
-                   a(href = "https://doi.org/10.64898/2026.05.15.724657",
-                     "10.64898/2026.05.15.724657",
-                     style = "color: #0c5460; text-decoration: underline;",
-                     target = "_blank", rel = "noopener")
-                 ),
-                 p(style = "font-size: 0.88em; color: #0c5460; margin-bottom: 0;",
-                   icon("external-link-alt"), " ",
-                   a(href = "https://doi.org/10.64898/2026.05.15.724657",
-                     "View on bioRxiv →",
-                     style = "color: #0c5460; text-decoration: underline; font-weight: 600;",
-                     target = "_blank", rel = "noopener")
-                 )
-               ),
-               tags$footer(
-                 class = "modern-footer",
-                 div(
-                   class = "modern-footer-content",
-                   p("Developed by Varinder Madhav Verma, Eponine Oler, Hussain Syed, Scott Han, Mark Berjanskii, Andrew L. Mason, David Scott Wishart, and Gane Ka-Shu Wong @ University of Alberta"),
-                   p("Contact: varinde2@ualberta.ca | ", a(href = "https://transxplorer.org", "transxplorer.org"))
-                 )
-               )
+               tags$div()
       )
     ),
     
