@@ -20933,6 +20933,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-06-24", tag = "New",      text = "Functional enrichment (ORA & GSEA) now covers ~1,900 species via on-demand AnnotationHub, including non-model organisms."),
   list(date = "2026-06-11", tag = "New",      text = "Added this What's New feed and a feedback form to the footer."),
   list(date = "2026-06-10", tag = "Improved", text = "GSEA visualisations (classic + dot plot) and PCA/UMAP plot downloads."),
   list(date = "2026-06-09", tag = "Improved", text = "Volcano plot symmetric x-axis and a heatmap usability bundle (paste-list, manual genes, orientation toggle).")
@@ -21084,6 +21085,26 @@ ui <- fluidPage(
       .tx-footer-base { text-align:center; color:#9aa3b2; font-size:0.78rem; margin-top:18px; padding-top:12px; border-top:1px solid #eef1f6; }
       .tx-cl-modal .tx-cl-entry { margin-bottom:11px; font-size:0.9rem; }
       @media (max-width:640px){ .tx-footer-grid{ flex-direction:column; gap:20px; } }
+    ")),
+    # ---- Typography polish for footer + credits (overrides) ----
+    tags$style(HTML("
+      .tx-app-footer { padding:34px 28px 22px !important; }
+      .tx-footer-grid { gap:56px !important; max-width:1100px !important; }
+      .tx-footer-col { flex:1 1 360px !important; }
+      .tx-footer-h { font-size:1.2rem !important; color:#152a4e !important; margin-bottom:16px !important; letter-spacing:-0.01em; }
+      .tx-cl-entry { font-size:0.95rem !important; gap:11px !important; margin-bottom:12px !important; line-height:1.5 !important; }
+      .tx-cl-chip { font-size:0.7rem !important; padding:3px 10px !important; border-radius:12px !important; }
+      .tx-cl-date { font-size:0.9rem !important; color:#7c889c !important; }
+      .tx-cl-text { color:#2c3a55 !important; }
+      .tx-cl-seeall { font-size:0.92rem !important; margin-top:10px !important; }
+      .tx-fb-prompt { font-size:0.95rem !important; color:#2c3a55 !important; margin-bottom:16px !important; line-height:1.5; }
+      .tx-fb-btn { font-size:0.95rem !important; padding:10px 22px !important; }
+      .tx-footer-base { font-size:0.9rem !important; color:#8a93a6 !important; margin-top:26px !important; padding-top:16px !important; }
+      .modern-footer { margin-top:36px !important; padding:26px 20px 10px !important; border-top:1px solid #e8ecf3 !important; }
+      .modern-footer-content { max-width:1000px; margin:0 auto; text-align:center; }
+      .modern-footer-content p { font-size:1rem !important; line-height:1.6 !important; color:#3a4660 !important; margin:0 0 8px !important; }
+      .modern-footer-content p:last-child { color:#5a6580 !important; }
+      .modern-footer-content a { color:#1565c0 !important; }
     ")),
     # Umami analytics — privacy-friendly, self-hosted, no cookies
     HTML('<script async defer src="/umami/script.js" data-website-id="f36cf0d0-02d4-4d2e-b41d-a994589d94b3"></script>')
@@ -29854,8 +29875,8 @@ ui <- fluidPage(
       )
     ),
 
-    # ---- Footer on EVERY tab: What's New + Feedback ----
-    footer = tx_footer_ui
+    # ---- What's New + Feedback footer: HOME PAGE ONLY (rendered via tx_home_footer) ----
+    footer = uiOutput("tx_home_footer")
   ),
   
   # At the end of your UI
@@ -114289,7 +114310,8 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   updateSelectizeInput(session, "enrichment_species_other",
     choices = if (!is.null(tx_species_index)) sort(tx_species_index$scientific_name) else character(0),
-    server = TRUE)
+    server = FALSE)
+  output$tx_home_footer <- renderUI({ if (isTRUE(input$main_tabs == "Home")) tx_footer_ui else NULL })
   output$enrichment_caps <- renderText({
     k <- tx_enr_key(); if (is.null(k) || is.na(k)) return("")
     go <- (k %in% tx_curated_keys) ||
