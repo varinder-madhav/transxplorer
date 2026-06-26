@@ -24785,6 +24785,21 @@ ui <- fluidPage(
                                    )
                                  ),
                                  
+                                 # Bridge to full multi-species enrichment (Enrichment Analysis tab)
+                                 fluidRow(
+                                   column(12,
+                                          div(
+                                            style = "margin:6px 0 14px; padding:13px 15px; background:#eef4fb; border:1px solid #d6e4f5; border-radius:8px; font-size:0.9rem; color:#2c3a55; line-height:1.5;",
+                                            icon("circle-info"),
+                                            HTML(" Pathway enrichment above (Enrichr) covers human, mouse and several model organisms. For other species \u2014 or for GO/KEGG over-representation and GSEA across ~1,900 species \u2014 use the full Enrichment Analysis tab; your significant DEGs are carried over automatically."),
+                                            div(style = "margin-top:10px;",
+                                                actionButton("deg_goto_enrichment",
+                                                             tagList(icon("up-right-from-square"), " Open full Enrichment Analysis"),
+                                                             class = "btn btn-outline-primary btn-sm"))
+                                          )
+                                   )
+                                 ),
+
                                  # Gene count information
                                  fluidRow(
                                    column(12,
@@ -81128,6 +81143,33 @@ document.addEventListener("DOMContentLoaded", function() {
   observeEvent(input$ppi_goto_enrichment, {
     updateTabsetPanel(session, "ppi_standalone_results_tabs", selected = "ppi_detailed")
     updateTabsetPanel(session, "ppi_detailed_subtabs", selected = "Pathway Enrichment")
+  })
+
+  # Carry DE-workflow DEGs into the full multi-species Enrichment Analysis tab
+  observeEvent(input$deg_goto_enrichment, {
+    degs <- tryCatch(deg_data(), error = function(e) NULL)
+    genes <- character(0)
+    if (!is.null(degs) && is.data.frame(degs) && nrow(degs) > 0 && "gene_id" %in% names(degs)) {
+      sig <- degs
+      padj_cols <- intersect(c("adj.P.Val","padj","FDR","p.adjust","adjusted_pvalue","qvalue"), names(degs))
+      if (length(padj_cols)) sig <- sig[!is.na(sig[[padj_cols[1]]]) & sig[[padj_cols[1]]] < 0.05, , drop = FALSE]
+      if ("log2FC" %in% names(sig)) sig <- sig[!is.na(sig$log2FC) & abs(sig$log2FC) > 1, , drop = FALSE]
+      genes <- unique(as.character(sig$gene_id)); genes <- genes[!is.na(genes) & genes != ""]
+      if (length(genes) < 5 && "log2FC" %in% names(degs)) {
+        o <- order(abs(degs$log2FC), decreasing = TRUE)
+        genes <- unique(as.character(degs$gene_id[head(o, 500)])); genes <- genes[!is.na(genes) & genes != ""]
+      }
+      if (length(genes) > 3000) genes <- genes[1:3000]
+    }
+    if (length(genes) > 0) {
+      updateRadioButtons(session, "enrichment_mode", selected = "ora")
+      updateRadioButtons(session, "ora_inputType", selected = "paste")
+      updateTextAreaInput(session, "ora_gene_list", value = paste(genes, collapse = "\n"))
+      showNotification(paste0("Loaded ", length(genes), " genes into the Enrichment Analysis tab \u2014 pick databases and run ORA, or switch to GSEA."), type = "message", duration = 8)
+    } else {
+      showNotification("No DEG results to carry over yet \u2014 run DEG analysis first, or paste genes in the Enrichment tab.", type = "warning", duration = 8)
+    }
+    updateNavbarPage(session, "main_tabs", selected = "enrichment_analysis")
   })
   
   # Network view controls
