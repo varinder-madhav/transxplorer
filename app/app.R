@@ -15209,7 +15209,7 @@ clean_gene_list_for_ppi <- function(genes) {
 }
 
 # STRING database query - uses local data for human/mouse, API for other species
-query_string_database_safe <- function(genes, organism = "human", confidence = 0.4, max_interactions = 1000) {
+query_string_database_safe <- function(genes, organism = "human", confidence = 0.4, max_interactions = 1000, network_type = "full") {
 
   print("Querying STRING database...")
 
@@ -15241,7 +15241,7 @@ query_string_database_safe <- function(genes, organism = "human", confidence = 0
 
   if (species_id %in% local_species) {
     local_result <- tryCatch({
-      query_string_local(genes, species_id, confidence, string_data_path)
+      query_string_local(genes, species_id, confidence, string_data_path, network_type)
     }, error = function(e) {
       print(paste("Local STRING query failed:", e$message, "- falling back to API"))
       NULL
@@ -15258,15 +15258,19 @@ query_string_database_safe <- function(genes, organism = "human", confidence = 0
 
   # --- API FALLBACK (for non-human/mouse species or when local data unavailable) ---
   print(paste("Using STRING API for species:", species_id))
-  return(query_string_api(genes, species_id, confidence, max_interactions))
+  return(query_string_api(genes, species_id, confidence, max_interactions, network_type))
 }
 
 # Local STRING data query for human and mouse
-query_string_local <- function(genes, species_id, confidence = 0.4, data_path = "/srv/string_data") {
+query_string_local <- function(genes, species_id, confidence = 0.4, data_path = "/srv/string_data", network_type = "full") {
 
   print(paste("Querying local STRING data for species", species_id, "..."))
 
-  links_file <- file.path(data_path, paste0(species_id, ".protein.links.v12.0.txt.gz"))
+  links_suffix <- if (identical(network_type, "physical")) ".protein.physical.links.v12.0.txt.gz" else ".protein.links.v12.0.txt.gz"
+  links_file <- file.path(data_path, paste0(species_id, links_suffix))
+  if (!file.exists(links_file) && identical(network_type, "physical")) {
+    links_file <- file.path(data_path, paste0(species_id, ".protein.links.v12.0.txt.gz"))
+  }
   aliases_file <- file.path(data_path, paste0(species_id, ".protein.aliases.v12.0.txt.gz"))
 
   if (!file.exists(links_file) || !file.exists(aliases_file)) {
@@ -15278,7 +15282,7 @@ query_string_local <- function(genes, species_id, confidence = 0.4, data_path = 
   cache_dir <- file.path(tempdir(), "string_cache")
   if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
   aliases_rds <- file.path(cache_dir, paste0(species_id, "_aliases_symbols.rds"))
-  links_rds <- file.path(cache_dir, paste0(species_id, "_links.rds"))
+  links_rds <- file.path(cache_dir, paste0(species_id, "_", network_type, "_links.rds"))
 
   # --- STEP 1: BUILD GENE SYMBOL → STRING ID MAPPING ---
   if (file.exists(aliases_rds)) {
@@ -15375,7 +15379,8 @@ query_string_local <- function(genes, species_id, confidence = 0.4, data_path = 
 }
 
 # STRING API query (original logic, used as fallback for non-human/mouse species)
-query_string_api <- function(genes, species_id, confidence = 0.4, max_interactions = 1000) {
+query_string_api <- function(genes, species_id, confidence = 0.4, max_interactions = 1000, network_type = "full") {
+  string_net_type <- if (identical(network_type, "physical")) "physical" else "functional"
 
   print(paste("Querying STRING API for species", species_id, "..."))
 
@@ -15446,6 +15451,7 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
             identifiers = chunk_ids_for_api,
             species = species_id,
             required_score = as.integer(confidence * 1000),
+            network_type = string_net_type,
             limit = 0,
             caller_identity = "TransXplorer"
           ),
@@ -15476,6 +15482,7 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
           identifiers = string_ids_for_api,
           species = species_id,
           required_score = as.integer(confidence * 1000),
+          network_type = string_net_type,
           limit = 0,
           caller_identity = "TransXplorer"
         ),
@@ -20933,6 +20940,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-08-12", tag = "New",      text = "Standalone PPI analysis now lets you choose Functional or Physical STRING networks, served from local data for human and mouse (faster, no rate limits)."),
+  list(date = "2026-08-12", tag = "Improved", text = "Smoother updates \u2014 if the platform is briefly updating, you now see a friendly maintenance page instead of an error."),
   list(date = "2026-06-24", tag = "New",      text = "Functional enrichment (ORA & GSEA) now covers ~1,900 species via on-demand AnnotationHub, including non-model organisms."),
   list(date = "2026-06-11", tag = "New",      text = "Added this What's New feed and a feedback form to the footer."),
   list(date = "2026-06-10", tag = "Improved", text = "GSEA visualisations (classic + dot plot) and PCA/UMAP plot downloads."),
@@ -21133,9 +21142,7 @@ ui <- fluidPage(
       .tx-hf-bottom a:hover { color:#fff; }
       @media (max-width:860px){ .tx-hf-top { grid-template-columns:1fr 1fr; gap:30px; } .tx-hf-about { grid-column:1 / -1; } }
       @media (max-width:560px){ .tx-hf-top { grid-template-columns:1fr; } .tx-hf-cite { padding:20px 24px 56px; } .tx-hf-copy { top:auto; bottom:14px; right:16px; } }
-    ")),
-    # Umami analytics — privacy-friendly, self-hosted, no cookies
-    HTML('<script async defer src="/umami/script.js" data-website-id="f36cf0d0-02d4-4d2e-b41d-a994589d94b3"></script>')
+    "))
   ),
   
   
@@ -27211,6 +27218,15 @@ ui <- fluidPage(
                                       min = 10,
                                       max = 500,
                                       step = 10)
+                  )
+                ),
+
+                fluidRow(
+                  column(12,
+                         radioButtons("ppi_standalone_network_type", "STRING network type",
+                                      choices = c("Functional (all evidence channels)" = "full",
+                                                  "Physical subnetwork only" = "physical"),
+                                      selected = "full", inline = TRUE)
                   )
                 ),
                 
@@ -42645,7 +42661,8 @@ server <- function(input, output, session) {
           genes = final_genes,
           organism = organism_name,
           confidence = confidence,
-          max_interactions = 2000
+          max_interactions = 2000,
+          network_type = input$ppi_standalone_network_type %||% "full"
         )
 
         if (is.null(ppi_interactions) || nrow(ppi_interactions) == 0) {
@@ -115768,6 +115785,7 @@ document.addEventListener("DOMContentLoaded", function() {
              dpi = 300)
     }
   )
+
 }
   
   # Set options for maximum file upload size
