@@ -20940,6 +20940,10 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-10-05", tag = "New",      text = "Four new Learn guides: Working with Your Own Data, From GEO Accession to Results, Working with TCGA Cancer Data, and Your First FASTQ to Results Workflow."),
+  list(date = "2026-10-05", tag = "Fixed",    text = "FASTQ processing: HISAT2 runs complete again, every genome now uses its own matching index and annotation, Salmon downloads work, queued jobs start automatically, and Illumina _R1_001 file names are accepted."),
+  list(date = "2026-10-05", tag = "Fixed",    text = "TCGA: differential expression now always compares primary tumour vs normal, and survival analysis counts each patient once (primary tumour samples only)."),
+  list(date = "2026-10-05", tag = "Improved", text = "GEO import skips normalised (FPKM/TPM) tables instead of treating them as counts, and batch metadata files can be tab-separated."),
   list(date = "2026-08-12", tag = "New",      text = "Standalone PPI analysis now lets you choose Functional or Physical STRING networks, served from local data for human and mouse (faster, no rate limits)."),
   list(date = "2026-08-12", tag = "Improved", text = "Smoother updates \u2014 if the platform is briefly updating, you now see a friendly maintenance page instead of an error."),
   list(date = "2026-06-24", tag = "New",      text = "Functional enrichment (ORA & GSEA) now covers ~1,900 species via on-demand AnnotationHub, including non-model organisms."),
@@ -21112,7 +21116,10 @@ ui <- fluidPage(
       .tx-fb-btn:hover { background:#0d47a1 !important; color:#fff !important; }
       .tx-fb-note { font-size:0.78rem; color:#8a93a6; margin-top:-8px; margin-bottom:12px; }
       .tx-footer-base { text-align:center; color:#9aa3b2; font-size:0.78rem; margin-top:18px; padding-top:12px; border-top:1px solid #eef1f6; }
-      .tx-cl-modal .tx-cl-entry { margin-bottom:11px; font-size:0.9rem; }
+      .tx-cl-modal .tx-cl-entry { margin-bottom:14px; font-size:15px !important; line-height:1.55 !important; gap:12px; }
+      .tx-cl-modal .tx-cl-chip { font-size:11.5px !important; padding:3px 10px !important; min-width:88px; text-align:center; }
+      .tx-cl-modal .tx-cl-date { font-size:14px !important; }
+      .tx-cl-modal .tx-cl-text { font-size:15px !important; color:#2b3447 !important; }
       @media (max-width:640px){ .tx-footer-grid{ flex-direction:column; gap:20px; } }
     ")),
     # ---- Dark home footer styles (Learn-matched; px sizes for crisp, readable text) ----
@@ -21657,7 +21664,7 @@ ui <- fluidPage(
                                      h2(class = "modern-section-title animate-on-scroll", style = "color: white;", "TransXplorer Impact"),
                                      tags$div(class = "modern-stats-grid",
                                               tags$div(class = "modern-stat-item animate-on-scroll",
-                                                       tags$div(class = "modern-stat-number", "35+"),
+                                                       tags$div(class = "modern-stat-number", "33"),
                                                        tags$div(class = "modern-stat-label", "TCGA Cancer Types")
                                               ),
                                               tags$div(class = "modern-stat-item animate-on-scroll",
@@ -23223,7 +23230,7 @@ ui <- fluidPage(
                 ),
                 div(style = "display: flex; gap: 6px; align-items: center;",
                     textInput("geo_accession_input", NULL,
-                              placeholder = "Enter GEO ID (e.g. GSE151427)",
+                              placeholder = "Enter GEO ID (e.g. GSE52778)",
                               width = "100%"),
                     actionButton("fetch_geo_btn",
                                  HTML('<i class="fa fa-download"></i> Fetch'),
@@ -44053,16 +44060,17 @@ server <- function(input, output, session) {
   }
   
   clean_counts_data <- function(counts_file) {
-    # Read the file with proper header handling
-    counts_raw <- read.table(counts_file, header = TRUE, sep = "\t", 
-                             stringsAsFactors = FALSE, check.names = FALSE, 
+    # Returns Geneid + one count column per sample, ready to upload for DE analysis.
+    # Handles featureCounts output (Geneid, Chr, Start, End, Strand, Length, samples...)
+    # and the Salmon/tximport matrix (Geneid, samples...).
+    counts_raw <- read.table(counts_file, header = TRUE, sep = "\t",
+                             stringsAsFactors = FALSE, check.names = FALSE,
                              comment.char = "#")
-    
-    # Extract gene information (first 6 columns: Geneid, Chr, Start, End, Strand, Length)
-    gene_info <- counts_raw[, 1:6]
-    
-    # Extract count columns (from column 7 onwards)
-    count_cols <- counts_raw[, 7:ncol(counts_raw), drop = FALSE]
+
+    fc_annot_cols <- c("Chr", "Start", "End", "Strand", "Length")
+    n_info <- if (ncol(counts_raw) >= 7 && identical(colnames(counts_raw)[2:6], fc_annot_cols)) 6 else 1
+    gene_info <- counts_raw[, 1, drop = FALSE]
+    count_cols <- counts_raw[, (n_info + 1):ncol(counts_raw), drop = FALSE]
     
     # Clean sample names - extract just the filename without path and extension
     clean_names <- colnames(count_cols)
@@ -45492,10 +45500,19 @@ server <- function(input, output, session) {
       
       # Check paired-end naming
       if (input$sequencing_type == "paired") {
-        r1_files <- grepl("_R1\\.", file_names, ignore.case = TRUE)
-        r2_files <- grepl("_R2\\.", file_names, ignore.case = TRUE)
+        # Accept SampleName_R1.fastq.gz and Illumina's SampleName_R1_001.fastq.gz
+        r1_files <- grepl("_R1(_[0-9]{3})?\\.", file_names, ignore.case = TRUE)
+        r2_files <- grepl("_R2(_[0-9]{3})?\\.", file_names, ignore.case = TRUE)
         if (sum(r1_files) != sum(r2_files) || (sum(r1_files) + sum(r2_files)) != length(file_names)) {
-          errors <- c(errors, "❌ Paired-end files must follow naming pattern: SampleName_R1.fastq.gz and SampleName_R2.fastq.gz")
+          errors <- c(errors, "❌ Paired-end files must follow naming pattern: SampleName_R1.fastq.gz and SampleName_R2.fastq.gz (Illumina _R1_001 / _R2_001 names are also accepted)")
+        } else {
+          pair_key <- function(x) sub("_R[12](_[0-9]{3})?\\.(fastq|fq)(\\.gz)?$", "", x, ignore.case = TRUE)
+          r1_keys <- pair_key(file_names[r1_files])
+          r2_keys <- pair_key(file_names[r2_files])
+          unpaired <- c(setdiff(r1_keys, r2_keys), setdiff(r2_keys, r1_keys))
+          if (length(unpaired) > 0) {
+            errors <- c(errors, paste0("❌ These samples are missing their R1 or R2 partner: ", paste(unique(unpaired), collapse = ", ")))
+          }
         }
       }
     }
@@ -46805,6 +46822,558 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "is_processing", suspendWhenHidden = FALSE)
   
+  # Launch the FASTQ pipeline in a background R process. Called directly when a
+  # processing slot is free, or later by the queue watcher for queued jobs.
+  queue_watcher <- NULL
+  start_fastq_pipeline <- function() {
+      # Show processing notification
+      showNotification("🚀 Starting RNA-seq analysis pipeline...", type = "message", duration = 3)
+    
+      # Create analysis directory
+      analysis_dir <- create_analysis_directory()
+    
+      # Prepare parameters for processing
+      processing_params <- list(
+        fastq_files_df = input$fastq_files,
+        sequencing_type = input$sequencing_type,
+        genome_build = input$genome_build,
+        quant_method = input$quant_method %||% "hisat2",
+        custom_genome = if(input$genome_build == "custom") input$custom_genome else NULL,
+        custom_gtf = if(input$genome_build == "custom") input$custom_gtf else NULL,
+        custom_genome_name = if(input$genome_build == "custom") input$custom_genome_name else NULL,
+        tmp_dir = analysis_dir
+      )
+    
+      # Disable the button during processing
+      shinyjs::disable("run_processing")
+      shinyjs::runjs("
+        var btn = document.getElementById('run_processing');
+        if (btn) { btn.dataset.originalHtml = btn.innerHTML;
+          btn.innerHTML = '<i class=\"fa fa-spinner fa-spin\" style=\"margin-right:6px;\"></i> Processing...';
+          btn.classList.add('btn-disabled-running'); }
+      ")
+
+      # Pass log file paths to the processing function for file-based progress
+      processing_params$log_file <- pipeline_log_file
+      processing_params$progress_file <- pipeline_progress_file
+
+      # Save completion marker path
+      completion_file <- file.path(tempdir(), paste0("pipeline_done_", session$token, ".rds"))
+      if (file.exists(completion_file)) file.remove(completion_file)
+
+      # Save the processing function and params for the background process
+      bg_params_file <- file.path(tempdir(), paste0("pipeline_params_", session$token, ".rds"))
+      saveRDS(processing_params, bg_params_file)
+
+      # Launch pipeline in BACKGROUND R PROCESS (frees Shiny event loop for live updates)
+      bg_process <- callr::r_bg(
+        function(params_file, completion_file, app_dir) {
+          setwd(app_dir)
+          # Source just the pipeline function (not the whole app)
+          # The function writes progress to files, no Shiny dependencies needed
+          params <- readRDS(params_file)
+
+          write_log <- function(message, type = "info") {
+            timestamp <- format(Sys.time(), "%H:%M:%S")
+            prefix <- switch(type, "info" = "[INFO]", "success" = "[DONE]",
+                            "warning" = "[WARN]", "error" = "[ERROR]", "progress" = "[STEP]", "[INFO]")
+            line <- paste0("[", timestamp, "] ", prefix, " ", message)
+            tryCatch(cat(line, "\n", file = params$log_file, append = TRUE), error = function(e) NULL)
+          }
+
+          write_progress <- function(percent, step) {
+            tryCatch(writeLines(paste0(percent, "|", step), params$progress_file), error = function(e) NULL)
+          }
+
+          # Dynamic thread allocation: 4 (default) <= n <= 8, leaving 2 cores for system/Shiny.
+          # Falls back to 4 if detectCores() fails (e.g., in a cgroup with hidden limits).
+          n_threads <- tryCatch(
+            max(4, min(8, parallel::detectCores() - 2)),
+            error = function(e) 4L
+          )
+
+          # Wrap system() with explicit return-code check.
+          # On non-zero exit: write to log + abort the pipeline cleanly.
+          run_cmd_or_fail <- function(cmd, step, sample_name = NULL) {
+            rc <- tryCatch(system(cmd, intern = FALSE), error = function(e) -1L)
+            if (!is.null(rc) && is.numeric(rc) && rc != 0) {
+              msg <- if (!is.null(sample_name)) {
+                paste0(step, " failed for sample '", sample_name, "' (exit code ", rc, ")")
+              } else {
+                paste0(step, " failed (exit code ", rc, ")")
+              }
+              write_log(msg, "error")
+              stop(msg)
+            }
+            invisible(rc)
+          }
+
+          tryCatch({
+            write_log("Starting FASTQ processing pipeline", "info")
+            write_log(paste("Using", n_threads, "threads per process"), "info")
+            write_progress(5, "Initializing pipeline...")
+
+            input_dir <- file.path(params$tmp_dir, "input")
+            output_dir <- file.path(params$tmp_dir, "output")
+            dir.create(input_dir, recursive = TRUE, showWarnings = FALSE)
+            dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+            dir.create(file.path(output_dir, "fastqc_raw"), recursive = TRUE, showWarnings = FALSE)
+            dir.create(file.path(output_dir, "trimmed"), recursive = TRUE, showWarnings = FALSE)
+            dir.create(file.path(output_dir, "aligned"), recursive = TRUE, showWarnings = FALSE)
+            dir.create(file.path(output_dir, "counts"), recursive = TRUE, showWarnings = FALSE)
+            write_log("Created working directories", "success")
+
+            # Copy files
+            write_progress(10, "Copying uploaded files...")
+            copied_files <- c()
+            for (i in seq_len(nrow(params$fastq_files_df))) {
+              src <- params$fastq_files_df$datapath[i]
+              dst <- file.path(input_dir, params$fastq_files_df$name[i])
+              if (file.copy(src, dst)) {
+                copied_files <- c(copied_files, dst)
+                write_log(paste("Copied:", params$fastq_files_df$name[i]), "success")
+              } else {
+                stop(paste("Failed to copy:", params$fastq_files_df$name[i]))
+              }
+            }
+
+            # Step 1: FastQC raw
+            write_progress(20, "Running FastQC on raw reads...")
+            write_log("Running initial quality control (FastQC)", "progress")
+            fastqc_cmd <- paste("fastqc", paste(shQuote(copied_files), collapse = " "),
+                                "-o", shQuote(file.path(output_dir, "fastqc_raw")),
+                                "-t", min(8, length(copied_files)), "--quiet")
+            if (system(fastqc_cmd, intern = FALSE) != 0) stop("FastQC analysis failed")
+            write_log("FastQC raw reads completed", "success")
+
+            # Step 2: Trimmomatic
+            write_progress(35, "Trimming reads (Trimmomatic)...")
+            write_log("Performing quality trimming (Trimmomatic)", "progress")
+            trimmomatic_jar <- "/usr/share/java/trimmomatic.jar"
+            trimmed_files <- c()
+
+            if (params$sequencing_type == "paired") {
+              r1_files <- sort(copied_files[grepl("_R1|_1\\.", copied_files)])
+              r2_files <- sort(copied_files[grepl("_R2|_2\\.", copied_files)])
+              for (j in seq_along(r1_files)) {
+                r1 <- r1_files[j]; r2 <- r2_files[j]
+                base <- sub("(_R1|_1)(_[0-9]{3})?(\\.(fastq|fq)(\\.gz)?)$", "", basename(r1))
+                out_dir_trim <- file.path(output_dir, "trimmed")
+                trim_cmd <- paste("java -jar", shQuote(trimmomatic_jar), "PE -threads 4 -phred33",
+                  shQuote(r1), shQuote(r2),
+                  shQuote(file.path(out_dir_trim, paste0(base, "_R1_paired.fastq.gz"))),
+                  shQuote(file.path(out_dir_trim, paste0(base, "_R1_unpaired.fastq.gz"))),
+                  shQuote(file.path(out_dir_trim, paste0(base, "_R2_paired.fastq.gz"))),
+                  shQuote(file.path(out_dir_trim, paste0(base, "_R2_unpaired.fastq.gz"))),
+                  "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-PE.fa:2:30:10",
+                  "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36")
+                system(trim_cmd, intern = FALSE)
+                trimmed_files <- c(trimmed_files,
+                  file.path(out_dir_trim, paste0(base, "_R1_paired.fastq.gz")),
+                  file.path(out_dir_trim, paste0(base, "_R2_paired.fastq.gz")))
+                write_log(paste("Trimmed pair:", base), "success")
+              }
+            } else {
+              for (f in copied_files) {
+                base <- sub("(\\.(fastq|fq)(\\.gz)?)$", "", basename(f))
+                out_trimmed <- file.path(output_dir, "trimmed", paste0(base, "_trimmed.fastq.gz"))
+                trim_cmd <- paste("java -jar", shQuote(trimmomatic_jar), "SE -threads 4 -phred33",
+                  shQuote(f), shQuote(out_trimmed),
+                  "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-SE.fa:2:30:10",
+                  "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36")
+                system(trim_cmd, intern = FALSE)
+                trimmed_files <- c(trimmed_files, out_trimmed)
+                write_log(paste("Trimmed:", base), "success")
+              }
+            }
+            write_log("Quality trimming completed", "success")
+
+            # Step 3: FastQC trimmed
+            write_progress(55, "FastQC on trimmed reads...")
+            write_log("Running post-trimming quality control", "progress")
+            dir.create(file.path(output_dir, "fastqc_trimmed"), recursive = TRUE, showWarnings = FALSE)
+            trimmed_for_qc <- trimmed_files[file.exists(trimmed_files)]
+            if (length(trimmed_for_qc) > 0) {
+              fastqc_cmd2 <- paste("fastqc", paste(shQuote(trimmed_for_qc), collapse = " "),
+                                   "-o", shQuote(file.path(output_dir, "fastqc_trimmed")),
+                                   "-t", min(8, length(trimmed_for_qc)), "--quiet")
+              system(fastqc_cmd2, intern = FALSE)
+            }
+            write_log("Post-trimming QC completed", "success")
+
+            quant_method <- params$quant_method %||% "hisat2"
+            counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
+
+            if (quant_method == "salmon") {
+              # ===== SALMON PSEUDO-ALIGNMENT PIPELINE =====
+              write_progress(65, "Running Salmon quantification...")
+              write_log("Starting Salmon pseudo-alignment (fast mode)", "progress")
+
+              # Determine transcriptome index
+              salmon_index_dir <- file.path(output_dir, "salmon_index")
+              salmon_indices_base <- "/srv/salmon_indices"
+
+              # Check for pre-built index or build from transcriptome FASTA
+              transcriptome_fa <- switch(params$genome_build,
+                "hg38" = file.path(salmon_indices_base, "gencode.v47.transcripts.fa.gz"),
+                "mm10" = file.path(salmon_indices_base, "gencode.vM36.transcripts.fa.gz"),
+                NULL)
+
+              # For custom genome: extract transcripts from genome+GTF using gffread
+              if (is.null(transcriptome_fa) && params$genome_build == "custom") {
+                if (!is.null(params$custom_genome) && !is.null(params$custom_gtf)) {
+                  write_log("Building transcriptome from custom genome + GTF...", "progress")
+                  custom_genome_path <- file.path(input_dir, params$custom_genome$name)
+                  custom_gtf_path <- file.path(input_dir, params$custom_gtf$name)
+                  if (!file.exists(custom_genome_path)) file.copy(params$custom_genome$datapath, custom_genome_path)
+                  if (!file.exists(custom_gtf_path)) file.copy(params$custom_gtf$datapath, custom_gtf_path)
+                  transcriptome_fa <- file.path(output_dir, "custom_transcripts.fa")
+                  # Use gffread to extract transcript sequences
+                  gffread_cmd <- paste("gffread", shQuote(custom_gtf_path),
+                    "-g", shQuote(custom_genome_path), "-w", shQuote(transcriptome_fa))
+                  gffread_result <- system(gffread_cmd, intern = FALSE)
+                  if (gffread_result != 0 || !file.exists(transcriptome_fa)) {
+                    write_log("gffread not available or failed. Using genome FASTA directly for Salmon.", "warning")
+                    transcriptome_fa <- custom_genome_path
+                  }
+                }
+              }
+
+              if (is.null(transcriptome_fa) || !file.exists(transcriptome_fa)) {
+                stop(paste("Salmon transcriptome reference not available for genome:", params$genome_build,
+                           ". Use HISAT2 mode or select hg38/mm10."))
+              }
+
+              # Check for pre-built Salmon index
+              prebuilt_index <- file.path(salmon_indices_base, paste0(params$genome_build, "_salmon_idx"))
+              if (dir.exists(prebuilt_index)) {
+                salmon_index_dir <- prebuilt_index
+                write_log("Using pre-built Salmon index", "success")
+              } else {
+                # Build Salmon index on-the-fly
+                write_progress(67, "Building Salmon index (first time, will be cached)...")
+                write_log("Building Salmon index from transcriptome...", "progress")
+                dir.create(salmon_index_dir, recursive = TRUE, showWarnings = FALSE)
+                idx_cmd <- paste("salmon index -t", shQuote(transcriptome_fa),
+                  "-i", shQuote(salmon_index_dir), "-p", n_threads, "--gencode 2>&1")
+                idx_result <- system(idx_cmd, intern = FALSE)
+                if (idx_result != 0) stop("Failed to build Salmon index")
+                # Cache the index for future use
+                cache_idx <- file.path(salmon_indices_base, paste0(params$genome_build, "_salmon_idx"))
+                tryCatch({
+                  dir.create(dirname(cache_idx), recursive = TRUE, showWarnings = FALSE)
+                  file.copy(salmon_index_dir, dirname(cache_idx), recursive = TRUE)
+                  file.rename(file.path(dirname(cache_idx), basename(salmon_index_dir)), cache_idx)
+                  write_log("Salmon index cached for future use", "success")
+                }, error = function(e) write_log("Could not cache index (non-critical)", "warning"))
+              }
+
+              # Run Salmon quant for each sample
+              write_progress(72, "Quantifying transcripts with Salmon...")
+              salmon_output_dir <- file.path(output_dir, "salmon_quant")
+              dir.create(salmon_output_dir, recursive = TRUE, showWarnings = FALSE)
+
+              quant_dirs <- c()
+              if (params$sequencing_type == "paired") {
+                r1_trimmed <- sort(trimmed_files[grepl("_R1_paired", trimmed_files)])
+                r2_trimmed <- sort(trimmed_files[grepl("_R2_paired", trimmed_files)])
+                for (j in seq_along(r1_trimmed)) {
+                  base <- sub("_R1_paired.*", "", basename(r1_trimmed[j]))
+                  sample_dir <- file.path(salmon_output_dir, base)
+                  salmon_cmd <- paste("salmon quant -i", shQuote(salmon_index_dir),
+                    "-l A -1", shQuote(r1_trimmed[j]), "-2", shQuote(r2_trimmed[j]),
+                    "--gcBias --seqBias --validateMappings",
+                    "-p", n_threads, "-o", shQuote(sample_dir), "2>&1")
+                  run_cmd_or_fail(salmon_cmd, "Salmon quantification", base)
+                  quant_dirs <- c(quant_dirs, sample_dir)
+                  write_log(paste("Salmon quantified:", base), "success")
+                  write_progress(72 + round(j/length(r1_trimmed) * 10), paste("Salmon: sample", j, "of", length(r1_trimmed)))
+                }
+              } else {
+                for (j in seq_along(trimmed_files)) {
+                  f <- trimmed_files[j]
+                  base <- sub("_trimmed.*", "", basename(f))
+                  sample_dir <- file.path(salmon_output_dir, base)
+                  salmon_cmd <- paste("salmon quant -i", shQuote(salmon_index_dir),
+                    "-l A -r", shQuote(f),
+                    "--gcBias --seqBias --validateMappings",
+                    "-p", n_threads, "-o", shQuote(sample_dir), "2>&1")
+                  run_cmd_or_fail(salmon_cmd, "Salmon quantification", base)
+                  quant_dirs <- c(quant_dirs, sample_dir)
+                  write_log(paste("Salmon quantified:", base), "success")
+                }
+              }
+
+              # Aggregate Salmon results into a gene-level count matrix using tximport
+              write_progress(85, "Aggregating to gene-level counts (tximport)...")
+              write_log("Converting transcript-level to gene-level counts", "progress")
+
+              quant_files <- file.path(quant_dirs, "quant.sf")
+              names(quant_files) <- basename(quant_dirs)
+              existing_quants <- quant_files[file.exists(quant_files)]
+
+              if (length(existing_quants) == 0) stop("No Salmon quant.sf files found")
+
+              # Build tx2gene mapping from quant.sf header
+              first_quant <- read.table(existing_quants[1], header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+              # GENCODE transcript IDs have format: ENST00000456328.2|ENSG00000290825.1|...
+              tx_ids <- first_quant$Name
+              # Extract gene ID (second field after |)
+              if (any(grepl("\\|", tx_ids))) {
+                gene_ids <- sapply(strsplit(tx_ids, "\\|"), function(x) {
+                  gid <- x[2]  # ENSG...
+                  sub("\\.\\d+$", "", gid)  # Remove version
+                })
+              } else {
+                gene_ids <- sub("\\.\\d+$", "", tx_ids)
+              }
+              tx2gene <- data.frame(TXNAME = tx_ids, GENEID = gene_ids, stringsAsFactors = FALSE)
+
+              # Run tximport
+              txi <- tximport::tximport(existing_quants, type = "salmon", tx2gene = tx2gene,
+                                        countsFromAbundance = "no", ignoreTxVersion = TRUE)
+
+              # Write gene-level counts matrix
+              gene_counts <- as.data.frame(round(txi$counts))
+              gene_counts <- cbind(Geneid = rownames(gene_counts), gene_counts)
+              write.table(gene_counts, counts_file, sep = "\t", row.names = FALSE, quote = FALSE)
+              write_log(paste("Gene-level counts matrix:", nrow(gene_counts), "genes x", ncol(gene_counts)-1, "samples"), "success")
+
+              # Also save TPM matrix
+              tpm_file <- file.path(output_dir, "counts", "salmon_tpm.txt")
+              tpm_df <- as.data.frame(txi$abundance)
+              tpm_df <- cbind(Geneid = rownames(tpm_df), tpm_df)
+              write.table(tpm_df, tpm_file, sep = "\t", row.names = FALSE, quote = FALSE)
+
+              bam_files <- c()  # No BAM files for Salmon
+              write_log("Salmon quantification pipeline completed", "success")
+
+            } else {
+              # ===== HISAT2 + featureCounts PIPELINE (original) =====
+
+              # Step 4: HISAT2 alignment
+              write_progress(65, "Aligning reads to genome (HISAT2)...")
+              write_log("Starting genome alignment (HISAT2)", "progress")
+
+              # Resolve the HISAT2 index and a gene annotation built on the SAME assembly.
+              # Never fall back to another organism: a wrong index/GTF pair silently yields
+              # near-zero or misassigned counts.
+              hisat2_base <- "/srv/hisat2_indexes"
+              ann_base <- "/srv/annotations"
+              first_existing <- function(paths) {
+                paths <- paths[nzchar(paths) & file.exists(paths)]
+                if (length(paths) > 0) paths[1] else NULL
+              }
+              gb <- params$genome_build
+              gtf_file <- NULL
+
+              if (gb == "custom") {
+                if (is.null(params$custom_genome) || is.null(params$custom_gtf)) {
+                  stop("Custom genome requires both a genome FASTA and a GTF annotation file")
+                }
+                custom_genome_path <- file.path(input_dir, params$custom_genome$name)
+                custom_gtf_path <- file.path(input_dir, params$custom_gtf$name)
+                if (!file.exists(custom_genome_path)) file.copy(params$custom_genome$datapath, custom_genome_path)
+                if (!file.exists(custom_gtf_path)) file.copy(params$custom_gtf$datapath, custom_gtf_path)
+                custom_fa_plain <- custom_genome_path
+                if (grepl("\\.gz$", custom_genome_path)) {
+                  custom_fa_plain <- file.path(input_dir, "custom_genome.fa")
+                  run_cmd_or_fail(paste("gunzip -c", shQuote(custom_genome_path), ">", shQuote(custom_fa_plain)),
+                                  "Decompressing custom genome")
+                }
+                idx_dir <- file.path(output_dir, "hisat2_index")
+                dir.create(idx_dir, recursive = TRUE, showWarnings = FALSE)
+                write_progress(62, "Building HISAT2 index for custom genome...")
+                write_log("Building HISAT2 index for the custom genome (large genomes can take a long time)", "progress")
+                run_cmd_or_fail(paste("hisat2-build -p", n_threads, shQuote(custom_fa_plain),
+                                      shQuote(file.path(idx_dir, "genome")), "> /dev/null 2>&1"),
+                                "HISAT2 index build")
+                hisat2_index <- file.path(idx_dir, "genome")
+                gtf_file <- custom_gtf_path
+              } else {
+                hisat2_index <- switch(gb,
+                  "hg38" = Sys.getenv("HISAT2_HG38_INDEX", file.path(hisat2_base, "hg38", "genome")),
+                  "mm10" = Sys.getenv("HISAT2_MM10_INDEX", file.path(hisat2_base, "mm10", "genome")),
+                  "rn6"  = Sys.getenv("HISAT2_RN6_INDEX",  file.path(hisat2_base, "rn6", "genome")),
+                  file.path(hisat2_base, gb, "genome"))
+                gtf_candidates <- switch(gb,
+                  "hg38" = c(Sys.getenv("GENCODE_HG38_GTF"), file.path(ann_base, "gencode.v47.annotation.gtf")),
+                  # mm10 = GRCm38: GENCODE vM25 is the last release on this assembly
+                  "mm10" = file.path(ann_base, c("gencode.vM25.annotation.gtf", "gencode.vM25.annotation.gtf.gz")),
+                  # rn6 = Rnor_6.0: Ensembl 104 is the last release on this assembly
+                  "rn6"  = file.path(ann_base, c("Rattus_norvegicus.Rnor_6.0.104.gtf", "Rattus_norvegicus.Rnor_6.0.104.gtf.gz")),
+                  # dm6 = BDGP6 (Ensembl names; chromosome names harmonised after alignment)
+                  "dm6"  = file.path(ann_base, "Drosophila_melanogaster.BDGP6.46.111.gtf"),
+                  "danRer11" = c(file.path(hisat2_base, "danRer11", "genome.gtf"), file.path(ann_base, "Danio_rerio.GRCz11.111.gtf")),
+                  "wbcel235" = c(file.path(hisat2_base, "wbcel235", "genome.gtf"), file.path(ann_base, "Caenorhabditis_elegans.WBcel235.111.gtf")),
+                  "r64" = c(file.path(hisat2_base, "r64", "genome.gtf"), file.path(ann_base, "Saccharomyces_cerevisiae.R64-1-1.111.gtf")),
+                  file.path(hisat2_base, gb, "genome.gtf"))
+                gtf_file <- first_existing(gtf_candidates)
+                if (is.null(gtf_file) && gb == "mm10") {
+                  gtf_file <- first_existing(file.path(ann_base, "gencode.vM36.annotation.gtf"))
+                  if (!is.null(gtf_file)) {
+                    write_log("GENCODE vM25 (mm10) annotation not installed; using vM36 (GRCm39 coordinates). Gene assignment may be slightly reduced.", "warning")
+                  }
+                }
+              }
+
+              if (!file.exists(paste0(hisat2_index, ".1.ht2"))) {
+                stop(paste0("HISAT2 index for genome '", gb, "' is not installed on the server. ",
+                            "Choose another genome, use Salmon (hg38/mm10), or run locally with Docker."))
+              }
+              if (is.null(gtf_file)) {
+                stop(paste0("No gene annotation (GTF) matching the '", gb, "' assembly is installed on the server. ",
+                            "Choose another genome or use the Custom Genome option with your own FASTA + GTF."))
+              }
+              write_log(paste0("Reference: ", gb, " | index: ", hisat2_index, " | annotation: ", basename(gtf_file)), "info")
+
+            bam_files <- c()
+            if (params$sequencing_type == "paired") {
+              r1_trimmed <- sort(trimmed_files[grepl("_R1_paired", trimmed_files)])
+              r2_trimmed <- sort(trimmed_files[grepl("_R2_paired", trimmed_files)])
+              for (j in seq_along(r1_trimmed)) {
+                base <- sub("_R1_paired.*", "", basename(r1_trimmed[j]))
+                sam_file <- file.path(output_dir, "aligned", paste0(base, ".sam"))
+                bam_file <- file.path(output_dir, "aligned", paste0(base, ".bam"))
+                sorted_bam <- file.path(output_dir, "aligned", paste0(base, "_sorted.bam"))
+                hisat_cmd <- paste("hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index),
+                  "-1", shQuote(r1_trimmed[j]), "-2", shQuote(r2_trimmed[j]),
+                  "-S", shQuote(sam_file), "2>&1")
+                run_cmd_or_fail(hisat_cmd, "HISAT2 alignment", base)
+                run_cmd_or_fail(
+                  paste("bash -c", shQuote(paste("set -o pipefail; samtools view -bS", shQuote(sam_file), "|",
+                                                 "samtools sort -@", n_threads, "-o", shQuote(sorted_bam)))),
+                  "samtools sort", base
+                )
+                run_cmd_or_fail(paste("samtools index", shQuote(sorted_bam)),
+                                "samtools index", base)
+                if (file.exists(sam_file)) file.remove(sam_file)
+                bam_files <- c(bam_files, sorted_bam)
+                write_log(paste("Aligned:", base), "success")
+                write_progress(65 + round(j/length(r1_trimmed) * 15), paste("Aligning sample", j, "of", length(r1_trimmed)))
+              }
+            } else {
+              for (j in seq_along(trimmed_files)) {
+                f <- trimmed_files[j]
+                base <- sub("_trimmed.*", "", basename(f))
+                sam_file <- file.path(output_dir, "aligned", paste0(base, ".sam"))
+                sorted_bam <- file.path(output_dir, "aligned", paste0(base, "_sorted.bam"))
+                hisat_cmd <- paste("hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index),
+                  "-U", shQuote(f), "-S", shQuote(sam_file), "2>&1")
+                run_cmd_or_fail(hisat_cmd, "HISAT2 alignment", base)
+                run_cmd_or_fail(
+                  paste("bash -c", shQuote(paste("set -o pipefail; samtools view -bS", shQuote(sam_file), "|",
+                                                 "samtools sort -@", n_threads, "-o", shQuote(sorted_bam)))),
+                  "samtools sort", base
+                )
+                run_cmd_or_fail(paste("samtools index", shQuote(sorted_bam)),
+                                "samtools index", base)
+                if (file.exists(sam_file)) file.remove(sam_file)
+                bam_files <- c(bam_files, sorted_bam)
+                write_log(paste("Aligned:", base), "success")
+              }
+            }
+            write_log("Genome alignment completed", "success")
+
+            # Step 5: featureCounts
+            write_progress(85, "Quantifying gene expression (featureCounts)...")
+            write_log("Quantifying gene expression (featureCounts)", "progress")
+            counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
+            bam_existing <- bam_files[file.exists(bam_files)]
+
+            # Harmonise chromosome names between the alignments and the annotation
+            # (UCSC "chr2L"/"chrM" vs Ensembl "2L"/"MT"). Only renames; never changes coordinates.
+            if (length(bam_existing) > 0) {
+              bam_seqs <- tryCatch({
+                hdr <- system(paste("samtools view -H", shQuote(bam_existing[1])), intern = TRUE)
+                sub("^SN:", "", regmatches(hdr, regexpr("SN:[^\t]+", hdr)))
+              }, error = function(e) character(0))
+              reader <- if (grepl("\\.gz$", gtf_file)) "zcat" else "cat"
+              gtf_seqs <- tryCatch(
+                system(paste(reader, shQuote(gtf_file), "| grep -v '^#' | cut -f1 | sort -u"), intern = TRUE),
+                error = function(e) character(0))
+              if (length(bam_seqs) > 0 && length(gtf_seqs) > 0 && !any(gtf_seqs %in% bam_seqs)) {
+                to_ucsc <- ifelse(gtf_seqs %in% c("MT", "M", "mitochondrion_genome"), "chrM", paste0("chr", gtf_seqs))
+                from_ucsc <- ifelse(gtf_seqs == "chrM", "MT", sub("^chr", "", gtf_seqs))
+                new_names <- if (sum(to_ucsc %in% bam_seqs) >= sum(from_ucsc %in% bam_seqs)) to_ucsc else from_ucsc
+                keep_map <- new_names %in% bam_seqs
+                if (!any(keep_map)) {
+                  stop("Chromosome names in the annotation do not match the genome index - check that the GTF belongs to the selected assembly")
+                }
+                map_file <- file.path(output_dir, "counts", "seqname_map.tsv")
+                writeLines(paste(gtf_seqs[keep_map], new_names[keep_map], sep = "\t"), map_file)
+                harmonised_gtf <- file.path(output_dir, "counts", "annotation_harmonised.gtf")
+                run_cmd_or_fail(paste(reader, shQuote(gtf_file), "| awk 'BEGIN{FS=OFS=\"\\t\"} NR==FNR{m[$1]=$2; next} /^#/{next} ($1 in m){$1=m[$1]; print}'",
+                                      shQuote(map_file), "- >", shQuote(harmonised_gtf)),
+                                "Annotation chromosome-name harmonisation")
+                write_log(paste("Harmonised annotation chromosome names to match the genome index (", sum(keep_map), "sequences)"), "info")
+                gtf_file <- harmonised_gtf
+              }
+            }
+            pe_flag <- if (params$sequencing_type == "paired") "-p --countReadPairs" else ""
+            fc_cmd <- paste("featureCounts -T", n_threads, pe_flag,
+              "-a", shQuote(gtf_file), "-o", shQuote(counts_file),
+              paste(shQuote(bam_existing), collapse = " "))
+            run_cmd_or_fail(fc_cmd, "featureCounts quantification")
+            write_log("Gene expression quantification completed", "success")
+
+            }  # End of HISAT2/Salmon branch
+
+            # Step 6: Complete
+            write_progress(95, "Finalizing results...")
+            write_log("Generating summary...", "progress")
+
+            summary_file <- paste0(counts_file, ".summary")
+            summary_data <- if (file.exists(summary_file)) {
+              tryCatch(read.table(summary_file, header = TRUE, sep = "\t", row.names = 1, check.names = FALSE),
+                       error = function(e) NULL)
+            } else NULL
+
+            write_progress(100, "Complete!")
+            write_log("Analysis completed successfully!", "success")
+
+            result <- list(
+              success = TRUE,
+              counts_file = counts_file,
+              summary_file = summary_file,
+              summary_data = summary_data,
+              output_dir = output_dir
+            )
+            saveRDS(result, completion_file)
+
+          }, error = function(e) {
+            write_log(paste("Pipeline error:", e$message), "error")
+            write_progress(0, paste("Error:", e$message))
+            saveRDS(list(success = FALSE, error = e$message), completion_file)
+          })
+        },
+        args = list(
+          params_file = bg_params_file,
+          completion_file = completion_file,
+          app_dir = getwd()
+        ),
+        supervise = TRUE
+      )
+
+      # Store background process reference for polling
+      values$bg_process <- bg_process
+      values$completion_file <- completion_file
+      values$bg_job_id <- queue_status$job_id
+  }
+
+  # If the browser session ends, release this session's queue slot and stop its pipeline.
+  session$onSessionEnded(function() {
+    jid <- isolate(queue_status$job_id)
+    if (is.null(jid)) return()
+    pos <- tryCatch(get_queue_position(isolate(queue_status$session_id)), error = function(e) NULL)
+    if (!is.null(pos) && pos$status %in% c("queued", "processing")) {
+      bg <- isolate(values$bg_process)
+      if (!is.null(bg)) try(if (bg$is_alive()) bg$kill_tree(), silent = TRUE)
+      tryCatch(update_job_status(jid, "error", error = "Session ended before the job finished"),
+               error = function(e) NULL)
+    }
+  })
+
   # Main processing observer
   observeEvent(input$run_processing, {
     # Reset state
@@ -46887,7 +47456,26 @@ server <- function(input, output, session) {
         paste0("Analysis queued (Position #", position_info$position, ")"),
         "info"
       )
-      
+
+      # Watch the queue: whenever a slot frees up, promote the oldest queued job.
+      # When the promoted job is ours, start the pipeline in this session.
+      if (!is.null(queue_watcher)) queue_watcher$destroy()
+      queue_watcher <<- observe({
+        invalidateLater(10000, session)
+        tryCatch(process_queue(), error = function(e) NULL)
+        pos <- tryCatch(get_queue_position(queue_status$session_id), error = function(e) NULL)
+        if (!is.null(pos) && identical(pos$status, "processing") &&
+            identical(pos$job_id, isolate(queue_status$job_id))) {
+          queue_watcher$destroy()
+          queue_watcher <<- NULL
+          queue_status$status <- "processing"
+          isolate({
+            update_processing_log("A processing slot is free - starting your queued analysis", "info")
+            start_fastq_pipeline()
+          })
+        }
+      })
+
       # Don't proceed with processing - job is queued
       return()
     }
@@ -46914,450 +47502,7 @@ server <- function(input, output, session) {
       update_job_status(job_id, "processing")
     }
     
-    # Show processing notification
-    showNotification("🚀 Starting RNA-seq analysis pipeline...", type = "message", duration = 3)
-    
-    # Create analysis directory
-    analysis_dir <- create_analysis_directory()
-    
-    # Prepare parameters for processing
-    processing_params <- list(
-      fastq_files_df = input$fastq_files,
-      sequencing_type = input$sequencing_type,
-      genome_build = input$genome_build,
-      quant_method = input$quant_method %||% "hisat2",
-      custom_genome = if(input$genome_build == "custom") input$custom_genome else NULL,
-      custom_gtf = if(input$genome_build == "custom") input$custom_gtf else NULL,
-      custom_genome_name = if(input$genome_build == "custom") input$custom_genome_name else NULL,
-      tmp_dir = analysis_dir
-    )
-    
-    # Disable the button during processing
-    shinyjs::disable("run_processing")
-    shinyjs::runjs("
-      var btn = document.getElementById('run_processing');
-      if (btn) { btn.dataset.originalHtml = btn.innerHTML;
-        btn.innerHTML = '<i class=\"fa fa-spinner fa-spin\" style=\"margin-right:6px;\"></i> Processing...';
-        btn.classList.add('btn-disabled-running'); }
-    ")
-
-    # Pass log file paths to the processing function for file-based progress
-    processing_params$log_file <- pipeline_log_file
-    processing_params$progress_file <- pipeline_progress_file
-
-    # Save completion marker path
-    completion_file <- file.path(tempdir(), paste0("pipeline_done_", session$token, ".rds"))
-    if (file.exists(completion_file)) file.remove(completion_file)
-
-    # Save the processing function and params for the background process
-    bg_params_file <- file.path(tempdir(), paste0("pipeline_params_", session$token, ".rds"))
-    saveRDS(processing_params, bg_params_file)
-
-    # Launch pipeline in BACKGROUND R PROCESS (frees Shiny event loop for live updates)
-    bg_process <- callr::r_bg(
-      function(params_file, completion_file, app_dir) {
-        setwd(app_dir)
-        # Source just the pipeline function (not the whole app)
-        # The function writes progress to files, no Shiny dependencies needed
-        params <- readRDS(params_file)
-
-        write_log <- function(message, type = "info") {
-          timestamp <- format(Sys.time(), "%H:%M:%S")
-          prefix <- switch(type, "info" = "[INFO]", "success" = "[DONE]",
-                          "warning" = "[WARN]", "error" = "[ERROR]", "progress" = "[STEP]", "[INFO]")
-          line <- paste0("[", timestamp, "] ", prefix, " ", message)
-          tryCatch(cat(line, "\n", file = params$log_file, append = TRUE), error = function(e) NULL)
-        }
-
-        write_progress <- function(percent, step) {
-          tryCatch(writeLines(paste0(percent, "|", step), params$progress_file), error = function(e) NULL)
-        }
-
-        # Dynamic thread allocation: 4 (default) <= n <= 8, leaving 2 cores for system/Shiny.
-        # Falls back to 4 if detectCores() fails (e.g., in a cgroup with hidden limits).
-        n_threads <- tryCatch(
-          max(4, min(8, parallel::detectCores() - 2)),
-          error = function(e) 4L
-        )
-
-        # Wrap system() with explicit return-code check.
-        # On non-zero exit: write to log + abort the pipeline cleanly.
-        run_cmd_or_fail <- function(cmd, step, sample_name = NULL) {
-          rc <- tryCatch(system(cmd, intern = FALSE), error = function(e) -1L)
-          if (!is.null(rc) && is.numeric(rc) && rc != 0) {
-            msg <- if (!is.null(sample_name)) {
-              paste0(step, " failed for sample '", sample_name, "' (exit code ", rc, ")")
-            } else {
-              paste0(step, " failed (exit code ", rc, ")")
-            }
-            write_log(msg, "error")
-            stop(msg)
-          }
-          invisible(rc)
-        }
-
-        tryCatch({
-          write_log("Starting FASTQ processing pipeline", "info")
-          write_log(paste("Using", n_threads, "threads per process"), "info")
-          write_progress(5, "Initializing pipeline...")
-
-          input_dir <- file.path(params$tmp_dir, "input")
-          output_dir <- file.path(params$tmp_dir, "output")
-          dir.create(input_dir, recursive = TRUE, showWarnings = FALSE)
-          dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-          dir.create(file.path(output_dir, "fastqc_raw"), recursive = TRUE, showWarnings = FALSE)
-          dir.create(file.path(output_dir, "trimmed"), recursive = TRUE, showWarnings = FALSE)
-          dir.create(file.path(output_dir, "aligned"), recursive = TRUE, showWarnings = FALSE)
-          dir.create(file.path(output_dir, "counts"), recursive = TRUE, showWarnings = FALSE)
-          write_log("Created working directories", "success")
-
-          # Copy files
-          write_progress(10, "Copying uploaded files...")
-          copied_files <- c()
-          for (i in seq_len(nrow(params$fastq_files_df))) {
-            src <- params$fastq_files_df$datapath[i]
-            dst <- file.path(input_dir, params$fastq_files_df$name[i])
-            if (file.copy(src, dst)) {
-              copied_files <- c(copied_files, dst)
-              write_log(paste("Copied:", params$fastq_files_df$name[i]), "success")
-            } else {
-              stop(paste("Failed to copy:", params$fastq_files_df$name[i]))
-            }
-          }
-
-          # Step 1: FastQC raw
-          write_progress(20, "Running FastQC on raw reads...")
-          write_log("Running initial quality control (FastQC)", "progress")
-          fastqc_cmd <- paste("fastqc", paste(shQuote(copied_files), collapse = " "),
-                              "-o", shQuote(file.path(output_dir, "fastqc_raw")),
-                              "-t", min(8, length(copied_files)), "--quiet")
-          if (system(fastqc_cmd, intern = FALSE) != 0) stop("FastQC analysis failed")
-          write_log("FastQC raw reads completed", "success")
-
-          # Step 2: Trimmomatic
-          write_progress(35, "Trimming reads (Trimmomatic)...")
-          write_log("Performing quality trimming (Trimmomatic)", "progress")
-          trimmomatic_jar <- "/usr/share/java/trimmomatic.jar"
-          trimmed_files <- c()
-
-          if (params$sequencing_type == "paired") {
-            r1_files <- sort(copied_files[grepl("_R1|_1\\.", copied_files)])
-            r2_files <- sort(copied_files[grepl("_R2|_2\\.", copied_files)])
-            for (j in seq_along(r1_files)) {
-              r1 <- r1_files[j]; r2 <- r2_files[j]
-              base <- sub("(_R1|_1)(\\.(fastq|fq)(\\.gz)?)$", "", basename(r1))
-              out_dir_trim <- file.path(output_dir, "trimmed")
-              trim_cmd <- paste("java -jar", shQuote(trimmomatic_jar), "PE -threads 4 -phred33",
-                shQuote(r1), shQuote(r2),
-                shQuote(file.path(out_dir_trim, paste0(base, "_R1_paired.fastq.gz"))),
-                shQuote(file.path(out_dir_trim, paste0(base, "_R1_unpaired.fastq.gz"))),
-                shQuote(file.path(out_dir_trim, paste0(base, "_R2_paired.fastq.gz"))),
-                shQuote(file.path(out_dir_trim, paste0(base, "_R2_unpaired.fastq.gz"))),
-                "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-PE.fa:2:30:10",
-                "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36")
-              system(trim_cmd, intern = FALSE)
-              trimmed_files <- c(trimmed_files,
-                file.path(out_dir_trim, paste0(base, "_R1_paired.fastq.gz")),
-                file.path(out_dir_trim, paste0(base, "_R2_paired.fastq.gz")))
-              write_log(paste("Trimmed pair:", base), "success")
-            }
-          } else {
-            for (f in copied_files) {
-              base <- sub("(\\.(fastq|fq)(\\.gz)?)$", "", basename(f))
-              out_trimmed <- file.path(output_dir, "trimmed", paste0(base, "_trimmed.fastq.gz"))
-              trim_cmd <- paste("java -jar", shQuote(trimmomatic_jar), "SE -threads 4 -phred33",
-                shQuote(f), shQuote(out_trimmed),
-                "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-SE.fa:2:30:10",
-                "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36")
-              system(trim_cmd, intern = FALSE)
-              trimmed_files <- c(trimmed_files, out_trimmed)
-              write_log(paste("Trimmed:", base), "success")
-            }
-          }
-          write_log("Quality trimming completed", "success")
-
-          # Step 3: FastQC trimmed
-          write_progress(55, "FastQC on trimmed reads...")
-          write_log("Running post-trimming quality control", "progress")
-          dir.create(file.path(output_dir, "fastqc_trimmed"), recursive = TRUE, showWarnings = FALSE)
-          trimmed_for_qc <- trimmed_files[file.exists(trimmed_files)]
-          if (length(trimmed_for_qc) > 0) {
-            fastqc_cmd2 <- paste("fastqc", paste(shQuote(trimmed_for_qc), collapse = " "),
-                                 "-o", shQuote(file.path(output_dir, "fastqc_trimmed")),
-                                 "-t", min(8, length(trimmed_for_qc)), "--quiet")
-            system(fastqc_cmd2, intern = FALSE)
-          }
-          write_log("Post-trimming QC completed", "success")
-
-          quant_method <- params$quant_method %||% "hisat2"
-          counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
-
-          if (quant_method == "salmon") {
-            # ===== SALMON PSEUDO-ALIGNMENT PIPELINE =====
-            write_progress(65, "Running Salmon quantification...")
-            write_log("Starting Salmon pseudo-alignment (fast mode)", "progress")
-
-            # Determine transcriptome index
-            salmon_index_dir <- file.path(output_dir, "salmon_index")
-            salmon_indices_base <- "/srv/salmon_indices"
-
-            # Check for pre-built index or build from transcriptome FASTA
-            transcriptome_fa <- switch(params$genome_build,
-              "hg38" = file.path(salmon_indices_base, "gencode.v47.transcripts.fa.gz"),
-              "mm10" = file.path(salmon_indices_base, "gencode.vM36.transcripts.fa.gz"),
-              NULL)
-
-            # For custom genome: extract transcripts from genome+GTF using gffread
-            if (is.null(transcriptome_fa) && params$genome_build == "custom") {
-              if (!is.null(params$custom_genome) && !is.null(params$custom_gtf)) {
-                write_log("Building transcriptome from custom genome + GTF...", "progress")
-                custom_genome_path <- file.path(input_dir, params$custom_genome$name)
-                custom_gtf_path <- file.path(input_dir, params$custom_gtf$name)
-                if (!file.exists(custom_genome_path)) file.copy(params$custom_genome$datapath, custom_genome_path)
-                if (!file.exists(custom_gtf_path)) file.copy(params$custom_gtf$datapath, custom_gtf_path)
-                transcriptome_fa <- file.path(output_dir, "custom_transcripts.fa")
-                # Use gffread to extract transcript sequences
-                gffread_cmd <- paste("gffread", shQuote(custom_gtf_path),
-                  "-g", shQuote(custom_genome_path), "-w", shQuote(transcriptome_fa))
-                gffread_result <- system(gffread_cmd, intern = FALSE)
-                if (gffread_result != 0 || !file.exists(transcriptome_fa)) {
-                  write_log("gffread not available or failed. Using genome FASTA directly for Salmon.", "warning")
-                  transcriptome_fa <- custom_genome_path
-                }
-              }
-            }
-
-            if (is.null(transcriptome_fa) || !file.exists(transcriptome_fa)) {
-              stop(paste("Salmon transcriptome reference not available for genome:", params$genome_build,
-                         ". Use HISAT2 mode or select hg38/mm10."))
-            }
-
-            # Check for pre-built Salmon index
-            prebuilt_index <- file.path(salmon_indices_base, paste0(params$genome_build, "_salmon_idx"))
-            if (dir.exists(prebuilt_index)) {
-              salmon_index_dir <- prebuilt_index
-              write_log("Using pre-built Salmon index", "success")
-            } else {
-              # Build Salmon index on-the-fly
-              write_progress(67, "Building Salmon index (first time, will be cached)...")
-              write_log("Building Salmon index from transcriptome...", "progress")
-              dir.create(salmon_index_dir, recursive = TRUE, showWarnings = FALSE)
-              idx_cmd <- paste("salmon index -t", shQuote(transcriptome_fa),
-                "-i", shQuote(salmon_index_dir), "-p", n_threads, "--gencode 2>&1")
-              idx_result <- system(idx_cmd, intern = FALSE)
-              if (idx_result != 0) stop("Failed to build Salmon index")
-              # Cache the index for future use
-              cache_idx <- file.path(salmon_indices_base, paste0(params$genome_build, "_salmon_idx"))
-              tryCatch({
-                dir.create(dirname(cache_idx), recursive = TRUE, showWarnings = FALSE)
-                file.copy(salmon_index_dir, dirname(cache_idx), recursive = TRUE)
-                file.rename(file.path(dirname(cache_idx), basename(salmon_index_dir)), cache_idx)
-                write_log("Salmon index cached for future use", "success")
-              }, error = function(e) write_log("Could not cache index (non-critical)", "warning"))
-            }
-
-            # Run Salmon quant for each sample
-            write_progress(72, "Quantifying transcripts with Salmon...")
-            salmon_output_dir <- file.path(output_dir, "salmon_quant")
-            dir.create(salmon_output_dir, recursive = TRUE, showWarnings = FALSE)
-
-            quant_dirs <- c()
-            if (params$sequencing_type == "paired") {
-              r1_trimmed <- sort(trimmed_files[grepl("_R1_paired", trimmed_files)])
-              r2_trimmed <- sort(trimmed_files[grepl("_R2_paired", trimmed_files)])
-              for (j in seq_along(r1_trimmed)) {
-                base <- sub("_R1_paired.*", "", basename(r1_trimmed[j]))
-                sample_dir <- file.path(salmon_output_dir, base)
-                salmon_cmd <- paste("salmon quant -i", shQuote(salmon_index_dir),
-                  "-l A -1", shQuote(r1_trimmed[j]), "-2", shQuote(r2_trimmed[j]),
-                  "--gcBias --seqBias --validateMappings",
-                  "-p", n_threads, "-o", shQuote(sample_dir), "2>&1")
-                run_cmd_or_fail(salmon_cmd, "Salmon quantification", base)
-                quant_dirs <- c(quant_dirs, sample_dir)
-                write_log(paste("Salmon quantified:", base), "success")
-                write_progress(72 + round(j/length(r1_trimmed) * 10), paste("Salmon: sample", j, "of", length(r1_trimmed)))
-              }
-            } else {
-              for (j in seq_along(trimmed_files)) {
-                f <- trimmed_files[j]
-                base <- sub("_trimmed.*", "", basename(f))
-                sample_dir <- file.path(salmon_output_dir, base)
-                salmon_cmd <- paste("salmon quant -i", shQuote(salmon_index_dir),
-                  "-l A -r", shQuote(f),
-                  "--gcBias --seqBias --validateMappings",
-                  "-p", n_threads, "-o", shQuote(sample_dir), "2>&1")
-                run_cmd_or_fail(salmon_cmd, "Salmon quantification", base)
-                quant_dirs <- c(quant_dirs, sample_dir)
-                write_log(paste("Salmon quantified:", base), "success")
-              }
-            }
-
-            # Aggregate Salmon results into a gene-level count matrix using tximport
-            write_progress(85, "Aggregating to gene-level counts (tximport)...")
-            write_log("Converting transcript-level to gene-level counts", "progress")
-
-            quant_files <- file.path(quant_dirs, "quant.sf")
-            names(quant_files) <- basename(quant_dirs)
-            existing_quants <- quant_files[file.exists(quant_files)]
-
-            if (length(existing_quants) == 0) stop("No Salmon quant.sf files found")
-
-            # Build tx2gene mapping from quant.sf header
-            first_quant <- read.table(existing_quants[1], header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-            # GENCODE transcript IDs have format: ENST00000456328.2|ENSG00000290825.1|...
-            tx_ids <- first_quant$Name
-            # Extract gene ID (second field after |)
-            if (any(grepl("\\|", tx_ids))) {
-              gene_ids <- sapply(strsplit(tx_ids, "\\|"), function(x) {
-                gid <- x[2]  # ENSG...
-                sub("\\.\\d+$", "", gid)  # Remove version
-              })
-            } else {
-              gene_ids <- sub("\\.\\d+$", "", tx_ids)
-            }
-            tx2gene <- data.frame(TXNAME = tx_ids, GENEID = gene_ids, stringsAsFactors = FALSE)
-
-            # Run tximport
-            txi <- tximport::tximport(existing_quants, type = "salmon", tx2gene = tx2gene,
-                                      countsFromAbundance = "no", ignoreTxVersion = TRUE)
-
-            # Write gene-level counts matrix
-            gene_counts <- as.data.frame(round(txi$counts))
-            gene_counts <- cbind(Geneid = rownames(gene_counts), gene_counts)
-            write.table(gene_counts, counts_file, sep = "\t", row.names = FALSE, quote = FALSE)
-            write_log(paste("Gene-level counts matrix:", nrow(gene_counts), "genes x", ncol(gene_counts)-1, "samples"), "success")
-
-            # Also save TPM matrix
-            tpm_file <- file.path(output_dir, "counts", "salmon_tpm.txt")
-            tpm_df <- as.data.frame(txi$abundance)
-            tpm_df <- cbind(Geneid = rownames(tpm_df), tpm_df)
-            write.table(tpm_df, tpm_file, sep = "\t", row.names = FALSE, quote = FALSE)
-
-            bam_files <- c()  # No BAM files for Salmon
-            write_log("Salmon quantification pipeline completed", "success")
-
-          } else {
-            # ===== HISAT2 + featureCounts PIPELINE (original) =====
-
-            # Step 4: HISAT2 alignment
-            write_progress(65, "Aligning reads to genome (HISAT2)...")
-            write_log("Starting genome alignment (HISAT2)", "progress")
-
-            # Determine index path
-            hisat2_index <- switch(params$genome_build,
-              "hg38" = Sys.getenv("HISAT2_HG38_INDEX", "/srv/hisat2_indexes/hg38/genome"),
-              "mm10" = Sys.getenv("HISAT2_MM10_INDEX", "/srv/hisat2_indexes/mm10/genome"),
-              "rn6" = Sys.getenv("HISAT2_RN6_INDEX", "/srv/hisat2_indexes/rn6/genome"),
-              Sys.getenv("HISAT2_HG38_INDEX", "/srv/hisat2_indexes/hg38/genome"))
-
-          bam_files <- c()
-          if (params$sequencing_type == "paired") {
-            r1_trimmed <- sort(trimmed_files[grepl("_R1_paired", trimmed_files)])
-            r2_trimmed <- sort(trimmed_files[grepl("_R2_paired", trimmed_files)])
-            for (j in seq_along(r1_trimmed)) {
-              base <- sub("_R1_paired.*", "", basename(r1_trimmed[j]))
-              sam_file <- file.path(output_dir, "aligned", paste0(base, ".sam"))
-              bam_file <- file.path(output_dir, "aligned", paste0(base, ".bam"))
-              sorted_bam <- file.path(output_dir, "aligned", paste0(base, "_sorted.bam"))
-              hisat_cmd <- paste("hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index),
-                "-1", shQuote(r1_trimmed[j]), "-2", shQuote(r2_trimmed[j]),
-                "-S", shQuote(sam_file), "2>&1")
-              run_cmd_or_fail(hisat_cmd, "HISAT2 alignment", base)
-              run_cmd_or_fail(
-                paste("set -o pipefail; samtools view -bS", shQuote(sam_file), "|",
-                      "samtools sort -@", n_threads, "-o", shQuote(sorted_bam)),
-                "samtools sort", base
-              )
-              run_cmd_or_fail(paste("samtools index", shQuote(sorted_bam)),
-                              "samtools index", base)
-              if (file.exists(sam_file)) file.remove(sam_file)
-              bam_files <- c(bam_files, sorted_bam)
-              write_log(paste("Aligned:", base), "success")
-              write_progress(65 + round(j/length(r1_trimmed) * 15), paste("Aligning sample", j, "of", length(r1_trimmed)))
-            }
-          } else {
-            for (j in seq_along(trimmed_files)) {
-              f <- trimmed_files[j]
-              base <- sub("_trimmed.*", "", basename(f))
-              sam_file <- file.path(output_dir, "aligned", paste0(base, ".sam"))
-              sorted_bam <- file.path(output_dir, "aligned", paste0(base, "_sorted.bam"))
-              hisat_cmd <- paste("hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index),
-                "-U", shQuote(f), "-S", shQuote(sam_file), "2>&1")
-              run_cmd_or_fail(hisat_cmd, "HISAT2 alignment", base)
-              run_cmd_or_fail(
-                paste("set -o pipefail; samtools view -bS", shQuote(sam_file), "|",
-                      "samtools sort -@", n_threads, "-o", shQuote(sorted_bam)),
-                "samtools sort", base
-              )
-              run_cmd_or_fail(paste("samtools index", shQuote(sorted_bam)),
-                              "samtools index", base)
-              if (file.exists(sam_file)) file.remove(sam_file)
-              bam_files <- c(bam_files, sorted_bam)
-              write_log(paste("Aligned:", base), "success")
-            }
-          }
-          write_log("Genome alignment completed", "success")
-
-          # Step 5: featureCounts
-          write_progress(85, "Quantifying gene expression (featureCounts)...")
-          write_log("Quantifying gene expression (featureCounts)", "progress")
-          gtf_file <- switch(params$genome_build,
-            "hg38" = Sys.getenv("GENCODE_HG38_GTF", "/srv/annotations/gencode.v47.annotation.gtf"),
-            "mm10" = Sys.getenv("GENCODE_MM10_GTF", "/srv/annotations/gencode.vM36.annotation.gtf"),
-            "rn6" = Sys.getenv("RAT_RN6_GTF", "/srv/annotations/Rattus_norvegicus.mRatBN7.2.111.gtf"),
-            Sys.getenv("GENCODE_HG38_GTF", "/srv/annotations/gencode.v47.annotation.gtf"))
-
-          counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
-          bam_existing <- bam_files[file.exists(bam_files)]
-          pe_flag <- if (params$sequencing_type == "paired") "-p --countReadPairs" else ""
-          fc_cmd <- paste("featureCounts -T", n_threads, pe_flag,
-            "-a", shQuote(gtf_file), "-o", shQuote(counts_file),
-            paste(shQuote(bam_existing), collapse = " "))
-          run_cmd_or_fail(fc_cmd, "featureCounts quantification")
-          write_log("Gene expression quantification completed", "success")
-
-          }  # End of HISAT2/Salmon branch
-
-          # Step 6: Complete
-          write_progress(95, "Finalizing results...")
-          write_log("Generating summary...", "progress")
-
-          summary_file <- paste0(counts_file, ".summary")
-          summary_data <- if (file.exists(summary_file)) {
-            tryCatch(read.table(summary_file, header = TRUE, sep = "\t", row.names = 1, check.names = FALSE),
-                     error = function(e) NULL)
-          } else NULL
-
-          write_progress(100, "Complete!")
-          write_log("Analysis completed successfully!", "success")
-
-          result <- list(
-            success = TRUE,
-            counts_file = counts_file,
-            summary_file = summary_file,
-            summary_data = summary_data,
-            output_dir = output_dir
-          )
-          saveRDS(result, completion_file)
-
-        }, error = function(e) {
-          write_log(paste("Pipeline error:", e$message), "error")
-          write_progress(0, paste("Error:", e$message))
-          saveRDS(list(success = FALSE, error = e$message), completion_file)
-        })
-      },
-      args = list(
-        params_file = bg_params_file,
-        completion_file = completion_file,
-        app_dir = getwd()
-      ),
-      supervise = TRUE
-    )
-
-    # Store background process reference for polling
-    values$bg_process <- bg_process
-    values$completion_file <- completion_file
-    values$bg_job_id <- queue_status$job_id
+    start_fastq_pipeline()
   })
 
   # --- POLL FOR BACKGROUND PIPELINE COMPLETION ---
@@ -47522,7 +47667,7 @@ server <- function(input, output, session) {
         
         # Calculate statistics
         num_genes <- nrow(counts_data)
-        num_samples <- ncol(counts_data) - 6
+        num_samples <- ncol(counts_data) - 1
         
         div(
           h5("📊 Analysis Summary"),
@@ -47625,9 +47770,8 @@ server <- function(input, output, session) {
           
           summary_data <- raw_summary_data
           print("Successfully loaded and cleaned summary_data for the report.")
-        } else {
-          stop("Could not find the alignment summary file to include in the report.")
         }
+        # (Salmon runs have no featureCounts summary; Salmon mapping rates are reported below)
         # <<< FIX END >>>
         
         # --- FILE COPYING AND STAGING ---
@@ -47650,7 +47794,11 @@ server <- function(input, output, session) {
         
         # 3. Copy other essential files
         write.csv(counts_data, file.path(temp_dir, "gene_counts.csv"), row.names = FALSE)
-        write.table(summary_data, file.path(temp_dir, "alignment_summary.txt"), sep = "\t", quote = FALSE, row.names = TRUE)
+        if (!is.null(summary_data)) {
+          write.table(summary_data, file.path(temp_dir, "alignment_summary.txt"), sep = "\t", quote = FALSE, row.names = TRUE)
+        }
+        salmon_tpm <- file.path(values$fc_output$output_dir, "counts", "salmon_tpm.txt")
+        if (file.exists(salmon_tpm)) file.copy(salmon_tpm, file.path(temp_dir, "salmon_tpm.txt"))
         
         # --- DYNAMIC HTML GENERATION ---
         
@@ -47665,8 +47813,8 @@ server <- function(input, output, session) {
         # Gene Quantification Summary
         if (!is.null(counts_data)) {
           num_genes <- nrow(counts_data)
-          total_counts <- sum(counts_data[, 7:ncol(counts_data)])
-          genes_with_counts <- sum(rowSums(counts_data[, 7:ncol(counts_data)]) > 0)
+          total_counts <- sum(counts_data[, -1, drop = FALSE])
+          genes_with_counts <- sum(rowSums(counts_data[, -1, drop = FALSE]) > 0)
           html_parts <- c(html_parts, "<h2>Gene Quantification Summary</h2>",
                           paste0("<p>Total Genes Detected: <strong>", format(num_genes, big.mark=","), "</strong></p>"),
                           paste0("<p>Genes with Reads: <strong>", format(genes_with_counts, big.mark=","), " (", round(genes_with_counts/num_genes*100, 1), "%)</strong></p>"),
@@ -47685,7 +47833,23 @@ server <- function(input, output, session) {
           }
           html_parts <- c(html_parts, "</tbody></table>")
         }
-        
+
+        # Salmon mapping statistics (Salmon runs)
+        salmon_meta <- list.files(file.path(values$fc_output$output_dir, "salmon_quant"),
+                                  pattern = "^meta_info\\.json$", recursive = TRUE, full.names = TRUE)
+        if (length(salmon_meta) > 0) {
+          html_parts <- c(html_parts, "<h2>📊 Salmon Mapping Statistics</h2><table><thead><tr><th>Sample</th><th>Reads processed</th><th>Reads mapped</th><th>Mapping Rate</th></tr></thead><tbody>")
+          for (mf in salmon_meta) {
+            mi <- tryCatch(jsonlite::fromJSON(mf), error = function(e) NULL)
+            if (is.null(mi)) next
+            html_parts <- c(html_parts, paste0("<tr><td><strong>", basename(dirname(dirname(mf))), "</strong></td><td>",
+                                               format(mi$num_processed, big.mark = ","), "</td><td>",
+                                               format(mi$num_mapped, big.mark = ","), "</td><td>",
+                                               round(mi$percent_mapped, 2), "%</td></tr>"))
+          }
+          html_parts <- c(html_parts, "</tbody></table>")
+        }
+
         # FastQC Reports Links
         html_parts <- c(html_parts, "<h2>📈 Quality Control Reports</h2><div class='file-list'>")
         
@@ -47773,7 +47937,7 @@ server <- function(input, output, session) {
         counts_data <- clean_counts_data(values$fc_output$counts)
         
         # For display: show Geneid + sample counts (skip Chr, Start, End, Strand, Length)
-        display_data <- counts_data[, c(1, 7:ncol(counts_data))]
+        display_data <- counts_data
         colnames(display_data)[1] <- "Gene_ID"
         
         datatable(
@@ -48158,7 +48322,7 @@ document.addEventListener("DOMContentLoaded", function() {
       )
       
       # Sample Information
-      num_samples <- if (!is.null(counts_data)) ncol(counts_data) - 6 else nrow(input$fastq_files)
+      num_samples <- if (!is.null(counts_data)) ncol(counts_data) - 1 else nrow(input$fastq_files)
       
       html_parts <- c(html_parts,
                       "<h2>📋 Sample Information</h2>",
@@ -48181,9 +48345,9 @@ document.addEventListener("DOMContentLoaded", function() {
       # Gene Quantification Results
       if (!is.null(counts_data)) {
         num_genes <- nrow(counts_data)
-        total_counts <- sum(counts_data[, 7:ncol(counts_data)])
-        avg_counts_per_gene <- round(mean(rowSums(counts_data[, 7:ncol(counts_data)])), 2)
-        genes_with_counts <- sum(rowSums(counts_data[, 7:ncol(counts_data)]) > 0)
+        total_counts <- sum(counts_data[, -1, drop = FALSE])
+        avg_counts_per_gene <- round(mean(rowSums(counts_data[, -1, drop = FALSE])), 2)
+        genes_with_counts <- sum(rowSums(counts_data[, -1, drop = FALSE]) > 0)
         
         html_parts <- c(html_parts,
                         "<h2>🧬 Gene Quantification Summary</h2>",
@@ -51455,14 +51619,14 @@ document.addEventListener("DOMContentLoaded", function() {
 
     # Validate input
     if (nchar(geo_id) == 0) {
-      showNotification("Please enter a GEO accession ID (e.g., GSE151427)", type = "error")
+      showNotification("Please enter a GEO accession ID (e.g., GSE52778)", type = "error")
       return()
     }
 
     # Normalize ID
     geo_id <- toupper(geo_id)
     if (!grepl("^GSE[0-9]+$", geo_id)) {
-      showNotification("Invalid GEO ID format. Please enter a Series ID like GSE151427.", type = "error")
+      showNotification("Invalid GEO ID format. Please enter a Series ID like GSE52778.", type = "error")
       return()
     }
 
@@ -51593,7 +51757,7 @@ document.addEventListener("DOMContentLoaded", function() {
               fnames <- tolower(basename(rownames(supp_files)))
 
               # Skip DE result files, RPKM files, and individual sample files
-              skip_mask <- grepl("edger|deseq|diff|rpkm|_de[.-]|_vs_|pvalue|foldchange|logfc", fnames)
+              skip_mask <- grepl("edger|deseq|diff|rpkm|fpkm|tpm|[_.-]cpm|_de[.-]|_vs_|pvalue|foldchange|logfc", fnames)
               candidate_files <- rownames(supp_files)[!skip_mask]
 
               # Look specifically for count/matrix files
@@ -51774,7 +51938,7 @@ document.addEventListener("DOMContentLoaded", function() {
               tags$strong("What you can do:"),
               tags$ul(
                 tags$li("Upload your own count matrix (CSV/TSV) and pair it with this metadata"),
-                tags$li("Download raw FASTQ files from SRA and process them in the Raw RNA-seq Pipeline tab"),
+                tags$li("Download raw FASTQ files from SRA and process them in the FASTQ Processing tab"),
                 tags$li("Use ", tags$code("recount3"), " or ", tags$code("DEE2"), " for uniformly processed public data")
               )
             ),
@@ -53839,9 +54003,12 @@ document.addEventListener("DOMContentLoaded", function() {
       file_path <- input$batch_metadata_file$datapath
       file_ext <- tools::file_ext(input$batch_metadata_file$name)
       
-      # Read file
+      # Read file (detect tab / semicolon / comma separators)
       if (file_ext %in% c("csv", "txt", "tsv")) {
-        metadata <- read.csv(file_path, stringsAsFactors = FALSE, check.names = FALSE)
+        first_line <- readLines(file_path, n = 1, warn = FALSE)
+        sep <- if (file_ext == "tsv" || grepl("\t", first_line)) "\t" else
+          if (grepl(";", first_line) && !grepl(",", first_line)) ";" else ","
+        metadata <- read.csv(file_path, sep = sep, stringsAsFactors = FALSE, check.names = FALSE)
       } else if (file_ext == "xlsx") {
         metadata <- readxl::read_excel(file_path)
         metadata <- as.data.frame(metadata)
@@ -103642,6 +103809,16 @@ document.addEventListener("DOMContentLoaded", function() {
           showNotification("Need at least 2 groups for DEG analysis.", type = "error", duration = 10)
           return()
         }
+
+        # Comparison under test: primary tumour vs the reference (normal) group. Cohorts can
+        # contain extra sample types (metastatic, recurrent, ...), so name the test level
+        # explicitly instead of relying on factor/coefficient order.
+        ref_level <- levels(coldata$group)[1]
+        other_levels <- setdiff(levels(coldata$group), ref_level)
+        primary_levels <- other_levels[grepl("^Primary", other_levels)]
+        test_level <- if (length(primary_levels) > 0) primary_levels[1] else
+          names(sort(group_counts[other_levels], decreasing = TRUE))[1]
+        test_coef <- paste0("group", test_level)
         
         # Gene info
         gene_info <- as.data.frame(SummarizedExperiment::rowData(data))
@@ -103677,10 +103854,10 @@ document.addEventListener("DOMContentLoaded", function() {
           fit <- limma::eBayes(fit)
           
           setProgress(value = 0.8, message = "Extracting results")
-          res <- limma::topTable(fit, coef = ncol(design), number = Inf)
-          
+          res <- limma::topTable(fit, coef = which(colnames(design) == test_coef), number = Inf)
+
           if ("logFC" %in% names(res)) names(res)[names(res) == "logFC"] <- "log2FC"
-          
+
           assign("fit_tcga", fit, envir = .GlobalEnv)
           
           # ============ EDGER (OPTIMIZED) ============
@@ -103710,7 +103887,7 @@ document.addEventListener("DOMContentLoaded", function() {
           fit <- edgeR::glmQLFit(dge, design, robust = TRUE)
           
           setProgress(value = 0.85, message = "Testing differential expression")
-          qlf <- edgeR::glmQLFTest(fit, coef = ncol(design))
+          qlf <- edgeR::glmQLFTest(fit, coef = which(colnames(design) == test_coef))
           
           res <- as.data.frame(edgeR::topTags(qlf, n = Inf))
           
@@ -103727,6 +103904,7 @@ document.addEventListener("DOMContentLoaded", function() {
           
           # Pre-filter more aggressively for speed
           keep_genes <- rowSums(counts >= 10) >= ceiling(ncol(counts) * 0.1)
+          keep <- keep_genes
           counts_filtered <- counts[keep_genes, ]
           
           counts_int <- round(counts_filtered)
@@ -103750,8 +103928,7 @@ document.addEventListener("DOMContentLoaded", function() {
           normalized_counts <- log2(DESeq2::counts(dds, normalized = TRUE) + 1)
           
           setProgress(value = 0.8, message = "Extracting results")
-          contrast_name <- DESeq2::resultsNames(dds)[2]
-          res <- as.data.frame(DESeq2::results(dds, name = contrast_name))
+          res <- as.data.frame(DESeq2::results(dds, contrast = c("group", test_level, ref_level)))
           res <- res[!is.na(res$padj), ]
           
           if ("log2FoldChange" %in% names(res)) names(res)[names(res) == "log2FoldChange"] <- "log2FC"
@@ -103795,6 +103972,7 @@ document.addEventListener("DOMContentLoaded", function() {
             normalization = input$normalization_method,
             method = input$analysis_method,
             reference_group = levels(coldata$group)[1],
+            test_group = test_level,
             fc_threshold = input$log2fc_threshold,
             pval_threshold = input$adj_pval_threshold_tcga,
             sig_up = sig_up,
@@ -103858,7 +104036,8 @@ document.addEventListener("DOMContentLoaded", function() {
   output$tcga_analysis_summary_text <- renderText({
     req(tcga_rv$results)
     info <- tcga_rv$results$analysis_info
-    paste0("Project: ", info$project, " | ", info$sig_up + info$sig_down, " significant DEGs identified")
+    paste0("Project: ", info$project, " | ", info$test_group %||% "", " vs ", info$reference_group,
+           " | ", info$sig_up + info$sig_down, " significant DEGs identified")
   })
   
   # Method display
@@ -103910,8 +104089,9 @@ document.addEventListener("DOMContentLoaded", function() {
     req(tcga_rv$results)
     info <- tcga_rv$results$analysis_info
     data.frame(
-      Parameter = c("Method", "Normalization", "FC Threshold", "P-val Threshold", "Reference"),
-      Value = c(info$method, info$normalization, info$fc_threshold, info$pval_threshold, info$reference_group)
+      Parameter = c("Method", "Normalization", "FC Threshold", "P-val Threshold", "Comparison", "Reference"),
+      Value = c(info$method, info$normalization, info$fc_threshold, info$pval_threshold,
+                paste(info$test_group %||% "", "vs", info$reference_group), info$reference_group)
     )
   }, striped = TRUE, hover = TRUE, width = "100%")
   
@@ -107875,6 +108055,7 @@ document.addEventListener("DOMContentLoaded", function() {
           tcga_gene_df$log2_counts <- log2(tcga_gene_df$counts + 1)
           tcga_gene_df$gene_name <- gene_symbol
           tcga_gene_df$strata <- ifelse(tcga_gene_df$counts > median(tcga_gene_df$counts), "HIGH", "LOW")
+          sample_barcodes <- compact$barcode
 
         } else {
           # --- Fallback to full SummarizedExperiment ---
@@ -107898,6 +108079,7 @@ document.addEventListener("DOMContentLoaded", function() {
           if (length(gene_index) == 0) stop(paste("Gene", gene_symbol, "not found in dataset"))
 
           gene_expression <- assay(tcga_data, "tpm_unstrand")[gene_index, , drop = FALSE]
+          sample_barcodes <- colnames(tcga_data)
           tcga_gene_df <- as.data.frame(t(gene_expression)) %>%
             rownames_to_column("case_id") %>%
             rename(counts = colnames(.)[2]) %>%
@@ -107913,18 +108095,32 @@ document.addEventListener("DOMContentLoaded", function() {
         
         
         
-        # Merge and analyze - now using the clinical data from colData
-        
-        analysis_data <- merge(tcga_gene_df, cli_tcga,
-                               
-                               by.x = "case_id",
-                               
-                               by.y = "submitter_id") %>%
-          
+        # One row per patient: primary tumour samples only (TCGA sample type 01, or 03 for
+        # primary blood-derived cancers such as LAML), first aliquot per patient. Normal,
+        # metastatic and recurrent samples are excluded so the median split and the
+        # survival model count each patient exactly once.
+        sample_type <- substr(sample_barcodes, 14, 15)
+        primary_code <- if (any(sample_type == "01")) "01" else if (any(sample_type == "03")) "03" else NA
+        if (is.na(primary_code)) stop("No primary tumour samples found in this cohort")
+        per_patient <- data.frame(
+          barcode = sample_barcodes,
+          case_id = substr(sample_barcodes, 1, 12),
+          counts = as.numeric(tcga_gene_df$counts),
+          deceased = cli_tcga$deceased,
+          overall_survival = as.numeric(cli_tcga$overall_survival),
+          stringsAsFactors = FALSE
+        )
+        per_patient <- per_patient[sample_type == primary_code, ]
+        per_patient <- per_patient[order(per_patient$barcode), ]
+        per_patient <- per_patient[!duplicated(per_patient$case_id), ]
+        per_patient$log2_counts <- log2(per_patient$counts + 1)
+        per_patient$gene_name <- gene_symbol
+        per_patient$strata <- ifelse(per_patient$counts > median(per_patient$counts), "HIGH", "LOW")
+        tcga_gene_df <- per_patient
+
+        analysis_data <- per_patient %>%
           filter(!is.na(overall_survival),
-                 
                  !is.na(deceased),
-                 
                  !is.na(strata))
         
         
