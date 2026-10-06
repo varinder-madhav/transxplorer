@@ -6077,10 +6077,13 @@ perform_deconvolution_analysis <- function(expression_matrix,
 
 # HELPER FUNCTIONS FOR DEG CONTEXTUALIZATION
 
-identify_cell_type_markers_for_degs <- function(deconv_results, 
+identify_cell_type_markers_for_degs <- function(deconv_results,
                                                 cell_composition,
                                                 deg_data,
                                                 method) {
+  # Disabled: the previous implementation assigned DEGs to cell types by list position with a
+  # random specificity score, which is not biologically meaningful. Returns no table.
+  return(NULL)
   
   print("🔬 Linking significant DEGs to cell type markers...")
   
@@ -7366,6 +7369,7 @@ get_tf_target_regulations_fixed <- function(selected_genes, organism = "human",
 }
 
 create_mock_tf_regulations <- function(selected_genes) {
+  stop("Transcription-factor target data (DoRothEA) could not be loaded, so no regulatory network was built. TransXplorer never substitutes simulated data.")
   print("⚠️ Creating mock TF regulations for testing")
   
   # Common transcription factors
@@ -7394,7 +7398,67 @@ create_mock_tf_regulations <- function(selected_genes) {
 
 
 # Calculate TF activities using VIPER-like approach
-calculate_tf_activities_fixed_final <- function(expression_data, tf_regulations, selected_genes, 
+# TF activity = VIPER (Alvarez et al. 2016, via dorothea::run_viper) on each TF's FULL regulon.
+# Human/mouse: DoRothEA regulons at the chosen confidence levels. Other species: the
+# TF-target regulations loaded for the analysis. Expression is log2-transformed when it
+# looks like counts, collapsed to one row per gene, and scaled per gene (method "scale").
+# Returns long format: tf, sample, activity, n_targets (targets present in the data).
+calculate_tf_activities_fixed_final <- function(expression_data, tf_regulations, selected_genes,
+                                                filter_to_degs = FALSE, organism = NULL,
+                                                confidence_level = 0.6, tf_database = "dorothea") {
+  if (is.null(expression_data) || nrow(expression_data) == 0) return(NULL)
+  if (is.null(tf_regulations) || nrow(tf_regulations) == 0) return(NULL)
+  if (ncol(expression_data) < 2) return(NULL)
+  tryCatch({
+    if (!requireNamespace("viper", quietly = TRUE) || !requireNamespace("dorothea", quietly = TRUE))
+      stop("VIPER/DoRothEA packages are not available")
+    org <- tolower(if (is.null(organism)) "" else organism)
+    if (org %in% c("human", "mouse") && identical(tolower(if (is.null(tf_database)) "dorothea" else tf_database), "dorothea")) {
+      env <- new.env()
+      ds <- if (org == "human") "dorothea_hs" else "dorothea_mm"
+      utils::data(list = ds, package = "dorothea", envir = env)
+      regulon <- get(ds, envir = env)
+      keep_levels <- c("A", "B", "C", "D", "E")[seq_len(max(1, min(5, ceiling((if (is.null(confidence_level)) 0.6 else confidence_level) * 5))))]
+      regulon <- as.data.frame(regulon[regulon$confidence %in% keep_levels, c("tf", "confidence", "target", "mor")])
+    } else {
+      regulon <- data.frame(tf = tf_regulations$tf, confidence = "A", target = tf_regulations$target,
+                            mor = if ("mor" %in% names(tf_regulations)) tf_regulations$mor else 1,
+                            stringsAsFactors = FALSE)
+    }
+    all_tfs <- unique(tf_regulations$tf)
+    unique_tfs <- if (filter_to_degs) intersect(all_tfs, selected_genes$all_genes) else all_tfs
+    if (length(unique_tfs) == 0) unique_tfs <- all_tfs
+    regulon <- regulon[regulon$tf %in% unique_tfs, , drop = FALSE]
+    if (nrow(regulon) == 0) return(NULL)
+
+    expr <- as.matrix(expression_data)
+    storage.mode(expr) <- "double"
+    rn <- gsub("\\.[0-9]+$", "", gsub("_.*$", "", rownames(expr)))
+    rs <- rowsum(expr, rn, na.rm = TRUE)
+    expr <- rs / as.vector(table(rn)[rownames(rs)])
+    if (max(expr, na.rm = TRUE) > 100) expr <- log2(expr + 1)
+    expr <- expr[apply(expr, 1, function(x) stats::sd(x, na.rm = TRUE) > 0), , drop = FALSE]
+
+    acts <- suppressWarnings(dorothea::run_viper(expr, regulon,  # (deprecation notice only)
+                                options = list(method = "scale", minsize = 4, eset.filter = FALSE,
+                                               cores = 1, verbose = FALSE)))
+    if (is.null(acts) || length(acts) == 0) return(NULL)
+    acts <- as.matrix(acts)
+    n_tg <- vapply(rownames(acts), function(tf) sum(regulon$target[regulon$tf == tf] %in% rownames(expr)), 0)
+    out <- data.frame(tf = rep(rownames(acts), times = ncol(acts)),
+                      sample = rep(colnames(acts), each = nrow(acts)),
+                      activity = as.vector(acts),
+                      n_targets = rep(n_tg, times = ncol(acts)),
+                      stringsAsFactors = FALSE)
+    attr(out, "method") <- "VIPER (dorothea::run_viper, method = scale, minsize = 4)"
+    out
+  }, error = function(e) {
+    print(paste("TF activity (VIPER) failed:", conditionMessage(e)))
+    NULL
+  })
+}
+
+calculate_tf_activities_weighted_mean_legacy <- function(expression_data, tf_regulations, selected_genes,
                                                 filter_to_degs = FALSE) {
   
   print("📈 Calculating TF activities (OPTIMIZED)...")
@@ -7895,7 +7959,7 @@ perform_tf_pathway_analysis_fixed <- function(tf_list, organism = "human") {
       }
       
       # Run enrichment
-      enrichment_results <- enrichR::enrichr(tf_list, databases)
+      enrichment_results <- tx_enrichr_local(tf_list, databases)
       
       # Combine and process results
       combined_results <- do.call(rbind, lapply(names(enrichment_results), function(db) {
@@ -10948,7 +11012,7 @@ perform_module_enrichment_fixed_v2 <- function(modules, selected_genes, hub_gene
       print(paste("🔍 DEBUG: Calling enrichR::enrichr for module:", module_name))
       
       # Run enrichR analysis
-      enrichr_results <- enrichR::enrichr(converted_genes, available_dbs)
+      enrichr_results <- tx_enrichr_local(converted_genes, available_dbs)
       
       
       # Combine results from all databases
@@ -11222,7 +11286,7 @@ perform_module_enrichment_fixed <- function(modules, selected_genes, hub_genes) 
       # Perform enrichment with valid symbols
       print(paste("  🔍 Running enrichment with", length(valid_symbols), "symbols..."))
       
-      module_enrichment <- enrichR::enrichr(valid_symbols, databases)
+      module_enrichment <- tx_enrichr_local(valid_symbols, databases)
       
       # Process results
       combined_results <- data.frame()
@@ -14594,6 +14658,7 @@ convert_string_ids <- function(interactions, mapped_genes) {
 }
 
 create_mock_ppi_data <- function(genes) {
+  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
   n_genes <- length(genes)
   if (n_genes < 2) {
     return(list(interactions = data.frame(), mapping_rate = 0))
@@ -15209,7 +15274,25 @@ clean_gene_list_for_ppi <- function(genes) {
 }
 
 # STRING database query - uses local data for human/mouse, API for other species
-query_string_database_safe <- function(genes, organism = "human", confidence = 0.4, max_interactions = 1000, network_type = "full") {
+# STRING lists every interaction in both directions (A-B and B-A). Return one row per
+# unordered protein pair (highest combined_score) without self-loops, so every PPI path
+# (standalone and Advanced Analysis) works on a simple undirected network.
+tx_dedup_ppi <- function(df) {
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0 ||
+      !all(c("gene_from", "gene_to") %in% names(df))) return(df)
+  a <- as.character(df$gene_from); b <- as.character(df$gene_to)
+  keep <- !is.na(a) & !is.na(b) & a != b
+  df <- df[keep, , drop = FALSE]; a <- a[keep]; b <- b[keep]
+  key <- ifelse(a < b, paste(a, b, sep = "|"), paste(b, a, sep = "|"))
+  ord <- if ("combined_score" %in% names(df)) order(-df$combined_score) else seq_len(nrow(df))
+  df <- df[ord, , drop = FALSE][!duplicated(key[ord]), , drop = FALSE]
+  rownames(df) <- NULL
+  df
+}
+
+query_string_database_safe <- function(...) tx_dedup_ppi(query_string_database_safe_raw(...))
+
+query_string_database_safe_raw <- function(genes, organism = "human", confidence = 0.4, max_interactions = 1000, network_type = "full") {
 
   print("Querying STRING database...")
 
@@ -15803,6 +15886,7 @@ convert_string_ids_to_genes <- function(interactions, mapped_genes) {
 
 # Safe mock data function for when STRING is unavailable
 create_mock_ppi_data_safe <- function(genes) {
+  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
   
   print("  • Creating mock PPI data for development...")
   
@@ -16384,7 +16468,7 @@ perform_functional_enrichment_safe <- function(all_proteins, selected_genes, org
       for (db in databases) {
         db_result <- tryCatch({
           # Query single database
-          single_result <- enrichR::enrichr(
+          single_result <- tx_enrichr_local(
             genes = genes_for_enrichment,
             databases = db
           )
@@ -16807,6 +16891,7 @@ convert_to_symbols_comprehensive <- function(interactions, mapped_genes, protein
 
 # Create mock data for testing
 create_mock_comprehensive_ppi <- function(genes) {
+  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
   
   # Filter to protein-coding genes only
   genes_clean <- genes[!grepl("^LINC|^MIR|^RNA", genes)]
@@ -16860,6 +16945,7 @@ create_mock_comprehensive_ppi <- function(genes) {
 
 
 create_mock_ppi_data_robust <- function(genes) {
+  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
   
   print("🎭 Creating robust mock PPI data...")
   
@@ -18905,6 +18991,7 @@ create_ultra_safe_summary <- function(ppi_interactions, hub_proteins, network_me
 
 # Helper functions for the debug version
 create_mock_ppi_interactions <- function(gene_symbols) {
+  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
   
   if (length(gene_symbols) < 2) {
     return(data.frame(
@@ -19625,6 +19712,7 @@ get_string_interactions <- function(string_ids, species_id, confidence, max_inte
 
 #' Create Mock Data for Testing (when STRING API is unavailable)
 create_mock_string_mapping <- function(genes, species_id) {
+  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
   data.frame(
     queryItem = genes,
     queryIndex = seq_along(genes),
@@ -19636,6 +19724,7 @@ create_mock_string_mapping <- function(genes, species_id) {
 }
 
 create_mock_interactions <- function(string_ids, confidence) {
+  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
   n_ids <- length(string_ids)
   if (n_ids < 2) return(data.frame())
   
@@ -19943,7 +20032,7 @@ perform_network_functional_analysis <- function(ppi_interactions, selected_genes
     # Enrichment for all network proteins
     if (length(all_network_proteins) >= 3) {
       tryCatch({
-        enrichment_results$all_network <- enrichr(all_network_proteins, databases)
+        enrichment_results$all_network <- tx_enrichr_local(all_network_proteins, databases)
       }, error = function(e) {
         print("Enrichment failed for all network proteins")
       })
@@ -19952,7 +20041,7 @@ perform_network_functional_analysis <- function(ppi_interactions, selected_genes
     # Enrichment for input proteins only
     if (length(input_proteins) >= 3) {
       tryCatch({
-        enrichment_results$input_proteins <- enrichr(input_proteins, databases)
+        enrichment_results$input_proteins <- tx_enrichr_local(input_proteins, databases)
       }, error = function(e) {
         print("Enrichment failed for input proteins")
       })
@@ -19961,7 +20050,7 @@ perform_network_functional_analysis <- function(ppi_interactions, selected_genes
     # Enrichment for network neighbors
     if (length(neighbor_proteins) >= 3) {
       tryCatch({
-        enrichment_results$neighbor_proteins <- enrichr(neighbor_proteins, databases)
+        enrichment_results$neighbor_proteins <- tx_enrichr_local(neighbor_proteins, databases)
       }, error = function(e) {
         print("Enrichment failed for neighbor proteins")
       })
@@ -21881,12 +21970,12 @@ ui <- fluidPage(
                               div(class = "step-card",
                                   div(class = "step-number", "3"),
                                   h5("Alignment"),
-                                  p("HISAT2 genome mapping", style = "margin: 0; color: #666;")
+                                  p("HISAT2 genome mapping or Salmon pseudo-alignment", style = "margin: 0; color: #666;")
                               ),
                               div(class = "step-card",
                                   div(class = "step-number", "4"),
                                   h5("Quantification"),
-                                  p("featureCounts gene counting", style = "margin: 0; color: #666;")
+                                  p("featureCounts or tximport gene counting", style = "margin: 0; color: #666;")
                               ),
                               div(class = "step-card",
                                   div(class = "step-number", "5"),
@@ -22419,6 +22508,13 @@ ui <- fluidPage(
                      condition = "input.analysis_mode == 'server'",
                      div(style = "margin-top: 1.5rem;",
                          uiOutput("run_button_ui")
+                     ),
+                     div(style = "margin-top: 1rem; padding: 10px; background: #f5f7fb; border-radius: 6px;",
+                         tags$label("Retrieve results by job ID", style = "font-weight: 600;"),
+                         tags$small(class = "text-muted", style = "display: block; margin-bottom: 6px;",
+                                    "Every run gets a job ID and keeps running if you close the page."),
+                         textInput("fastq_job_id", NULL, placeholder = "job_20261006_142501_ab12cd34"),
+                         actionButton("fastq_retrieve_job", "Retrieve", icon = icon("download"), class = "btn btn-default btn-sm")
                      )
                    ),
                    
@@ -25295,6 +25391,16 @@ ui <- fluidPage(
           )
       ),
       
+      # Reuse results from Transcriptome Analysis (no re-upload needed)
+      div(class = "info-box", style = "max-width: 1150px; margin: 0 auto 25px auto;",
+          h4(icon("link"), " Already ran a differential expression analysis?", style = "margin-top: 0;"),
+          p("No need to re-upload anything. Load the significant genes (adjusted p < 0.05, |log2FC| \u2265 1) from your Transcriptome Analysis into PPI or GRN, or run these analyses directly on your DE results in Advanced Analysis, which also runs WGCNA on your normalised counts, drug-target prioritisation and cell-type deconvolution (human samples)."),
+          actionButton("sb_use_degs_ppi", "Use my DEGs for PPI", icon = icon("share-alt"), class = "btn btn-default"),
+          actionButton("sb_use_degs_grn", "Use my DEGs for GRN", icon = icon("sitemap"), class = "btn btn-default"),
+          actionButton("sb_open_advanced", "Open Advanced Analysis on my DE results", icon = icon("arrow-right"), class = "btn btn-primary"),
+          actionButton("sb_open_deconv", "Cell-type deconvolution (human)", icon = icon("layer-group"), class = "btn btn-default")
+      ),
+
       # JavaScript to handle active state
       tags$script(HTML("
     $(document).on('shiny:inputchanged', function(event) {
@@ -29208,7 +29314,7 @@ ui <- fluidPage(
                            div(style = "font-weight: 600; margin-bottom: 8px; color: #3949ab;",
                                icon("info-circle"), " Accepted formats"),
                            tags$ul(style = "margin: 0; padding-left: 18px; line-height: 1.7;",
-                                   tags$li("Two columns: Gene symbol + Ranking metric (log2FC, t-statistic, or any score)"),
+                                   tags$li("Two columns: Gene ID (symbol, Ensembl or Entrez; IDs are converted to symbols automatically) + Ranking metric (log2FC, t-statistic, or any score)"),
                                    tags$li("Single column: Pre-ordered gene list (top = most upregulated)"),
                                    tags$li("Headers are auto-detected (optional)")
                            ),
@@ -29860,6 +29966,24 @@ ui <- fluidPage(
              )
     ),
     tabPanel(
+      title = "Methods & Versions",
+      icon = icon("clipboard-list"),
+      value = "methods_versions_tab",
+      fluidRow(
+        column(10, offset = 1,
+          h2(icon("clipboard-list"), " Methods & Versions"),
+          p("Everything needed to report and reproduce a TransXplorer analysis: software versions, reference genomes and annotations, database releases, the statistical methods and defaults each module uses, and the papers to cite. This page is generated live from the server."),
+          downloadButton("download_methods_versions", "Download as text", class = "btn btn-primary"),
+          br(), br(),
+          h4("Software"), DT::DTOutput("mv_software"), br(),
+          h4("Reference genomes and annotations (FASTQ processing)"), DT::DTOutput("mv_references"), br(),
+          h4("Databases"), DT::DTOutput("mv_databases"), br(),
+          h4("Methods and defaults"), DT::DTOutput("mv_methods"), br()
+        )
+      )
+    ),
+
+    tabPanel(
       title = "Tutorial",
       icon = icon("graduation-cap"),
       value = "tutorial_tab",
@@ -29936,6 +30060,220 @@ ui <- fluidPage(
 
 
 
+
+# ============================================================================
+#  Local over-representation analysis on Enrichr gene-set libraries
+#  - libraries are downloaded once from Enrichr and cached on disk (reproducible,
+#    no dependence on the live Enrichr API for each analysis)
+#  - one-sided hypergeometric test; Benjamini-Hochberg adjustment across terms
+#    with at least one overlapping gene
+#  - `background`: the tested-gene universe (e.g. all genes in the DE table);
+#    the universe is the background genes that appear in the library. Without a
+#    background, all genes in the library are used (Enrichr's default)
+#  Returns a named list of data frames with enrichR's column layout.
+# ============================================================================
+TX_ENRICHR_CACHE <- Sys.getenv("TX_ENRICHR_CACHE", "/srv/transxplorer/results/.enrichr_libraries")
+TX_JOBS_DIR <- Sys.getenv("TX_JOBS_DIR", "/srv/transxplorer/results/jobs")
+
+.tx_enrichr_mem <- new.env(parent = emptyenv())
+# Enrichr renamed some libraries; map names used in the app to the published ones
+TX_ENRICHR_ALIASES <- c(WikiPathways_2023_Human = "WikiPathway_2023_Human",
+                        WikiPathways_2021_Human = "WikiPathway_2021_Human")
+
+tx_enrichr_library <- function(lib) {
+  if (exists(lib, envir = .tx_enrichr_mem, inherits = FALSE)) return(get(lib, envir = .tx_enrichr_mem))
+  cache_dir <- TX_ENRICHR_CACHE
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  if (file.access(cache_dir, 2) != 0) {          # not writable: fall back to a per-process cache
+    cache_dir <- file.path(tempdir(), "enrichr_libraries")
+    dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  f <- file.path(cache_dir, paste0(gsub("[^A-Za-z0-9_.-]", "_", lib), ".rds"))
+  shared <- file.path(TX_ENRICHR_CACHE, basename(f))
+  for (cand in unique(c(f, shared))) {
+    if (file.exists(cand)) {
+      sets <- tryCatch(readRDS(cand), error = function(e) NULL)
+      if (!is.null(sets)) { assign(lib, sets, envir = .tx_enrichr_mem); return(sets) }
+    }
+  }
+  remote <- if (lib %in% names(TX_ENRICHR_ALIASES)) TX_ENRICHR_ALIASES[[lib]] else lib
+  url <- paste0("https://maayanlab.cloud/Enrichr/geneSetLibrary?mode=text&libraryName=",
+                utils::URLencode(remote, reserved = TRUE))
+  old_to <- getOption("timeout"); options(timeout = max(180, old_to)); on.exit(options(timeout = old_to))
+  lines <- readLines(url, warn = FALSE)
+  fields <- strsplit(lines, "\t", fixed = TRUE)
+  sets <- lapply(fields, function(x) {
+    g <- sub(",.*$", "", x[-(1:2)])
+    unique(toupper(trimws(g[nzchar(g)])))
+  })
+  names(sets) <- vapply(fields, function(x) x[1], "")
+  sets <- sets[lengths(sets) > 0]
+  if (length(sets) == 0) stop(paste("Gene-set library", lib, "could not be downloaded from Enrichr"))
+  attr(sets, "downloaded") <- as.character(Sys.Date())
+  attr(sets, "enrichr_name") <- remote
+  tryCatch(saveRDS(sets, f), error = function(e) NULL)
+  assign(lib, sets, envir = .tx_enrichr_mem)
+  sets
+}
+
+tx_enrichr_local <- function(genes, databases, background = NULL) {
+  genes <- unique(toupper(trimws(as.character(genes))))
+  genes <- genes[!is.na(genes) & nzchar(genes)]
+  bg <- NULL
+  if (!is.null(background)) {
+    bg <- unique(toupper(trimws(as.character(background))))
+    bg <- bg[!is.na(bg) & nzchar(bg)]
+    if (length(bg) == 0) bg <- NULL
+  }
+  empty <- data.frame(Term = character(0), Overlap = character(0), P.value = numeric(0),
+                      Adjusted.P.value = numeric(0), Old.P.value = numeric(0),
+                      Old.Adjusted.P.value = numeric(0), Odds.Ratio = numeric(0),
+                      Combined.Score = numeric(0), Genes = character(0), stringsAsFactors = FALSE)
+  out <- list()
+  for (db in databases) {
+    sets <- tryCatch(tx_enrichr_library(db), error = function(e) {
+      message("Enrichment library ", db, " unavailable: ", conditionMessage(e)); NULL })
+    if (is.null(sets)) { out[[db]] <- empty; next }
+    universe <- unique(unlist(sets, use.names = FALSE))
+    if (!is.null(bg)) universe <- intersect(universe, bg)
+    q <- intersect(genes, universe)
+    N <- length(universe); n <- length(q)
+    if (N == 0 || n == 0) { out[[db]] <- empty; next }
+    sets_u <- lapply(sets, function(s) s[s %in% universe])
+    K <- lengths(sets_u)
+    hits <- lapply(sets_u, function(s) s[s %in% q])
+    k <- lengths(hits)
+    keep <- K > 0 & k > 0
+    if (!any(keep)) { out[[db]] <- empty; next }
+    K <- K[keep]; k <- k[keep]; hits <- hits[keep]
+    p <- stats::phyper(k - 1, K, N - K, n, lower.tail = FALSE)
+    or <- ((k + 0.5) * (N - K - n + k + 0.5)) / ((K - k + 0.5) * (n - k + 0.5))
+    res <- data.frame(
+      Term = names(K), Overlap = paste0(k, "/", K), P.value = p,
+      Adjusted.P.value = stats::p.adjust(p, method = "BH"),
+      Old.P.value = 0, Old.Adjusted.P.value = 0, Odds.Ratio = or,
+      Combined.Score = log(or) * -log(p),
+      Genes = vapply(hits, paste, "", collapse = ";"),
+      stringsAsFactors = FALSE)
+    res <- res[order(res$P.value), ]
+    rownames(res) <- NULL
+    attr(res, "universe_size") <- N
+    attr(res, "library_downloaded") <- attr(sets, "downloaded")
+    out[[db]] <- res
+  }
+  out
+}
+
+# ============================================================================
+#  Methods & Versions: software, reference data, databases and citations,
+#  read live from this server so reports match what actually ran.
+# ============================================================================
+tx_pkg_version <- function(p) tryCatch(as.character(utils::packageVersion(p)), error = function(e) "not installed")
+tx_tool_version <- function(cmd, pattern = "[0-9]+\\.[0-9]+(\\.[0-9]+)?") {
+  out <- tryCatch(suppressWarnings(system(cmd, intern = TRUE, ignore.stderr = FALSE)), error = function(e) character(0))
+  v <- regmatches(paste(out, collapse = " "), regexpr(pattern, paste(out, collapse = " ")))
+  if (length(v) == 0) "not available" else v
+}
+.tx_mv_cache <- new.env(parent = emptyenv())
+
+tx_methods_versions <- function() {
+  if (exists("mv", envir = .tx_mv_cache, inherits = FALSE)) return(get("mv", envir = .tx_mv_cache))
+  pk <- function(name, pkg, role, cite) data.frame(Component = name, Version = tx_pkg_version(pkg), Used_for = role, Citation = cite, stringsAsFactors = FALSE)
+  tl <- function(name, cmd, role, cite) data.frame(Component = name, Version = tx_tool_version(cmd), Used_for = role, Citation = cite, stringsAsFactors = FALSE)
+  software <- rbind(
+    data.frame(Component = "R", Version = paste(R.version$major, R.version$minor, sep = "."), Used_for = "Runtime", Citation = "R Core Team", stringsAsFactors = FALSE),
+    data.frame(Component = "Bioconductor", Version = tryCatch(as.character(BiocManager::version()), error = function(e) "unknown"), Used_for = "Package release", Citation = "", stringsAsFactors = FALSE),
+    pk("DESeq2", "DESeq2", "Differential expression", "Love et al. 2014, doi:10.1186/s13059-014-0550-8"),
+    pk("edgeR", "edgeR", "Differential expression, normalisation", "Robinson et al. 2010, doi:10.1093/bioinformatics/btp616"),
+    pk("limma (voom)", "limma", "Differential expression", "Ritchie et al. 2015, doi:10.1093/nar/gkv007; Law et al. 2014, doi:10.1186/gb-2014-15-2-r29"),
+    pk("sva (ComBat-seq)", "sva", "Batch correction", "Zhang et al. 2020, doi:10.1093/nargab/lqaa078"),
+    pk("clusterProfiler", "clusterProfiler", "GO/KEGG/Reactome/WikiPathways enrichment", "Wu et al. 2021, doi:10.1016/j.xinn.2021.100141"),
+    pk("fgsea", "fgsea", "GSEA (fgseaMultilevel)", "Korotkevich et al. 2016, doi:10.1101/060012"),
+    pk("msigdbr", "msigdbr", "MSigDB gene sets for GSEA", "Liberzon et al. 2015, doi:10.1016/j.cels.2015.12.004"),
+    pk("WGCNA", "WGCNA", "Co-expression networks", "Langfelder & Horvath 2008, doi:10.1186/1471-2105-9-559"),
+    pk("dorothea", "dorothea", "TF-target regulons", "Garcia-Alonso et al. 2019, doi:10.1101/gr.240663.118"),
+    pk("viper", "viper", "TF activity inference", "Alvarez et al. 2016, doi:10.1038/ng.3593"),
+    pk("igraph", "igraph", "Network metrics", "Csardi & Nepusz 2006"),
+    pk("survival", "survival", "Kaplan-Meier, Cox models, log-rank", "Therneau, survival package; Kaplan & Meier 1958, doi:10.1080/01621459.1958.10501452"),
+    pk("TCGAbiolinks", "TCGAbiolinks", "TCGA data", "Colaprico et al. 2016, doi:10.1093/nar/gkv1507"),
+    pk("GEOquery", "GEOquery", "GEO import", "Davis & Meltzer 2007, doi:10.1093/bioinformatics/btm254"),
+    pk("tximport", "tximport", "Salmon transcript-to-gene counts", "Soneson et al. 2015, doi:10.12688/f1000research.7563.2"),
+    pk("immunedeconv", "immunedeconv", "Cell-type deconvolution (xCell, MCP-counter, EPIC)", "Aran et al. 2017, doi:10.1186/s13059-017-1349-1; Becht et al. 2016, doi:10.1186/s13059-016-1070-5; Racle et al. 2017, doi:10.7554/eLife.26476"),
+    pk("shiny", "shiny", "Web application", "Chang et al., shiny package"),
+    tl("HISAT2", "hisat2 --version 2>&1 | head -1", "Genome alignment", "Kim et al. 2019, doi:10.1038/s41587-019-0201-4"),
+    tl("featureCounts (Subread)", "featureCounts -v 2>&1", "Read counting", "Liao et al. 2014, doi:10.1093/bioinformatics/btt656"),
+    tl("Salmon", "salmon --version 2>&1", "Pseudo-alignment", "Patro et al. 2017, doi:10.1038/nmeth.4197"),
+    tl("SAMtools", "samtools --version 2>&1 | head -1", "BAM sorting/indexing", "Li et al. 2009, doi:10.1093/bioinformatics/btp352"),
+    tl("FastQC", "fastqc --version 2>&1", "Read quality control", "Andrews, FastQC (Babraham Bioinformatics)"),
+    data.frame(Component = "Trimmomatic", Version = "0.39", Used_for = "Adapter/quality trimming", Citation = "Bolger et al. 2014, doi:10.1093/bioinformatics/btu170", stringsAsFactors = FALSE)
+  )
+  hb <- "/srv/hisat2_indexes"; an <- "/srv/annotations"
+  ref <- function(genome, index, annot, annot_file) data.frame(
+    Genome = genome, HISAT2_index = index, Annotation = annot,
+    Installed = if (file.exists(file.path(hb, index, "genome.1.ht2")) && any(file.exists(annot_file))) "yes" else "no",
+    stringsAsFactors = FALSE)
+  references <- rbind(
+    ref("Human hg38", "hg38", "GENCODE v47", file.path(an, "gencode.v47.annotation.gtf")),
+    ref("Mouse mm10 (GRCm38)", "mm10", "GENCODE vM25", file.path(an, c("gencode.vM25.annotation.gtf", "gencode.vM25.annotation.gtf.gz"))),
+    ref("Rat rn6 (Rnor_6.0)", "rn6", "Ensembl 104", file.path(an, c("Rattus_norvegicus.Rnor_6.0.104.gtf", "Rattus_norvegicus.Rnor_6.0.104.gtf.gz"))),
+    ref("Fly dm6 (BDGP6)", "dm6", "Ensembl 111 (BDGP6.46), UCSC chromosome names", file.path(an, "Drosophila_melanogaster.BDGP6.46.111.gtf")),
+    ref("Zebrafish danRer11 (GRCz11)", "danRer11", "Index-bundled GTF / Ensembl 111", c(file.path(hb, "danRer11/genome.gtf"), file.path(an, "Danio_rerio.GRCz11.111.gtf"))),
+    ref("C. elegans WBcel235", "wbcel235", "Ensembl 111", file.path(an, "Caenorhabditis_elegans.WBcel235.111.gtf")),
+    ref("Yeast R64", "r64", "Ensembl 111 (R64-1-1)", file.path(an, "Saccharomyces_cerevisiae.R64-1-1.111.gtf")),
+    ref("Arabidopsis TAIR10", "araTha", "Index-bundled GTF", file.path(hb, "araTha/genome.gtf")),
+    ref("Chicken galGal6 (GRCg6a)", "galGal6", "Index-bundled GTF", file.path(hb, "galGal6/genome.gtf")),
+    ref("Pig susScr11 (Sscrofa11.1)", "susScr11", "Index-bundled GTF", file.path(hb, "susScr11/genome.gtf"))
+  )
+  references$Salmon_transcriptome <- ifelse(references$HISAT2_index == "hg38", "GENCODE v47 transcripts",
+                                     ifelse(references$HISAT2_index == "mm10", "GENCODE vM36 transcripts", "not offered (use HISAT2)"))
+  enr_files <- list.files(TX_ENRICHR_CACHE, pattern = "\\.rds$", full.names = TRUE)
+  enr_libs <- if (length(enr_files)) paste(sprintf("%s (downloaded %s)", sub("\\.rds$", "", basename(enr_files)),
+                                                     format(file.mtime(enr_files), "%Y-%m-%d")), collapse = "; ") else "downloaded on first use"
+  tcga_files <- list.files("/srv/tcga_precomputed", full.names = TRUE)
+  databases <- data.frame(
+    Database = c("STRING", "OpenTargets Platform", "DGIdb", "DoRothEA regulons", "MSigDB (via msigdbr)",
+                 "Enrichr gene-set libraries", "KEGG / Reactome / WikiPathways / GO", "TCGA", "GEO"),
+    Release = c("v12.0 (local for human and mouse; API for other species)", "25.03 (local Parquet)", "v5 (live API)",
+                paste("dorothea", tx_pkg_version("dorothea"), "(dorothea_hs / dorothea_mm)"), paste("msigdbr", tx_pkg_version("msigdbr")),
+                enr_libs, "via clusterProfiler / organism annotation packages at the versions above",
+                if (length(tcga_files)) paste0("GDC harmonised data via TCGAbiolinks; precomputed files dated ", format(max(file.mtime(tcga_files)), "%Y-%m-%d")) else "GDC harmonised data via TCGAbiolinks",
+                "live NCBI GEO (GEOquery)"),
+    Citation = c("Szklarczyk et al. 2023, doi:10.1093/nar/gkac1000", "Ochoa et al. 2023, doi:10.1093/nar/gkac1046",
+                 "Cannon et al. 2024, doi:10.1093/nar/gkad1040", "Garcia-Alonso et al. 2019, doi:10.1101/gr.240663.118",
+                 "Liberzon et al. 2015, doi:10.1016/j.cels.2015.12.004", "Kuleshov et al. 2016, doi:10.1093/nar/gkw377",
+                 "Wu et al. 2021, doi:10.1016/j.xinn.2021.100141", "Colaprico et al. 2016, doi:10.1093/nar/gkv1507",
+                 "Davis & Meltzer 2007, doi:10.1093/bioinformatics/btm254"),
+    stringsAsFactors = FALSE)
+  methods <- data.frame(
+    Module = c("FASTQ processing", "FASTQ processing", "Differential expression", "Over-representation (Enrichr libraries)",
+               "Over-representation (GO/KEGG/Reactome)", "GSEA", "TCGA survival", "TCGA differential expression",
+               "PPI networks", "TF activity (GRN)", "Gene identifiers"),
+    Method = c("FastQC -> Trimmomatic (ILLUMINACLIP TruSeq3, LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36) -> HISAT2 (--dta) -> featureCounts (paired fragments counted once; unstranded)",
+               "Salmon quant (-l A --gcBias --seqBias --validateMappings) -> tximport gene-level counts",
+               "DESeq2, edgeR (TMM, quasi-likelihood) or limma-voom; BH-adjusted p-values",
+               "One-sided hypergeometric test on cached Enrichr libraries; background = genes tested in the DE analysis (TCGA: tested genes); BH adjustment",
+               "clusterProfiler with the tested genes as universe; BH adjustment",
+               "fgseaMultilevel on a ranked list; Ensembl/Entrez IDs converted to symbols",
+               "Primary tumour samples (type 01; 03 for LAML), one per patient; median split; Cox model with LOW as reference (HR = HIGH vs LOW); log-rank test",
+               "Primary tumour vs Solid Tissue Normal tested by name in DESeq2, edgeR or limma-voom",
+               "STRING edges deduplicated to one per unordered protein pair; 8 CytoHubba-style centralities",
+               "VIPER (method = scale, minsize = 4) on full DoRothEA regulons at the chosen confidence levels",
+               "Failed conversions are reported as missing; no simulated data is ever substituted"),
+    stringsAsFactors = FALSE)
+  mv <- list(software = software, references = references, databases = databases, methods = methods,
+             generated = format(Sys.time(), "%Y-%m-%d %H:%M %Z"))
+  assign("mv", mv, envir = .tx_mv_cache)
+  mv
+}
+
+tx_methods_versions_text <- function() {
+  mv <- tx_methods_versions()
+  fmt <- function(df) paste(apply(df, 1, function(r) paste(paste0(names(df), ": ", r), collapse = " | ")), collapse = "\n")
+  paste0("TransXplorer - Methods & Versions\nGenerated: ", mv$generated, " (https://transxplorer.org)\n\n",
+         "SOFTWARE\n", fmt(mv$software), "\n\nREFERENCE GENOMES AND ANNOTATIONS\n", fmt(mv$references),
+         "\n\nDATABASES\n", fmt(mv$databases), "\n\nMETHODS AND DEFAULTS\n", fmt(mv$methods),
+         "\n\nPlease cite TransXplorer and the tools and databases above that your analysis used.\n")
+}
 
 convertGeneIDs <- function(gene_data, input_id_type, organism_db) {
   # Add input validation
@@ -30017,6 +30355,84 @@ convertGeneIDs <- function(gene_data, input_id_type, organism_db) {
 
 # Define server function
 server <- function(input, output, session) {
+
+  # ===== Systems Biology: reuse DE results from Transcriptome Analysis =====
+  tx_current_sig_degs <- function(max_n = 500) {
+    res <- rv_deg_main$deg_results
+    if (is.null(res) || !is.data.frame(res) || nrow(res) == 0) return(character(0))
+    pcol <- intersect(c("padj", "FDR", "adj.P.Val", "p_adj", "adj_pvalue"), colnames(res))[1]
+    fcol <- intersect(c("log2FC", "log2FoldChange", "logFC"), colnames(res))[1]
+    gcol <- intersect(c("gene_symbol", "gene_name", "symbol", "gene_id", "gene", "Gene"), colnames(res))[1]
+    if (is.na(gcol)) { res$..gene <- rownames(res); gcol <- "..gene" }
+    if (is.na(pcol) || is.na(fcol)) return(character(0))
+    keep <- !is.na(res[[pcol]]) & !is.na(res[[fcol]]) & res[[pcol]] < 0.05 & abs(res[[fcol]]) >= 1
+    sig <- res[keep, , drop = FALSE]
+    sig <- sig[order(sig[[pcol]]), , drop = FALSE]
+    ids <- unique(as.character(sig[[gcol]]))
+    ids <- ids[!is.na(ids) & nzchar(ids)]
+    if (length(ids) > 0 && mean(grepl("^ENS[A-Z]*G[0-9]", ids)) > 0.5) {
+      ids <- tryCatch(convert_gene_ids(ids, from_org = input$organism_deg_main %||% "human", to_type = "SYMBOL"),
+                      error = function(e) ids)
+    }
+    head(unique(ids), max_n)
+  }
+  observeEvent(input$sb_use_degs_ppi, {
+    genes <- tx_current_sig_degs()
+    if (length(genes) < 3) {
+      showNotification("No significant DE genes found. Run a differential expression analysis in Transcriptome Analysis first.", type = "warning", duration = 8)
+      return()
+    }
+    updateTextAreaInput(session, "ppi_standalone_gene_text", value = paste(genes, collapse = "\n"))
+    shinyjs::runjs("Shiny.setInputValue('select_systems_module', 'ppi', {priority: 'event'})")
+    showNotification(sprintf("Loaded %d significant DE genes into the PPI gene list.", length(genes)), type = "message", duration = 6)
+  })
+  observeEvent(input$sb_use_degs_grn, {
+    genes <- tx_current_sig_degs()
+    if (length(genes) < 10) {
+      showNotification("GRN needs at least 10 significant DE genes. Run a differential expression analysis in Transcriptome Analysis first.", type = "warning", duration = 8)
+      return()
+    }
+    updateRadioButtons(session, "grn_standalone_input_mode", selected = "quick")
+    updateTextAreaInput(session, "grn_standalone_gene_text", value = paste(genes, collapse = "\n"))
+    grn_standalone_rv$quick_mode_genes <- genes
+    shinyjs::runjs("Shiny.setInputValue('select_systems_module', 'grn', {priority: 'event'})")
+    showNotification(sprintf("Loaded %d significant DE genes into the GRN gene list.", length(genes)), type = "message", duration = 6)
+  })
+  # Advanced Analysis picks its type through clickable cards (selectAnalysisCard); the cards
+  # render after the tab opens, so wait for them before selecting.
+  tx_go_advanced <- function(type = NULL, label = "") {
+    updateTabsetPanel(session, "main_tabs", selected = "deg_main_panel")
+    shinyjs::delay(150, updateTabsetPanel(session, "deg_results_tabs_main", selected = "network_analysis"))
+    if (!is.null(type)) {
+      shinyjs::runjs(sprintf(
+        "(function(){ var n = 0; var t = setInterval(function(){ n++;
+           if (typeof selectAnalysisCard === 'function' && document.querySelector('.analysis-card')) {
+             selectAnalysisCard('%s', '%s'); clearInterval(t);
+           } else if (n > 60) { Shiny.setInputValue('network_analysis_type_systems', '%s', {priority: 'event'}); clearInterval(t); }
+         }, 250); })();", type, label, type))
+    }
+  }
+  observeEvent(input$sb_open_advanced, {
+    if (is.null(rv_deg_main$deg_results))
+      showNotification("Run a differential expression analysis first; Advanced Analysis then works on its results.", type = "message", duration = 8)
+    tx_go_advanced()
+  })
+  observeEvent(input$sb_open_deconv, {
+    if (!identical(input$organism_deg_main, "human"))
+      showNotification("Cell-type deconvolution is available for human samples: select Human as the organism in Transcriptome Analysis.", type = "message", duration = 8)
+    tx_go_advanced("deconv", "Cell Type Deconvolution")
+  })
+
+  # ===== Methods & Versions page =====
+  mv_table <- function(df) DT::datatable(df, rownames = FALSE, options = list(dom = "t", paging = FALSE, scrollX = TRUE))
+  output$mv_software   <- DT::renderDT(mv_table(tx_methods_versions()$software))
+  output$mv_references <- DT::renderDT(mv_table(tx_methods_versions()$references))
+  output$mv_databases  <- DT::renderDT(mv_table(tx_methods_versions()$databases))
+  output$mv_methods    <- DT::renderDT(mv_table(tx_methods_versions()$methods))
+  output$download_methods_versions <- downloadHandler(
+    filename = function() paste0("TransXplorer_methods_versions_", Sys.Date(), ".txt"),
+    content = function(file) writeLines(tx_methods_versions_text(), file)
+  )
 
   # ===== What's New + Feedback (footer feature) =====
   observeEvent(input$tx_changelog_seeall, {
@@ -33816,7 +34232,121 @@ server <- function(input, output, session) {
     shinyjs::html("run_enrichment", "Run Enrichment")
   })
   
+  # Batch-effect detection on sample PCs (one row per sample).
+  #  - PVCA (Li et al. 2009): linear mixed model per PC with every candidate variable as a
+  #    random effect (lme4, REML); variance components weighted by PC variance over the PCs
+  #    that explain >= 60% of the variance of the retained PCs. Falls back to one variable per
+  #    model when the joint model cannot be fitted (e.g. fully confounded variables).
+  #  - kBET (Buttner et al. 2019): for every sample, chi-square test of the batch labels of its
+  #    k nearest neighbours (k = mean batch size, >= 5) against the global batch frequencies;
+  #    rejection rate = share of tests with p < 0.05 (Monte-Carlo p-values for small counts).
+  #  - Silhouette width of the batch labels in PC space.
+  #  Combined score = 0.4 x PVCA + 0.4 x kBET rejection + 0.2 x max(0, silhouette).
+  #  A variable is flagged when at least two of: PVCA >= 0.15, kBET rejection >= 0.25,
+  #  silhouette >= 0.05. Thresholds were set from the 95th percentiles of each metric in
+  #  simulated batch-free data (8-48 samples), so the expected false-positive rate is below 5%.
+  TX_BATCH_THRESHOLDS <- c(pvca = 0.15, kbet = 0.25, silhouette = 0.05)
+  tx_pvca <- function(pc_data, meta) {
+    ev <- apply(pc_data, 2, stats::var)
+    n_use <- max(2, which(cumsum(ev) / sum(ev) >= 0.6)[1])
+    n_use <- min(n_use, ncol(pc_data))
+    w <- ev[seq_len(n_use)] / sum(ev[seq_len(n_use)])
+    vars <- colnames(meta)
+    fit_one <- function(y, vs) {
+      df <- data.frame(y = y, meta[, vs, drop = FALSE])
+      for (v in vs) df[[v]] <- factor(df[[v]])
+      f <- stats::as.formula(paste("y ~ 1 +", paste(sprintf("(1|`%s`)", vs), collapse = " + ")))
+      fit <- suppressWarnings(suppressMessages(lme4::lmer(f, data = df, REML = TRUE,
+               control = lme4::lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore",
+                                           check.nlev.gtr.1 = "ignore", calc.derivs = FALSE))))
+      vc <- as.data.frame(lme4::VarCorr(fit))
+      stats::setNames(vc$vcov, vc$grp)
+    }
+    frac <- stats::setNames(numeric(length(vars)), vars); method <- "joint"
+    joint_ok <- tryCatch({
+      for (j in seq_len(n_use)) {
+        comps <- fit_one(pc_data[, j], vars)
+        comps <- comps / sum(comps)
+        frac <- frac + w[j] * comps[vars]
+      }
+      TRUE
+    }, error = function(e) FALSE)
+    if (!joint_ok || any(is.na(frac))) {
+      method <- "per-variable"
+      frac <- sapply(vars, function(v) tryCatch({
+        sum(sapply(seq_len(n_use), function(j) { comps <- fit_one(pc_data[, j], v); w[j] * comps[v] / sum(comps) }))
+      }, error = function(e) NA_real_))
+    }
+    attr(frac, "method") <- method
+    frac
+  }
+  tx_kbet <- function(pc_data, batch) {
+    batch <- factor(batch)
+    n <- nrow(pc_data)
+    k <- min(n - 1, max(5, floor(mean(table(batch)))))
+    p_glob <- as.numeric(table(batch)) / n
+    nn <- as.matrix(stats::dist(pc_data))
+    pvals <- sapply(seq_len(n), function(i) {
+      idx <- order(nn[i, ])[2:(k + 1)]
+      obs <- as.numeric(table(factor(batch[idx], levels = levels(batch))))
+      small <- any(k * p_glob < 5)
+      suppressWarnings(stats::chisq.test(obs, p = p_glob, simulate.p.value = small, B = 2000)$p.value)
+    })
+    mean(pvals < 0.05)
+  }
+
   detect_batch_effects_advanced <- function(pca_data, metadata_cols, expression_data = NULL) {
+    if (ncol(metadata_cols) == 0) {
+      return(list(has_batch = FALSE, detection_phase = "no_metadata", scores = NULL, recommended_batch = NULL,
+                  metrics = list(), message = "No metadata columns available for batch detection"))
+    }
+    n_samples <- nrow(pca_data)
+    pc_data <- as.matrix(pca_data[, 1:min(10, ncol(pca_data)), drop = FALSE])
+    usable <- Filter(function(cn) {
+      n_unique <- length(unique(stats::na.omit(metadata_cols[[cn]])))
+      n_unique > 1 && n_unique <= n_samples * 0.5 && n_unique < n_samples && !any(is.na(metadata_cols[[cn]]))
+    }, colnames(metadata_cols))
+    if (length(usable) == 0) {
+      return(list(has_batch = FALSE, detection_phase = "no_suitable_variables", scores = NULL, recommended_batch = NULL,
+                  metrics = list(), message = "No suitable batch variables detected in metadata"))
+    }
+    meta <- as.data.frame(metadata_cols[, usable, drop = FALSE])
+    pvca <- tryCatch(tx_pvca(pc_data, meta), error = function(e) stats::setNames(rep(NA_real_, length(usable)), usable))
+    rows <- lapply(usable, function(cn) {
+      f <- factor(meta[[cn]])
+      sil <- tryCatch(mean(cluster::silhouette(as.integer(f), stats::dist(pc_data))[, 3]), error = function(e) NA_real_)
+      kb <- tryCatch(tx_kbet(pc_data, f), error = function(e) NA_real_)
+      pv <- unname(pvca[cn])
+      crit <- sum(c(isTRUE(pv >= TX_BATCH_THRESHOLDS[["pvca"]]), isTRUE(kb >= TX_BATCH_THRESHOLDS[["kbet"]]),
+                    isTRUE(sil >= TX_BATCH_THRESHOLDS[["silhouette"]])))
+      data.frame(column = cn, pvca_variance = pv, silhouette = sil, kbet_mixing = kb,
+                 n_levels = nlevels(f), criteria_met = crit,
+                 combined_score = 0.4 * ifelse(is.na(pv), 0, pv) + 0.4 * ifelse(is.na(kb), 0, kb) +
+                                  0.2 * ifelse(is.na(sil), 0, max(0, sil)),
+                 stringsAsFactors = FALSE)
+    })
+    scores_df <- do.call(rbind, rows)
+    scores_df <- scores_df[order(-scores_df$criteria_met, -scores_df$combined_score), ]
+    top_score <- scores_df[1, ]
+    has_significant_batch <- isTRUE(top_score$criteria_met >= 2)
+    message <- if (has_significant_batch) {
+      sprintf("✓ Batch effect detected in '%s' (%d of 3 criteria met)\n   PVCA: %.1f%% | kBET rejection: %.2f | Silhouette: %.3f | Combined: %.3f",
+              top_score$column, top_score$criteria_met, 100 * top_score$pvca_variance, top_score$kbet_mixing,
+              top_score$silhouette, top_score$combined_score)
+    } else {
+      sprintf("✓ No significant batch effects detected\n   Highest: '%s' meets %d of 3 criteria (Combined: %.3f)",
+              top_score$column, top_score$criteria_met, top_score$combined_score)
+    }
+    print(paste("\U0001F4CA", message))
+    list(has_batch = has_significant_batch, detection_phase = "complete", scores = scores_df,
+         recommended_batch = if (has_significant_batch) top_score$column else NULL,
+         metrics = list(top_pvca = top_score$pvca_variance, top_silhouette = top_score$silhouette,
+                        top_kbet = top_score$kbet_mixing, top_combined = top_score$combined_score,
+                        criteria_met = top_score$criteria_met, pvca_method = attr(pvca, "method")),
+         message = message)
+  }
+
+  detect_batch_effects_advanced_legacy <- function(pca_data, metadata_cols, expression_data = NULL) {
     # Advanced batch effect detection using multiple quantitative methods
     # Returns comprehensive assessment with metrics
     
@@ -34223,7 +34753,7 @@ server <- function(input, output, session) {
         <div style='font-size: 1.3em; font-weight: bold; color: #7b1fa2;'>%.3f</div>
       </div>
       <div style='background: white; padding: 10px; border-radius: 5px; border-left: 3px solid #ff9800;'>
-        <div style='font-size: 0.75em; color: #666; margin-bottom: 3px;'>kBET (Mixing)</div>
+        <div style='font-size: 0.75em; color: #666; margin-bottom: 3px;'>kBET (rejection rate)</div>
         <div style='font-size: 1.3em; font-weight: bold; color: #f57c00;'>%.3f</div>
       </div>
       <div style='background: white; padding: 10px; border-radius: 5px; border-left: 3px solid #4caf50;'>
@@ -34243,6 +34773,7 @@ server <- function(input, output, session) {
     table_html <- paste0(table_html, "<th style='padding: 8px; text-align: left;'>Rank</th>")
     table_html <- paste0(table_html, "<th style='padding: 8px; text-align: left;'>Column</th>")
     table_html <- paste0(table_html, "<th style='padding: 8px; text-align: center;'>PVCA</th>")
+    table_html <- paste0(table_html, "<th style='padding: 8px; text-align: center;'>kBET</th>")
     table_html <- paste0(table_html, "<th style='padding: 8px; text-align: center;'>Silhouette</th>")
     table_html <- paste0(table_html, "<th style='padding: 8px; text-align: center;'>Combined</th></tr></thead><tbody>")
     
@@ -34262,7 +34793,9 @@ server <- function(input, output, session) {
                            if (is_recommended) paste0("<strong>", row$column, "</strong>") else row$column, "</td>")
       table_html <- paste0(table_html, "<td style='padding: 8px; text-align: center;'>", 
                            sprintf("%.2f", row$pvca_variance), "</td>")
-      table_html <- paste0(table_html, "<td style='padding: 8px; text-align: center;'>", 
+      table_html <- paste0(table_html, "<td style='padding: 8px; text-align: center;'>",
+                           sprintf("%.2f", row$kbet_mixing), "</td>")
+      table_html <- paste0(table_html, "<td style='padding: 8px; text-align: center;'>",
                            sprintf("%.3f", row$silhouette), "</td>")
       table_html <- paste0(table_html, "<td style='padding: 8px; text-align: center;'>", 
                            sprintf("%.3f", row$combined_score), "</td></tr>")
@@ -34487,7 +35020,7 @@ server <- function(input, output, session) {
   # AI & Drug Discovery card click
   observeEvent(input$card_ai_drug_click, {
     # This navigates to the advanced analysis tab within the main DEG pipeline
-    updateTabsetPanel(session, "main_tabs", selected = "deg_analysis")
+    updateTabsetPanel(session, "main_tabs", selected = "deg_main_panel")
     # A short delay helps ensure the first tab update completes before the second
     shinyjs::delay(100, {
       updateTabsetPanel(session, "deg_results_tabs_main", selected = "network_analysis")
@@ -35570,6 +36103,8 @@ server <- function(input, output, session) {
       progress$set(value = 0.3, detail = "Checking data quality...")
       
       # Check for good samples and genes
+      # WGCNA / dynamicTreeCut functions below are called unqualified: attach them here
+      suppressPackageStartupMessages({ library(WGCNA); library(dynamicTreeCut) })
       gsg <- goodSamplesGenes(datExpr, verbose = 0)
       if (!gsg$allOK) {
         if (sum(!gsg$goodGenes) > 0) {
@@ -40396,7 +40931,10 @@ server <- function(input, output, session) {
       expression_data = grn_standalone_rv$expression_data,
       tf_regulations = grn_standalone_rv$tf_regulations,
       selected_genes = converted_genes,
-      filter_to_degs = input$grn_filter_deg_tfs_only
+      filter_to_degs = input$grn_filter_deg_tfs_only,
+      organism = input$grn_standalone_organism,
+      confidence_level = input$grn_standalone_confidence,
+      tf_database = input$grn_standalone_tf_database
     )
     
     # Update the stored TF activities
@@ -42765,6 +43303,19 @@ server <- function(input, output, session) {
           } else {
             print("First-shell expansion requires local STRING data (human/mouse only)")
           }
+        }
+
+        # --- ONE EDGE PER PROTEIN PAIR ---
+        # STRING lists every interaction in both directions (A-B and B-A). Keep one row per
+        # unordered pair (highest score) and drop self-loops, so edge counts, degrees and
+        # density describe a simple undirected network.
+        if (nrow(ppi_interactions) > 0) {
+          ppi_interactions <- ppi_interactions[as.character(ppi_interactions$gene_from) != as.character(ppi_interactions$gene_to), ]
+          a <- as.character(ppi_interactions$gene_from); b <- as.character(ppi_interactions$gene_to)
+          pair_key <- ifelse(a < b, paste(a, b, sep = "|"), paste(b, a, sep = "|"))
+          ord <- order(-ppi_interactions$combined_score)
+          ppi_interactions <- ppi_interactions[ord, , drop = FALSE][!duplicated(pair_key[ord]), , drop = FALSE]
+          rownames(ppi_interactions) <- NULL
         }
 
         # --- LIMIT NETWORK SIZE ---
@@ -45501,12 +46052,12 @@ server <- function(input, output, session) {
       # Check paired-end naming
       if (input$sequencing_type == "paired") {
         # Accept SampleName_R1.fastq.gz and Illumina's SampleName_R1_001.fastq.gz
-        r1_files <- grepl("_R1(_[0-9]{3})?\\.", file_names, ignore.case = TRUE)
-        r2_files <- grepl("_R2(_[0-9]{3})?\\.", file_names, ignore.case = TRUE)
+        r1_files <- grepl("_R?1(_[0-9]{3})?\\.(fastq|fq)", file_names, ignore.case = TRUE)
+        r2_files <- grepl("_R?2(_[0-9]{3})?\\.(fastq|fq)", file_names, ignore.case = TRUE)
         if (sum(r1_files) != sum(r2_files) || (sum(r1_files) + sum(r2_files)) != length(file_names)) {
-          errors <- c(errors, "❌ Paired-end files must follow naming pattern: SampleName_R1.fastq.gz and SampleName_R2.fastq.gz (Illumina _R1_001 / _R2_001 names are also accepted)")
+          errors <- c(errors, "❌ Paired-end files must end in _R1/_R2 or _1/_2 before the extension, e.g. SampleName_R1.fastq.gz + SampleName_R2.fastq.gz, SampleName_1.fastq.gz + SampleName_2.fastq.gz (Illumina _R1_001 names also work)")
         } else {
-          pair_key <- function(x) sub("_R[12](_[0-9]{3})?\\.(fastq|fq)(\\.gz)?$", "", x, ignore.case = TRUE)
+          pair_key <- function(x) sub("_R?[12](_[0-9]{3})?\\.(fastq|fq)(\\.gz)?$", "", x, ignore.case = TRUE)
           r1_keys <- pair_key(file_names[r1_files])
           r2_keys <- pair_key(file_names[r2_files])
           unpaired <- c(setdiff(r1_keys, r2_keys), setdiff(r2_keys, r1_keys))
@@ -46853,16 +47404,31 @@ server <- function(input, output, session) {
           btn.classList.add('btn-disabled-running'); }
       ")
 
-      # Pass log file paths to the processing function for file-based progress
+      # Each run gets a persistent job folder (survives the browser session and app restarts)
+      job_id <- queue_status$job_id %||%
+        paste0("job_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_", substr(session$token, 1, 8))
+      job_dir <- file.path(TX_JOBS_DIR, job_id)
+      dir.create(job_dir, recursive = TRUE, showWarnings = FALSE)
+      if (file.exists(pipeline_log_file)) file.copy(pipeline_log_file, file.path(job_dir, "log.txt"), overwrite = TRUE)
+      pipeline_log_file <<- file.path(job_dir, "log.txt")
+      pipeline_progress_file <<- file.path(job_dir, "progress.txt")
+      writeLines("5|Initializing pipeline...", pipeline_progress_file)
       processing_params$log_file <- pipeline_log_file
       processing_params$progress_file <- pipeline_progress_file
+      processing_params$job_id <- job_id
+      processing_params$job_dir <- job_dir
+      values$current_job_id <- job_id
+      showNotification(HTML(paste0("<strong>Job ID: ", job_id, "</strong><br>",
+                                   "Keep this ID. The analysis keeps running if you close this page; ",
+                                   "enter the ID under <em>Retrieve results by job ID</em> to get the results later.")),
+                       type = "message", duration = NULL)
 
       # Save completion marker path
-      completion_file <- file.path(tempdir(), paste0("pipeline_done_", session$token, ".rds"))
+      completion_file <- file.path(job_dir, "completion.rds")
       if (file.exists(completion_file)) file.remove(completion_file)
 
       # Save the processing function and params for the background process
-      bg_params_file <- file.path(tempdir(), paste0("pipeline_params_", session$token, ".rds"))
+      bg_params_file <- file.path(job_dir, "params.rds")
       saveRDS(processing_params, bg_params_file)
 
       # Launch pipeline in BACKGROUND R PROCESS (frees Shiny event loop for live updates)
@@ -46953,11 +47519,11 @@ server <- function(input, output, session) {
             trimmed_files <- c()
 
             if (params$sequencing_type == "paired") {
-              r1_files <- sort(copied_files[grepl("_R1|_1\\.", copied_files)])
-              r2_files <- sort(copied_files[grepl("_R2|_2\\.", copied_files)])
+              r1_files <- sort(copied_files[grepl("_R?1(_[0-9]{3})?\\.(fastq|fq)", basename(copied_files), ignore.case = TRUE)])
+              r2_files <- sort(copied_files[grepl("_R?2(_[0-9]{3})?\\.(fastq|fq)", basename(copied_files), ignore.case = TRUE)])
               for (j in seq_along(r1_files)) {
                 r1 <- r1_files[j]; r2 <- r2_files[j]
-                base <- sub("(_R1|_1)(_[0-9]{3})?(\\.(fastq|fq)(\\.gz)?)$", "", basename(r1))
+                base <- sub("_R?1(_[0-9]{3})?(\\.(fastq|fq)(\\.gz)?)$", "", basename(r1), ignore.case = TRUE)
                 out_dir_trim <- file.path(output_dir, "trimmed")
                 trim_cmd <- paste("java -jar", shQuote(trimmomatic_jar), "PE -threads 4 -phred33",
                   shQuote(r1), shQuote(r2),
@@ -47300,9 +47866,9 @@ server <- function(input, output, session) {
                 if (!any(keep_map)) {
                   stop("Chromosome names in the annotation do not match the genome index - check that the GTF belongs to the selected assembly")
                 }
-                map_file <- file.path(output_dir, "counts", "seqname_map.tsv")
+                map_file <- file.path(params$tmp_dir, "seqname_map.tsv")  # working files, not results
                 writeLines(paste(gtf_seqs[keep_map], new_names[keep_map], sep = "\t"), map_file)
-                harmonised_gtf <- file.path(output_dir, "counts", "annotation_harmonised.gtf")
+                harmonised_gtf <- file.path(params$tmp_dir, "annotation_harmonised.gtf")
                 run_cmd_or_fail(paste(reader, shQuote(gtf_file), "| awk 'BEGIN{FS=OFS=\"\\t\"} NR==FNR{m[$1]=$2; next} /^#/{next} ($1 in m){$1=m[$1]; print}'",
                                       shQuote(map_file), "- >", shQuote(harmonised_gtf)),
                                 "Annotation chromosome-name harmonisation")
@@ -47329,6 +47895,21 @@ server <- function(input, output, session) {
                        error = function(e) NULL)
             } else NULL
 
+            # Keep the results with the job (counts, QC reports, Salmon quantifications), so they
+            # can be retrieved by job ID after the browser session has ended
+            permanent <- FALSE
+            if (!is.null(params$job_dir)) {
+              keep_out <- file.path(params$job_dir, basename(output_dir))
+              dir.create(keep_out, recursive = TRUE, showWarnings = FALSE)
+              for (sub in c("counts", "fastqc_raw", "fastqc_trimmed", "salmon_quant")) {
+                if (dir.exists(file.path(output_dir, sub))) file.copy(file.path(output_dir, sub), keep_out, recursive = TRUE)
+              }
+              output_dir <- keep_out
+              counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
+              summary_file <- paste0(counts_file, ".summary")
+              permanent <- TRUE
+            }
+
             write_progress(100, "Complete!")
             write_log("Analysis completed successfully!", "success")
 
@@ -47337,14 +47918,25 @@ server <- function(input, output, session) {
               counts_file = counts_file,
               summary_file = summary_file,
               summary_data = summary_data,
-              output_dir = output_dir
+              output_dir = output_dir,
+              job_id = params$job_id,
+              permanent = permanent
             )
             saveRDS(result, completion_file)
+            tryCatch({
+              qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
+              if (!is.null(params$job_id)) qm$update_job_status(params$job_id, "complete")
+            }, error = function(e) NULL)
+            try(unlink(params$tmp_dir, recursive = TRUE), silent = TRUE)
 
           }, error = function(e) {
             write_log(paste("Pipeline error:", e$message), "error")
             write_progress(0, paste("Error:", e$message))
-            saveRDS(list(success = FALSE, error = e$message), completion_file)
+            saveRDS(list(success = FALSE, error = e$message, job_id = params$job_id), completion_file)
+            tryCatch({
+              qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
+              if (!is.null(params$job_id)) qm$update_job_status(params$job_id, "error", error = e$message)
+            }, error = function(e2) NULL)
           })
         },
         args = list(
@@ -47352,7 +47944,12 @@ server <- function(input, output, session) {
           completion_file = completion_file,
           app_dir = getwd()
         ),
-        supervise = TRUE
+        supervise = FALSE,
+        cleanup = FALSE,        # keep running when the session or app process ends
+        cleanup_tree = FALSE,
+        stdout = file.path(job_dir, "bg_stdout.txt"),  # files, not pipes: a pipe to an exited
+        stderr = file.path(job_dir, "bg_stderr.txt"),  # Shiny process would kill the job (SIGPIPE)
+        poll_connection = FALSE
       )
 
       # Store background process reference for polling
@@ -47361,17 +47958,55 @@ server <- function(input, output, session) {
       values$bg_job_id <- queue_status$job_id
   }
 
-  # If the browser session ends, release this session's queue slot and stop its pipeline.
+  # If the browser session ends: a running job keeps going (it saves its results under its job
+  # ID and updates the queue itself); a job still waiting in the queue is withdrawn, because it
+  # can only be started from an open session.
   session$onSessionEnded(function() {
     jid <- isolate(queue_status$job_id)
     if (is.null(jid)) return()
     pos <- tryCatch(get_queue_position(isolate(queue_status$session_id)), error = function(e) NULL)
-    if (!is.null(pos) && pos$status %in% c("queued", "processing")) {
-      bg <- isolate(values$bg_process)
-      if (!is.null(bg)) try(if (bg$is_alive()) bg$kill_tree(), silent = TRUE)
-      tryCatch(update_job_status(jid, "error", error = "Session ended before the job finished"),
+    if (!is.null(pos) && identical(pos$status, "queued")) {
+      tryCatch(update_job_status(jid, "error", error = "Session ended while the job was waiting in the queue"),
                error = function(e) NULL)
     }
+  })
+
+  # ===== Retrieve FASTQ results by job ID =====
+  tx_load_fastq_output <- function(out_dir) {
+    counts <- file.path(out_dir, "counts", "feature_counts.txt")
+    if (!file.exists(counts)) return(NULL)
+    qc <- list(pre_trimming = list(), post_trimming = list())
+    for (f in list.files(file.path(out_dir, "fastqc_raw"), pattern = "_fastqc\\.html$", full.names = TRUE))
+      qc$pre_trimming[[sub("\\.(fastq|fq)(\\.gz)?$", "", sub("_fastqc\\.html$", "", basename(f)))]] <- f
+    for (f in list.files(file.path(out_dir, "fastqc_trimmed"), pattern = "_fastqc\\.html$", full.names = TRUE))
+      qc$post_trimming[[sub("_R[12]_paired$", "", sub("_trimmed$", "", sub("_fastqc\\.html$", "", basename(f))))]] <- f
+    list(counts = counts, summary = paste0(counts, ".summary"), output_dir = out_dir, qc_reports = qc)
+  }
+  observeEvent(input$fastq_retrieve_job, {
+    jid <- trimws(input$fastq_job_id %||% "")
+    if (!grepl("^job_[A-Za-z0-9_]+$", jid)) {
+      showNotification("Enter a job ID like job_20261006_142501_ab12cd34.", type = "error"); return()
+    }
+    jdir <- file.path(TX_JOBS_DIR, jid)
+    if (!dir.exists(jdir)) { showNotification("No job with that ID was found on this server.", type = "error"); return() }
+    pipeline_log_file <<- file.path(jdir, "log.txt")
+    pipeline_progress_file <<- file.path(jdir, "progress.txt")
+    comp <- file.path(jdir, "completion.rds")
+    if (!file.exists(comp)) {
+      prog <- tryCatch(readLines(pipeline_progress_file, warn = FALSE)[1], error = function(e) "")
+      showNotification(paste0("Job ", jid, " is still running (", sub("^[0-9]+\\|", "", prog %||% ""),
+                              "). Check again later; the log below updates live."), type = "warning", duration = 10)
+      return()
+    }
+    res <- tryCatch(readRDS(comp), error = function(e) list(success = FALSE, error = e$message))
+    if (!isTRUE(res$success)) {
+      showNotification(paste("Job", jid, "failed:", res$error), type = "error", duration = NULL); return()
+    }
+    out <- tx_load_fastq_output(res$output_dir)
+    if (is.null(out)) { showNotification("The results of this job are no longer available.", type = "error"); return() }
+    values$fc_output <- out
+    values$fc_done <- TRUE
+    showNotification(paste("Loaded results of", jid, "- see the result tabs and downloads."), type = "message", duration = 8)
   })
 
   # Main processing observer
@@ -47384,7 +48019,10 @@ server <- function(input, output, session) {
     values$fc_done <- FALSE
     values$fc_output <- NULL
 
-    # Reset log files for live progress
+    # Reset log files for live progress (point back to this session's files first, so a
+    # previous job's log in its job folder is never overwritten)
+    pipeline_log_file <<- file.path(tempdir(), paste0("pipeline_log_", session$token, ".txt"))
+    pipeline_progress_file <<- file.path(tempdir(), paste0("pipeline_progress_", session$token, ".txt"))
     writeLines("", pipeline_log_file)
     writeLines("5|Initializing pipeline...", pipeline_progress_file)
     
@@ -47518,7 +48156,7 @@ server <- function(input, output, session) {
 
     # Pipeline finished! Load results
     result <- tryCatch(readRDS(completion_file), error = function(e) list(success = FALSE, error = e$message))
-    file.remove(completion_file)
+    # keep completion.rds in the job folder: it is what "Retrieve results by job ID" reads
 
     # Re-enable button
     shinyjs::enable("run_processing")
@@ -47531,15 +48169,16 @@ server <- function(input, output, session) {
 
     if (result$success) {
 
-      # COPY RESULTS TO PERMANENT LOCATION
-      permanent_dir <- file.path("/srv/transxplorer/results",
-                                 format(Sys.time(), "%Y%m%d_%H%M%S"))
-      dir.create(permanent_dir, recursive = TRUE, showWarnings = FALSE)
-
+      # Results are normally already kept in the job folder by the background process
       if (!is.null(result$output_dir) && file.exists(result$output_dir)) {
-        file.copy(result$output_dir, permanent_dir, recursive = TRUE)
-
-        new_output_dir <- file.path(permanent_dir, basename(result$output_dir))
+        if (isTRUE(result$permanent)) {
+          new_output_dir <- result$output_dir
+        } else {
+          permanent_dir <- file.path("/srv/transxplorer/results", format(Sys.time(), "%Y%m%d_%H%M%S"))
+          dir.create(permanent_dir, recursive = TRUE, showWarnings = FALSE)
+          file.copy(result$output_dir, permanent_dir, recursive = TRUE)
+          new_output_dir <- file.path(permanent_dir, basename(result$output_dir))
+        }
         new_counts_file <- file.path(new_output_dir, "counts", "feature_counts.txt")
         new_summary_file <- file.path(new_output_dir, "counts", "feature_counts.txt.summary")
 
@@ -48016,8 +48655,10 @@ server <- function(input, output, session) {
       list(name = "FastQC (Raw)", threshold = 20, icon = "microscope"),
       list(name = "Trimmomatic", threshold = 40, icon = "cut"),
       list(name = "FastQC (Trimmed)", threshold = 55, icon = "microscope"),
-      list(name = "HISAT2 Alignment", threshold = 75, icon = "dna"),
-      list(name = "featureCounts", threshold = 90, icon = "calculator"),
+      if (identical(isolate(input$quant_method), "salmon")) list(name = "Salmon Quantification", threshold = 75, icon = "bolt")
+      else list(name = "HISAT2 Alignment", threshold = 75, icon = "dna"),
+      if (identical(isolate(input$quant_method), "salmon")) list(name = "tximport (gene level)", threshold = 90, icon = "calculator")
+      else list(name = "featureCounts", threshold = 90, icon = "calculator"),
       list(name = "Complete", threshold = 100, icon = "check-circle")
     )
 
@@ -48430,8 +49071,10 @@ document.addEventListener("DOMContentLoaded", function() {
                       "<tr><td>1. Quality Control (Raw)</td><td>FastQC</td><td class='success'>✓ Complete</td></tr>",
                       "<tr><td>2. Quality Trimming</td><td>Trimmomatic</td><td class='success'>✓ Complete</td></tr>",
                       "<tr><td>3. Quality Control (Trimmed)</td><td>FastQC</td><td class='success'>✓ Complete</td></tr>",
-                      "<tr><td>4. Genome Alignment</td><td>HISAT2</td><td class='success'>✓ Complete</td></tr>",
-                      "<tr><td>5. Gene Quantification</td><td>featureCounts (Subread)</td><td class='success'>✓ Complete</td></tr>",
+                      if (identical(input$quant_method, "salmon")) "<tr><td>4. Pseudo-alignment</td><td>Salmon</td><td class='success'>✓ Complete</td></tr>"
+                      else "<tr><td>4. Genome Alignment</td><td>HISAT2</td><td class='success'>✓ Complete</td></tr>",
+                      if (identical(input$quant_method, "salmon")) "<tr><td>5. Gene Quantification</td><td>tximport (gene-level counts)</td><td class='success'>✓ Complete</td></tr>"
+                      else "<tr><td>5. Gene Quantification</td><td>featureCounts (Subread)</td><td class='success'>✓ Complete</td></tr>",
                       "</tbody>",
                       "</table>"
       )
@@ -54787,7 +55430,7 @@ document.addEventListener("DOMContentLoaded", function() {
               setProgress(0.15, detail = "Running automatic batch detection...")
               
               temp_pca <- prcomp(data_for_dim_red, scale. = TRUE, center = TRUE)
-              pca_coords <- temp_pca$x[, 1:2]
+              pca_coords <- temp_pca$x[, 1:min(10, ncol(temp_pca$x)), drop = FALSE]  # top PCs, as validated
               
               batch_detection <- detect_batch_effects_advanced(
                 pca_coords,
@@ -59698,6 +60341,10 @@ document.addEventListener("DOMContentLoaded", function() {
           all_results <- list() # To store results from all runs
           
           # --- Reusable function to run enrichment on a given gene list ---
+          # Background = every gene tested in the DE analysis (as symbols)
+          de_universe <- tryCatch(convert_gene_ids(genes = unique(current_deg_results$gene_id),
+                                                   from_org = current_params$organism_db, to_type = "SYMBOL"),
+                                  error = function(e) NULL)
           run_enrichment_on_list <- function(gene_list, regulation_status) {
             if (length(gene_list) < 3) return(NULL) # Need at least 3 genes
             
@@ -59708,7 +60355,7 @@ document.addEventListener("DOMContentLoaded", function() {
             # Run enrichment for each selected database
             db_results <- list()
             for (db in current_params$enrichr_database) {
-              enriched <- tryCatch(enrichR::enrichr(valid_genes, databases = db), error = function(e) NULL)
+              enriched <- tryCatch(tx_enrichr_local(valid_genes, databases = db, background = de_universe), error = function(e) NULL)
               if (!is.null(enriched[[db]]) && nrow(enriched[[db]]) > 0) {
                 res <- enriched[[db]]
                 res$Database <- create_readable_db_name(db)
@@ -68240,7 +68887,7 @@ document.addEventListener("DOMContentLoaded", function() {
       drug_data$clinical_phase <- 0  # All preclinical based on your debug data
     }
     if (!"standard_value" %in% colnames(drug_data)) {
-      drug_data$standard_value <- runif(nrow(drug_data), 100, 10000)
+      drug_data$standard_value <- NA_real_  # unknown potency; never invent values
     }
     if (!"standard_type" %in% colnames(drug_data)) {
       drug_data$standard_type <- "IC50"
@@ -70592,6 +71239,7 @@ document.addEventListener("DOMContentLoaded", function() {
   
   # ADD THE MISSING MOCK DATA FUNCTION
   create_mock_chembl_data_enhanced <- function(gene_symbols) {
+    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
     
     print("Creating enhanced mock ChEMBL data...")
     
@@ -70650,6 +71298,7 @@ document.addEventListener("DOMContentLoaded", function() {
   
   
   create_mock_opentargets_data <- function(gene_symbols, analysis_focus) {
+    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
     
     if (length(gene_symbols) == 0) return(data.frame())
     
@@ -70711,6 +71360,7 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   create_mock_chembl_data_single <- function(gene_name) {
+    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
     
     # Create 2-3 mock interactions per gene
     n_interactions <- sample(2:4, 1)
@@ -70736,6 +71386,7 @@ document.addEventListener("DOMContentLoaded", function() {
   
   # Create mock ChEMBL data if real function doesn't exist
   create_mock_chembl_data <- function(genes) {
+    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
     
     n_interactions <- min(100, length(genes) * 5)
     
@@ -72397,7 +73048,10 @@ document.addEventListener("DOMContentLoaded", function() {
           expression_data = expression_data,
           tf_regulations = tf_regulations,
           selected_genes = converted_genes,
-          filter_to_degs = filter_deg_tfs_only
+          filter_to_degs = filter_deg_tfs_only,
+          organism = organism,
+          confidence_level = confidence_level,
+          tf_database = tf_database
         )
         
         if (!is.null(tf_activities)) {
@@ -72980,8 +73634,8 @@ document.addEventListener("DOMContentLoaded", function() {
       print(paste("Creating fallback for", sum(unknown_indices), "unknown IDs..."))
       
       # Create fallback symbols and ENSEMBL IDs
-      result_symbols[unknown_indices] <- paste0("UNKNOWN_", unknown_ids)
-      result_ensembl[unknown_indices] <- paste0("ENSG", sprintf("%011d", sample(100000:999999, sum(unknown_indices))))
+      result_symbols[unknown_indices] <- unknown_ids
+      result_ensembl[unknown_indices] <- NA_character_  # unmapped; never invent IDs
     }
     
     return(list(
@@ -73105,9 +73759,9 @@ document.addEventListener("DOMContentLoaded", function() {
       print(paste("Transcript conversion failed:", e$message))
     })
     
-    # Fallback
-    fallback_symbols <- paste0("GENE_", gsub("ENS[MG]*T0*", "", transcript_ids))
-    fallback_ensembl <- paste0("ENSG", sprintf("%011d", sample(100000:999999, length(transcript_ids))))
+    # Conversion failed: keep the original IDs and mark Ensembl IDs as unmapped (never invent IDs)
+    fallback_symbols <- transcript_ids
+    fallback_ensembl <- rep(NA_character_, length(transcript_ids))
     
     return(list(symbols = fallback_symbols, ensembl_ids = fallback_ensembl))
   }
@@ -73155,9 +73809,9 @@ document.addEventListener("DOMContentLoaded", function() {
       print(paste("Entrez conversion failed:", e$message))
     })
     
-    # Fallback
-    fallback_symbols <- paste0("ENTREZ_", entrez_ids)
-    fallback_ensembl <- paste0("ENSG", sprintf("%011d", sample(100000:999999, length(entrez_ids))))
+    # Conversion failed: keep the original IDs and mark Ensembl IDs as unmapped (never invent IDs)
+    fallback_symbols <- as.character(entrez_ids)
+    fallback_ensembl <- rep(NA_character_, length(entrez_ids))
     
     return(list(symbols = fallback_symbols, ensembl_ids = fallback_ensembl))
   }
@@ -73352,24 +74006,25 @@ document.addEventListener("DOMContentLoaded", function() {
       print(paste("AnnotationDbi failed:", e$message))
     })
     
-    # Fallback: Create mock ENSEMBL IDs for testing
-    print("Using fallback mock ENSEMBL IDs")
-    fallback_ensembl <- paste0("ENSG", sprintf("%011d", sample(100000:999999, length(gene_symbols))))
-    return(fallback_ensembl)
+    # Conversion failed: return unmapped (NA) rather than invented IDs
+    print("Symbol to Ensembl conversion failed; returning unmapped (NA) IDs")
+    return(rep(NA_character_, length(gene_symbols)))
   }
   
   # Placeholder functions for RefSeq and UniProt (implement as needed)
   convert_refseq_to_symbols_and_ensembl_robust <- function(refseq_ids, organism) {
     # Implementation would use biomaRt or other databases
-    symbols <- paste0("REFSEQ_", gsub("^[NX][MR]_", "", refseq_ids))
-    ensembl_ids <- paste0("ENSG", sprintf("%011d", sample(100000:999999, length(refseq_ids))))
+    # Not implemented: keep original IDs, Ensembl unmapped (never invent IDs)
+    symbols <- refseq_ids
+    ensembl_ids <- rep(NA_character_, length(refseq_ids))
     return(list(symbols = symbols, ensembl_ids = ensembl_ids))
   }
   
   convert_uniprot_to_symbols_and_ensembl_robust <- function(uniprot_ids, organism) {
     # Implementation would use UniProt API or databases
-    symbols <- paste0("UNIPROT_", uniprot_ids)
-    ensembl_ids <- paste0("ENSG", sprintf("%011d", sample(100000:999999, length(uniprot_ids))))
+    # Not implemented: keep original IDs, Ensembl unmapped (never invent IDs)
+    symbols <- uniprot_ids
+    ensembl_ids <- rep(NA_character_, length(uniprot_ids))
     return(list(symbols = symbols, ensembl_ids = ensembl_ids))
   }
   
@@ -79331,7 +79986,7 @@ document.addEventListener("DOMContentLoaded", function() {
             Gene = gene_symbol,
             Modality = paste(gene_data$tractability$modality, collapse = ", "),
             Assessment = paste(gene_data$tractability$assessment, collapse = ", "),
-            Druggability_Score = stats::runif(1, 0.2, 0.9),  # Placeholder - implement proper scoring
+            Druggability_Score = NA_real_,  # not scored (tractability modality/assessment shown instead)
             stringsAsFactors = FALSE
           )
         }
@@ -83839,7 +84494,7 @@ document.addEventListener("DOMContentLoaded", function() {
       )
       
       # Run enrichment
-      enriched <- enrichR::enrichr(gene_list, dbs)
+      enriched <- tx_enrichr_local(gene_list, dbs)
       
       # Filter significant results
       significant_results <- list()
@@ -84012,6 +84667,7 @@ document.addEventListener("DOMContentLoaded", function() {
   
   # Create mock PPI results for testing
   create_mock_ppi_results <- function(all_genes, up_genes, down_genes, selected_genes) {
+    stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
     
     print("Creating mock PPI results for testing...")
     
@@ -84640,7 +85296,7 @@ document.addEventListener("DOMContentLoaded", function() {
         c("GO_Biological_Process_2021", "KEGG_2019")
       }
       
-      enrichment_results <- enrichr(all_network_proteins, databases)
+      enrichment_results <- tx_enrichr_local(all_network_proteins, databases)
       
       functional_enrichment <- list()
       for (db in names(enrichment_results)) {
@@ -84922,6 +85578,7 @@ document.addEventListener("DOMContentLoaded", function() {
   
   # Create mock PPI results for testing
   create_mock_ppi_results <- function(all_genes, up_genes, down_genes, selected_genes) {
+    stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
     
     print("📊 Creating mock PPI results for testing...")
     
@@ -90198,7 +90855,7 @@ document.addEventListener("DOMContentLoaded", function() {
         dbs <- c("GO_Biological_Process_2023", "KEGG_2021_Human", "WikiPathway_2023_Human")
         
         # Run enrichment
-        enrichr_results <- enrichR::enrichr(target_genes, dbs)
+        enrichr_results <- tx_enrichr_local(target_genes, dbs)
         
         # Process results
         combined_results <- NULL
@@ -90334,7 +90991,7 @@ document.addEventListener("DOMContentLoaded", function() {
           print(paste("   Querying:", db))
           
           # Query single database
-          single_result <- enrichR::enrichr(
+          single_result <- tx_enrichr_local(
             genes = target_genes_clean,
             databases = db
           )
@@ -91681,7 +92338,7 @@ document.addEventListener("DOMContentLoaded", function() {
   #       dbs <- c("GO_Biological_Process_2023", "KEGG_2021_Human", "WikiPathway_2023_Human")
   #
   #       # Run enrichment
-  #       enrichr_results <- enrichR::enrichr(tf_list, dbs)
+  #       enrichr_results <- tx_enrichr_local(tf_list, dbs)
   #
   #       # Process results
   #       combined_results <- NULL
@@ -91855,7 +92512,7 @@ document.addEventListener("DOMContentLoaded", function() {
           print(paste("   Querying:", db))
           
           # Query single database
-          single_result <- enrichR::enrichr(
+          single_result <- tx_enrichr_local(
             genes = tf_list_clean,
             databases = db
           )
@@ -94047,7 +94704,7 @@ document.addEventListener("DOMContentLoaded", function() {
     # Perform enrichment if enrichR is available
     if (require("enrichR", quietly = TRUE)) {
       databases <- c("GO_Biological_Process_2021", "KEGG_2021_Human")
-      enrichment_results <- enrichr(all_proteins, databases)
+      enrichment_results <- tx_enrichr_local(all_proteins, databases)
       return(enrichment_results)
     }
     
@@ -100504,7 +101161,7 @@ document.addEventListener("DOMContentLoaded", function() {
         )
     } else {
       DT::datatable(
-        data.frame(Message = "Run DEG analysis first to see cell-type-specific markers")
+        data.frame(Message = "Linking DE genes to cell-type markers is not available in this version. The cell-type estimates in the other tabs are unaffected.")
       )
     }
   })
@@ -101432,6 +102089,7 @@ document.addEventListener("DOMContentLoaded", function() {
   
   #' Create mock PPI data for testing when STRING API is unavailable
   create_mock_ppi_data <- function(gene_symbols, n_interactions = 50) {
+    stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
     
     if (length(gene_symbols) < 2) {
       return(data.frame())
@@ -104452,7 +105110,7 @@ document.addEventListener("DOMContentLoaded", function() {
       if (any(infinite_mask)) {
         n_infinite <- sum(infinite_mask)
         # Spread infinite values slightly above max
-        data$neg_log10_pval[infinite_mask] <- max_pval_display + runif(n_infinite, 0.5, 2)
+        data$neg_log10_pval[infinite_mask] <- max_pval_display + 1
       }
       
       data$neg_log10_pval[!is.finite(data$neg_log10_pval)] <- max_pval_display
@@ -105263,7 +105921,7 @@ document.addEventListener("DOMContentLoaded", function() {
               options(enrichR.sites.base.address = "https://maayanlab.cloud/")
               options(enrichR.live = TRUE)
               tryCatch(enrichR::setEnrichrSite("Enrichr"), error = function(e) NULL)
-              msig <- enrichR::enrichr(genes, "MSigDB_Hallmark_2020")
+              msig <- tx_enrichr_local(genes, "MSigDB_Hallmark_2020", background = universe_genes)
               if (!is.null(msig[["MSigDB_Hallmark_2020"]]) && nrow(msig[["MSigDB_Hallmark_2020"]]) > 0) {
                 df <- msig[["MSigDB_Hallmark_2020"]]
                 df <- df[df$Adjusted.P.value <= pval_cutoff, ]
@@ -105286,7 +105944,7 @@ document.addEventListener("DOMContentLoaded", function() {
               options(enrichR.base.address = "https://maayanlab.cloud/Enrichr/")
               options(enrichR.live = TRUE)
               tryCatch(enrichR::setEnrichrSite("Enrichr"), error = function(e) NULL)
-              bc <- enrichR::enrichr(genes, "BioCarta_2016")
+              bc <- tx_enrichr_local(genes, "BioCarta_2016", background = universe_genes)
               if (!is.null(bc[["BioCarta_2016"]]) && nrow(bc[["BioCarta_2016"]]) > 0) {
                 df <- bc[["BioCarta_2016"]]
                 df <- df[df$Adjusted.P.value <= pval_cutoff, ]
@@ -106479,7 +107137,7 @@ document.addEventListener("DOMContentLoaded", function() {
           
           # Run enrichr for this database
           if(length(genes) > 0) {
-            enrichment_result <- enrichr(genes, databases = db)
+            enrichment_result <- tx_enrichr_local(genes, databases = db)
             
             if(!is.null(enrichment_result[[db]]) && nrow(enrichment_result[[db]]) > 0) {
               all_results[[db]] <- enrichment_result[[db]]
@@ -108115,7 +108773,8 @@ document.addEventListener("DOMContentLoaded", function() {
         per_patient <- per_patient[!duplicated(per_patient$case_id), ]
         per_patient$log2_counts <- log2(per_patient$counts + 1)
         per_patient$gene_name <- gene_symbol
-        per_patient$strata <- ifelse(per_patient$counts > median(per_patient$counts), "HIGH", "LOW")
+        per_patient$strata <- factor(ifelse(per_patient$counts > median(per_patient$counts), "HIGH", "LOW"),
+                                     levels = c("LOW", "HIGH"))  # LOW = reference: HR is HIGH vs LOW
         tcga_gene_df <- per_patient
 
         analysis_data <- per_patient %>%
@@ -108189,7 +108848,7 @@ document.addEventListener("DOMContentLoaded", function() {
     
     paste0(
       "Analysis Results for ", rv_survival$results$gene_name, " in ", rv_survival$results$cancer_type, "\n",
-      "Hazard Ratio: ", round(hr, 2),
+      "Hazard Ratio (HIGH vs LOW): ", round(hr, 2),
       " (95% CI: ", round(hr_ci[1], 2), "-", round(hr_ci[2], 2), ")\n",
       "Log-rank P-value: ", format(logrank_p, scientific = TRUE, digits = 2)
     )
@@ -108234,7 +108893,7 @@ document.addEventListener("DOMContentLoaded", function() {
             plot.title = element_text(size = rel(1.4)),
             plot.subtitle = element_text(size = rel(1.1))) +
       ggtitle(paste(rv_survival$results$gene_name, "Expression and Overall Survival"),
-              subtitle = paste0("HR = ", round(hr, 2),
+              subtitle = paste0("HR (HIGH vs LOW) = ", round(hr, 2),
                                 " (95% CI: ", round(hr_ci[1], 2), "-",
                                 round(hr_ci[2], 2), ")",
                                 "\nLog-rank P = ",
@@ -112827,7 +113486,37 @@ document.addEventListener("DOMContentLoaded", function() {
           showNotification("Need at least 100 genes for GSEA", type = "error")
           return()
         }
-        
+
+        # Ensembl / Entrez IDs (e.g. from the FASTQ pipeline) -> gene symbols
+        if (isTRUE(tx_enr_key() %in% tx_curated_keys)) {
+          rk_ids <- sub("\\.[0-9]+$", "", names(ranked_genes))
+          n_ens <- sum(grepl("^ENS[A-Z]*G[0-9]", rk_ids))
+          n_ent <- sum(grepl("^[0-9]+$", rk_ids))
+          from_type <- if (n_ens > length(rk_ids) / 2) "ENSEMBL" else if (n_ent > length(rk_ids) / 2) "ENTREZID" else NULL
+          if (!is.null(from_type)) {
+            rk_sym <- tryCatch(AnnotationDbi::mapIds(get_orgdb(input$enrichment_organism), keys = rk_ids,
+                                                     column = "SYMBOL", keytype = from_type, multiVals = "first"),
+                               error = function(e) NULL)
+            if (is.null(rk_sym)) {
+              showNotification("Could not convert the gene IDs to gene symbols for this organism.", type = "error")
+              return()
+            }
+            rk_keep <- !is.na(rk_sym) & nzchar(rk_sym)
+            conv <- ranked_genes[rk_keep]
+            names(conv) <- rk_sym[rk_keep]
+            conv <- conv[order(-abs(conv))]
+            conv <- conv[!duplicated(names(conv))]
+            ranked_genes <- sort(conv, decreasing = TRUE)
+            showNotification(sprintf("Converted %d %s IDs to gene symbols (%d could not be mapped and were left out).",
+                                     sum(rk_keep), if (from_type == "ENSEMBL") "Ensembl" else "Entrez", sum(!rk_keep)),
+                             type = "message", duration = 8)
+            if (length(ranked_genes) < 100) {
+              showNotification("Fewer than 100 genes remain after ID conversion; GSEA needs at least 100.", type = "error")
+              return()
+            }
+          }
+        }
+
         # Store ranked gene vector and per-DB gene set lists for Classic GSEA plot
         enrichment_rv$ranked_genes <- ranked_genes
         enrichment_rv$gene_sets <- list()
