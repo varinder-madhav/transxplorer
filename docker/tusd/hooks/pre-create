@@ -1,0 +1,29 @@
+#!/bin/sh
+# tusd pre-create hook: only accept FASTQ uploads from a live TransXplorer session,
+# within the 40 GB limit, and only while the disk keeps a safety margin.
+UPLOAD_ROOT=/srv/transxplorer/uploads
+RESERVE=$((50 * 1024 * 1024 * 1024))   # always leave 50 GB free for running jobs
+MAX=$((40 * 1024 * 1024 * 1024))
+
+reject() {
+  jq -n --arg msg "$2" --argjson code "$1" \
+    '{RejectUpload: true, HTTPResponse: {StatusCode: $code, Body: $msg, Header: {"Content-Type": "text/plain; charset=utf-8"}}}'
+  exit 0
+}
+
+ev=$(cat)
+token=$(printf '%s' "$ev" | jq -r '.Event.Upload.MetaData.token // ""')
+name=$(printf '%s' "$ev" | jq -r '.Event.Upload.MetaData.filename // ""')
+size=$(printf '%s' "$ev" | jq -r '.Event.Upload.Size // 0')
+deferred=$(printf '%s' "$ev" | jq -r '.Event.Upload.SizeIsDeferred // false')
+
+printf '%s' "$token" | grep -Eq '^[a-f0-9]{32}$' || reject 403 "Upload session expired. Please reload the page."
+[ -f "$UPLOAD_ROOT/tus_tokens/$token" ] || reject 403 "Upload session expired. Please reload the page."
+printf '%s' "$name" | grep -Eiq '^[A-Za-z0-9._-]+\.(fastq|fq)(\.gz)?$' ||
+  reject 400 "Only FASTQ files (.fastq, .fq, .fastq.gz, .fq.gz) with letters, digits, dot, dash or underscore in the name can be uploaded."
+[ "$deferred" = "true" ] && reject 400 "File size must be known before upload."
+[ "$size" -gt "$MAX" ] && reject 413 "This file is larger than the 40 GB limit."
+avail=$(df -P -B1 "$UPLOAD_ROOT" | awk 'NR==2 {print $4}')
+[ $((avail - size)) -lt "$RESERVE" ] && reject 507 "The server is short of disk space right now. Please try again later."
+
+echo '{}'

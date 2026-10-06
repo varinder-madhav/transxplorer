@@ -99,6 +99,31 @@ services:
         soft: 65536
         hard: 65536
 
+  # Resumable FASTQ uploads (tus protocol). Files land in /srv/transxplorer/uploads/tus,
+  # owned by uid/gid 999 so the Shiny app (user shiny, 999) can move them into jobs.
+  tusd:
+    image: tusproject/tusd:v2.8.0
+    container_name: transxplorer_tusd
+    restart: unless-stopped
+    user: "999:999"
+    command:
+      - -upload-dir=/srv/transxplorer/uploads/tus
+      - -base-path=/tus/files/
+      - -behind-proxy
+      - -hooks-dir=/hooks
+      - -hooks-enabled-events=pre-create
+      - -max-size=42949672960
+      - -disable-download
+      - -network-timeout=2m
+      - -port=8080
+    ports:
+      - "127.0.0.1:1080:8080"
+    volumes:
+      - /srv/transxplorer/uploads:/srv/transxplorer/uploads
+      - ./docker/tusd/hooks:/hooks:ro
+    networks:
+      - transxplorer_network
+
 networks:
   transxplorer_network:
     driver: bridge

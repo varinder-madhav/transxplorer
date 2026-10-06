@@ -7370,29 +7370,6 @@ get_tf_target_regulations_fixed <- function(selected_genes, organism = "human",
 
 create_mock_tf_regulations <- function(selected_genes) {
   stop("Transcription-factor target data (DoRothEA) could not be loaded, so no regulatory network was built. TransXplorer never substitutes simulated data.")
-  print("⚠️ Creating mock TF regulations for testing")
-  
-  # Common transcription factors
-  common_tfs <- c("TP53", "MYC", "JUN", "FOS", "STAT1", "STAT3", "NFE2L2",
-                  "HIF1A", "RELA", "SP1", "EGR1", "CREB1", "ATF3", "FOXO1")
-  
-  # Take a subset of genes as potential targets
-  target_genes <- sample(selected_genes, min(length(selected_genes), 50))
-  
-  # Create mock regulations
-  regulations <- expand.grid(
-    tf = sample(common_tfs, 5),
-    target = sample(target_genes, 20),
-    stringsAsFactors = FALSE
-  ) %>%
-    mutate(
-      confidence = runif(n(), 0.5, 1.0),
-      mor = sample(c(1, -1), n(), replace = TRUE)
-    ) %>%
-    distinct()
-  
-  print(paste("📊 Created", nrow(regulations), "mock regulations"))
-  return(regulations)
 }
 
 
@@ -14659,25 +14636,6 @@ convert_string_ids <- function(interactions, mapped_genes) {
 
 create_mock_ppi_data <- function(genes) {
   stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-  n_genes <- length(genes)
-  if (n_genes < 2) {
-    return(list(interactions = data.frame(), mapping_rate = 0))
-  }
-  
-  n_interactions <- min(50, n_genes * 2)
-  mock_interactions <- data.frame(
-    gene_from = sample(genes, n_interactions, replace = TRUE),
-    gene_to = sample(genes, n_interactions, replace = TRUE),
-    combined_score = runif(n_interactions, 0.3, 0.9),
-    stringsAsFactors = FALSE
-  ) %>%
-    filter(gene_from != gene_to) %>%
-    distinct()
-  
-  return(list(
-    interactions = mock_interactions,
-    mapping_rate = 0.8
-  ))
 }
 
 create_empty_ppi_results <- function(message = "No data") {
@@ -15887,35 +15845,6 @@ convert_string_ids_to_genes <- function(interactions, mapped_genes) {
 # Safe mock data function for when STRING is unavailable
 create_mock_ppi_data_safe <- function(genes) {
   stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-  
-  print("  • Creating mock PPI data for development...")
-  
-  n_genes <- length(genes)
-  if (n_genes < 2) {
-    return(data.frame(
-      gene_from = character(0),
-      gene_to = character(0),
-      combined_score = numeric(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-  
-  # Create plausible mock interactions
-  n_interactions <- min(50, n_genes * 2)
-  
-  mock_interactions <- data.frame(
-    gene_from = sample(genes, n_interactions, replace = TRUE),
-    gene_to = sample(genes, n_interactions, replace = TRUE),
-    combined_score = runif(n_interactions, 0.3, 0.9),
-    stringsAsFactors = FALSE
-  ) %>%
-    filter(gene_from != gene_to) %>%  # Remove self-interactions
-    distinct() %>%                    # Remove duplicates
-    arrange(desc(combined_score))     # Sort by confidence
-  
-  print(paste("  • Created", nrow(mock_interactions), "mock interactions"))
-  
-  return(mock_interactions)
 }
 
 
@@ -16890,105 +16819,9 @@ convert_to_symbols_comprehensive <- function(interactions, mapped_genes, protein
 }
 
 # Create mock data for testing
-create_mock_comprehensive_ppi <- function(genes) {
-  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-  
-  # Filter to protein-coding genes only
-  genes_clean <- genes[!grepl("^LINC|^MIR|^RNA", genes)]
-  
-  if (length(genes_clean) < 2) {
-    return(list(
-      interactions = data.frame(
-        gene_from = character(0),
-        gene_to = character(0),
-        combined_score = numeric(0)
-      ),
-      protein_info = data.frame(),
-      mapping_stats = list(
-        total_genes = length(genes),
-        mapped_genes = 0,
-        mapping_rate = 0,
-        total_interactions = 0
-      )
-    ))
-  }
-  
-  # Create realistic mock interactions
-  n_interactions <- min(100, length(genes_clean) * 3)
-  
-  interactions <- data.frame(
-    gene_from = sample(genes_clean, n_interactions, replace = TRUE),
-    gene_to = sample(genes_clean, n_interactions, replace = TRUE),
-    combined_score = rbeta(n_interactions, 2, 2),  # Beta distribution for realistic scores
-    stringsAsFactors = FALSE
-  )
-  
-  # Remove self-interactions
-  interactions <- interactions[interactions$gene_from != interactions$gene_to, ]
-  interactions <- unique(interactions)
-  
-  return(list(
-    interactions = interactions,
-    protein_info = data.frame(
-      protein = unique(c(interactions$gene_from, interactions$gene_to)),
-      preferred_name = unique(c(interactions$gene_from, interactions$gene_to))
-    ),
-    mapping_stats = list(
-      total_genes = length(genes),
-      mapped_genes = length(genes_clean),
-      mapping_rate = length(genes_clean) / length(genes),
-      total_interactions = nrow(interactions)
-    )
-  ))
-}
 
 
 
-create_mock_ppi_data_robust <- function(genes) {
-  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-  
-  print("🎭 Creating robust mock PPI data...")
-  
-  if (length(genes) < 2) {
-    return(list(
-      interactions = data.frame(
-        gene_from = character(0),
-        gene_to = character(0),
-        combined_score = numeric(0),
-        stringsAsFactors = FALSE
-      ),
-      mapping = data.frame(),
-      mapping_rate = 0,
-      n_interactions = 0,
-      source = "mock_data_insufficient_genes"
-    ))
-  }
-  
-  # Create realistic mock interactions
-  n_interactions <- min(50, length(genes) * 3)  # Reasonable number
-  
-  mock_interactions <- data.frame(
-    gene_from = sample(genes, n_interactions, replace = TRUE),
-    gene_to = sample(genes, n_interactions, replace = TRUE),
-    combined_score = round(runif(n_interactions, 400, 950)),  # Realistic confidence scores
-    stringsAsFactors = FALSE
-  )
-  
-  # Remove self-interactions
-  mock_interactions <- mock_interactions[
-    mock_interactions$gene_from != mock_interactions$gene_to,
-  ]
-  
-  print(paste("✅ Created", nrow(mock_interactions), "mock interactions for development"))
-  
-  return(list(
-    interactions = mock_interactions,
-    mapping = data.frame(gene = genes, STRING_id = paste0("MOCK_", seq_along(genes))),
-    mapping_rate = 1.0,
-    n_interactions = nrow(mock_interactions),
-    source = "mock_data_for_development"
-  ))
-}
 
 perform_ppi_analysis_consistent <- function(deg_data, ui_input_params) {
   
@@ -17202,92 +17035,6 @@ build_ppi_network_from_interactions <- function(interactions, selected_genes) {
   ))
 }
 
-query_string_database_improved <- function(genes, organism = "human",
-                                           confidence = 0.2, max_interactions = 500,
-                                           expand_network = TRUE) {
-  
-  print("🔗 Improved STRING database query...")
-  
-  # Get taxon ID for organism
-  taxon_id <- switch(organism,
-                     "human" = 9606,
-                     "mouse" = 10090,
-                     "rat" = 10116,
-                     "zebrafish" = 7955,
-                     "fly" = 7227,
-                     "worm" = 6239,
-                     "yeast" = 4932,
-                     9606  # default to human
-  )
-  
-  # Check if STRINGdb is available
-  if (!requireNamespace("STRINGdb", quietly = TRUE)) {
-    print("❌ STRINGdb package not available")
-    return(create_demo_ppi_data(genes))
-  }
-  
-  tryCatch({
-    
-    # Initialize STRING database
-    string_db <- STRINGdb::STRINGdb$new(
-      version = "11.5",
-      species = taxon_id,
-      score_threshold = as.integer(confidence * 1000)
-    )
-    
-    # Create mapping dataframe
-    gene_df <- data.frame(
-      gene = genes,
-      stringsAsFactors = FALSE
-    )
-    
-    # Map genes with improved handling
-    print("🔄 Mapping genes to STRING IDs...")
-    mapped_genes <- string_db$map(gene_df, "gene", removeUnmappedRows = FALSE)
-    
-    # Keep track of mapping
-    mapping_success <- !is.na(mapped_genes$STRING_id)
-    n_mapped <- sum(mapping_success)
-    n_total <- length(genes)
-    
-    print(paste("✅ Mapped", n_mapped, "out of", n_total, "genes",
-                "(", round(100 * n_mapped / n_total, 1), "%)"))
-    
-    if (n_mapped == 0) {
-      print("❌ No genes could be mapped to STRING")
-      return(create_demo_ppi_data(genes))
-    }
-    
-    # Get only mapped genes
-    mapped_genes_clean <- mapped_genes[mapping_success, ]
-    
-    # Get interactions
-    print("🔍 Retrieving protein interactions...")
-    interactions <- string_db$get_interactions(mapped_genes_clean$STRING_id)
-    
-    if (nrow(interactions) == 0) {
-      print("❌ No interactions found")
-      return(create_demo_ppi_data(genes[mapping_success]))
-    }
-    
-    print(paste("📊 Found", nrow(interactions), "interactions"))
-    
-    # Convert STRING IDs back to gene symbols - FIXED
-    print("🔄 Converting to gene symbols...")
-    result_df <- convert_string_ids_to_symbols(
-      interactions = interactions,
-      mapped_genes = mapped_genes_clean,
-      string_db = string_db
-    )
-    
-    print(paste("✅ Final result:", nrow(result_df), "interactions with gene symbols"))
-    return(result_df)
-    
-  }, error = function(e) {
-    print(paste("❌ STRING query error:", e$message))
-    return(create_demo_ppi_data(genes))
-  })
-}
 
 # Fixed conversion of STRING IDs to gene symbols
 convert_string_ids_to_symbols <- function(interactions, mapping) {
@@ -17522,38 +17269,6 @@ create_enhanced_network_viz <- function(ppi_interactions, selected_genes, hub_pr
 }
 
 # Create demo PPI data when STRING is unavailable
-create_demo_ppi_data <- function(genes) {
-  
-  print("📊 Creating demo PPI data...")
-  
-  n_genes <- length(genes)
-  if (n_genes < 2) {
-    return(data.frame(
-      gene_from = character(0),
-      gene_to = character(0),
-      combined_score = numeric(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-  
-  # Create some plausible interactions
-  n_interactions <- min(n_genes * 2, 50)
-  
-  interactions <- data.frame(
-    gene_from = sample(genes, n_interactions, replace = TRUE),
-    gene_to = sample(genes, n_interactions, replace = TRUE),
-    combined_score = runif(n_interactions, 0.15, 0.95),
-    stringsAsFactors = FALSE
-  )
-  
-  # Remove self-interactions
-  interactions <- interactions[interactions$gene_from != interactions$gene_to, ]
-  
-  # Remove duplicates
-  interactions <- unique(interactions)
-  
-  return(interactions)
-}
 
 # Create empty PPI result structure
 create_empty_ppi_result <- function(message = "No data available") {
@@ -18990,38 +18705,6 @@ create_ultra_safe_summary <- function(ppi_interactions, hub_proteins, network_me
 }
 
 # Helper functions for the debug version
-create_mock_ppi_interactions <- function(gene_symbols) {
-  stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-  
-  if (length(gene_symbols) < 2) {
-    return(data.frame(
-      gene_from = character(0),
-      gene_to = character(0),
-      combined_score = numeric(0),
-      interaction_source = character(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-  
-  n_genes <- length(gene_symbols)
-  n_interactions <- min(50, n_genes * 3)  # Create reasonable number of interactions
-  
-  # Create interactions
-  interactions_df <- data.frame(
-    gene_from = sample(gene_symbols, n_interactions, replace = TRUE),
-    gene_to = sample(gene_symbols, n_interactions, replace = TRUE),
-    combined_score = runif(n_interactions, 0.5, 0.95),
-    interaction_source = "Mock_STRING_Data",
-    stringsAsFactors = FALSE
-  )
-  
-  # Remove self-interactions and duplicates
-  interactions_df <- interactions_df[interactions_df$gene_from != interactions_df$gene_to, ]
-  interactions_df <- interactions_df[!duplicated(paste(interactions_df$gene_from, interactions_df$gene_to)), ]
-  
-  print(paste("Created", nrow(interactions_df), "mock PPI interactions"))
-  return(interactions_df)
-}
 
 create_simple_network_metrics <- function(ppi_interactions, converted_genes) {
   
@@ -19252,34 +18935,6 @@ create_simple_summary_stats <- function(ppi_interactions, converted_genes) {
 
 
 
-create_fallback_ppi_interactions <- function(genes) {
-  
-  print("🔄 Creating fallback PPI interactions...")
-  
-  if (length(genes) < 2) {
-    return(create_empty_interaction_df())
-  }
-  
-  # Create some realistic mock interactions
-  n_interactions <- min(50, length(genes) * 2)
-  
-  interactions <- data.frame(
-    gene_from = sample(genes, n_interactions, replace = TRUE),
-    gene_to = sample(genes, n_interactions, replace = TRUE),
-    combined_score = runif(n_interactions, 0.4, 0.9),
-    interaction_source = "Fallback_Mock",
-    stringsAsFactors = FALSE
-  )
-  
-  # Remove self-interactions
-  interactions <- interactions[interactions$gene_from != interactions$gene_to, ]
-  
-  # Remove duplicates
-  interactions <- interactions[!duplicated(paste(interactions$gene_from, interactions$gene_to)), ]
-  
-  print(paste("✅ Created", nrow(interactions), "fallback interactions"))
-  return(interactions)
-}
 
 # Empty interaction data frame
 create_empty_interaction_df <- function() {
@@ -19526,99 +19181,6 @@ test_ppi_function <- function() {
 
 
 # FIXED Enhanced fallback data
-create_fallback_ppi_data_fixed <- function(genes) {
-  
-  print("🎭 Creating enhanced fallback PPI data...")
-  
-  if (length(genes) < 2) {
-    return(data.frame(
-      gene_from = character(0),
-      gene_to = character(0),
-      combined_score = numeric(0),
-      interaction_source = character(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-  
-  # Create more realistic interactions
-  n_genes <- length(genes)
-  n_interactions <- min(80, n_genes * 3)  # Reasonable number
-  
-  # Create hub-like structure
-  hub_genes <- sample(genes, min(4, length(genes) %/% 2))
-  
-  interactions_list <- list()
-  interaction_count <- 0
-  
-  # Create hub interactions
-  for (hub in hub_genes) {
-    n_hub_connections <- sample(3:6, 1)
-    available_genes <- setdiff(genes, hub)
-    if (length(available_genes) > 0) {
-      connected_genes <- sample(available_genes, min(n_hub_connections, length(available_genes)))
-      
-      for (connected in connected_genes) {
-        if (interaction_count < n_interactions) {
-          interactions_list[[length(interactions_list) + 1]] <- data.frame(
-            gene_from = hub,
-            gene_to = connected,
-            combined_score = runif(1, 0.6, 0.95),
-            interaction_source = "Enhanced_Simulation",
-            stringsAsFactors = FALSE
-          )
-          interaction_count <- interaction_count + 1
-        }
-      }
-    }
-  }
-  
-  # Add some random interactions
-  attempts <- 0
-  while (interaction_count < n_interactions && attempts < n_interactions * 2) {
-    gene_a <- sample(genes, 1)
-    gene_b <- sample(genes, 1)
-    
-    if (gene_a != gene_b) {
-      # Check if this pair already exists
-      pair_exists <- any(sapply(interactions_list, function(x) {
-        (x$gene_from == gene_a && x$gene_to == gene_b) ||
-          (x$gene_from == gene_b && x$gene_to == gene_a)
-      }))
-      
-      if (!pair_exists) {
-        interactions_list[[length(interactions_list) + 1]] <- data.frame(
-          gene_from = gene_a,
-          gene_to = gene_b,
-          combined_score = runif(1, 0.4, 0.8),
-          interaction_source = "Enhanced_Simulation",
-          stringsAsFactors = FALSE
-        )
-        interaction_count <- interaction_count + 1
-      }
-    }
-    attempts <- attempts + 1
-  }
-  
-  # Combine all interactions
-  if (length(interactions_list) > 0) {
-    final_interactions <- do.call(rbind, interactions_list)
-    
-    print(paste("✅ Created", nrow(final_interactions), "enhanced fallback interactions"))
-    print(paste("- Hub genes:", length(hub_genes)))
-    print(paste("- High confidence (>0.7):", sum(final_interactions$combined_score > 0.7)))
-    
-    return(final_interactions)
-  } else {
-    # Return empty but properly structured dataframe
-    return(data.frame(
-      gene_from = character(0),
-      gene_to = character(0),
-      combined_score = numeric(0),
-      interaction_source = character(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-}
 
 #' Map Gene Names to STRING IDs
 map_genes_to_string_ids <- function(genes, species_id) {
@@ -19713,34 +19275,10 @@ get_string_interactions <- function(string_ids, species_id, confidence, max_inte
 #' Create Mock Data for Testing (when STRING API is unavailable)
 create_mock_string_mapping <- function(genes, species_id) {
   stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-  data.frame(
-    queryItem = genes,
-    queryIndex = seq_along(genes),
-    stringId = paste0(species_id, ".", genes),
-    preferredName = genes,
-    taxonID = as.integer(species_id),
-    stringsAsFactors = FALSE
-  )
 }
 
 create_mock_interactions <- function(string_ids, confidence) {
   stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-  n_ids <- length(string_ids)
-  if (n_ids < 2) return(data.frame())
-  
-  # Create random interactions
-  n_interactions <- min(200, n_ids * 3)
-  
-  data.frame(
-    stringId_A = sample(string_ids, n_interactions, replace = TRUE),
-    stringId_B = sample(string_ids, n_interactions, replace = TRUE),
-    preferredName_A = gsub("^[0-9]+\\.", "", sample(string_ids, n_interactions, replace = TRUE)),
-    preferredName_B = gsub("^[0-9]+\\.", "", sample(string_ids, n_interactions, replace = TRUE)),
-    score = runif(n_interactions, confidence, 0.99),
-    stringsAsFactors = FALSE
-  ) %>%
-    filter(stringId_A != stringId_B) %>%  # Remove self-interactions
-    distinct(stringId_A, stringId_B, .keep_all = TRUE)  # Remove duplicates
 }
 
 #' Add Gene Names to Interactions
@@ -21029,7 +20567,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-06", tag = "New",      text = "Analyse public RNA-seq data by SRA/ENA accession: the server downloads each run itself (up to 200 GB per job). Uploads can now be up to 40 GB, and samples are processed one at a time to keep disk use low."),
+  list(date = "2026-10-06", tag = "New",      text = "Resumable FASTQ uploads: large files upload in chunks, continue automatically after a dropped connection, and stay on the server for 3 days so you can reload the page or come back later before starting."),
+list(date = "2026-10-06", tag = "New",      text = "Analyse public RNA-seq data by SRA/ENA accession: the server downloads each run itself (up to 200 GB per job). Uploads can now be up to 40 GB, and samples are processed one at a time to keep disk use low."),
   list(date = "2026-10-06", tag = "New",      text = "FASTQ runs now keep going if you close the page: every run gets a job ID, and results can be retrieved later with \u201cRetrieve results by job ID\u201d."),
   list(date = "2026-10-06", tag = "Fixed",    text = "Survival hazard ratios are now reported as HIGH vs LOW expression, and analyses never fall back to simulated data when a database is unavailable."),
   list(date = "2026-10-06", tag = "Improved", text = "Pathway enrichment now uses the genes you tested as the background; GSEA accepts Ensembl IDs; batch detection uses PVCA, kBET and silhouette, validated on simulated data."),
@@ -21060,6 +20599,20 @@ tx_changelog_entry <- function(e) {
 }
 
 tx_changelog_footer <- function(n = 3) tagList(lapply(head(tx_changelog, n), tx_changelog_entry))
+
+tx_whats_new_pill <- function(max_age_days = 30) {
+  latest <- as.Date(tx_changelog[[1]]$date)
+  if (is.na(latest) || as.numeric(Sys.Date() - latest) > max_age_days) return(NULL)
+  tags$a(
+    class = "tx-news-pill", href = "#tx-whats-new", role = "button",
+    onclick = "txGoToWhatsNew(); return false;",
+    tags$span(class = "tx-news-tag", "New"),
+    tags$span(class = "tx-news-text",
+              paste0("Updated ", format(latest, "%-d %b %Y"),
+                     ": resumable uploads, SRA/ENA import and more")),
+    tags$span(class = "tx-news-cta", "See what\u2019s new", icon("arrow-down"))
+  )
+}
 tx_changelog_full   <- function()      tagList(lapply(tx_changelog,         tx_changelog_entry))
 
 # Footer passed to navbarPage(footer = ...) so it appears on EVERY tab.
@@ -21076,7 +20629,7 @@ tx_footer_ui <- tags$footer(
         tags$p("TransXplorer is developed by Verma, Oler, Syed, Han, Berjanskii, Mason, Wishart, and Wong \u2014 a free, browser-based RNA-seq analysis platform built for biologists.")
       ),
       tags$div(
-        class = "tx-hf-col",
+        class = "tx-hf-col", id = "tx-whats-new",
         tags$h4("What's New"),
         tags$div(class = "tx-hf-cl", tx_changelog_footer(3)),
         actionLink("tx_changelog_seeall", "See all updates \u2192", class = "tx-hf-link")
@@ -21162,7 +20715,73 @@ ui <- fluidPage(
     tags$link(rel = "stylesheet", href = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"),
     tags$link(href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Poppins:wght@700;900&display=swap", rel = "stylesheet"),
     tags$script(src = "custom.js"),
+    tags$script(src = "tx-upload.js?v=6"),
     tags$script(HTML("
+      // Hero 'What's new' pill: scroll to the footer changelog and flash it (the footer is
+      // rendered by the server after page load, so wait up to ~15 s for it)
+      function txGoToWhatsNew(tries) {
+        var el = document.getElementById('tx-whats-new');
+        if (!el) { if ((tries || 0) < 100) setTimeout(function () { txGoToWhatsNew((tries || 0) + 1); }, 150); return; }
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.remove('tx-flash'); void el.offsetWidth; el.classList.add('tx-flash');
+      }
+    ")),
+    tags$style(HTML("
+      .tx-news-pill { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 10px;
+        margin: 0 auto 26px; padding: 6px 10px 6px 7px; max-width: 100%;
+        border-radius: 999px; border: 1px solid rgba(255,255,255,0.45); background: rgba(255,255,255,0.16);
+        -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+        color: #fff !important; font-size: 15px; line-height: 1.35; text-decoration: none !important;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.10); transition: background 0.2s ease, transform 0.2s ease; }
+      .tx-news-pill:hover, .tx-news-pill:focus-visible { background: rgba(255,255,255,0.26); transform: translateY(-1px); }
+      .tx-news-pill:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+      .tx-news-tag { background: #fff; color: #00897b; font-weight: 700; font-size: 12px; letter-spacing: 0.05em;
+        text-transform: uppercase; padding: 3px 10px; border-radius: 999px; }
+      .tx-news-cta { font-weight: 600; white-space: nowrap; }
+      .tx-news-cta i { margin-left: 6px; font-size: 0.85em; }
+      @media (prefers-reduced-motion: no-preference) {
+        .tx-news-cta i { animation: tx-nudge 1.8s ease-in-out 3; }
+        @keyframes tx-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
+      }
+      #tx-whats-new.tx-flash { animation: tx-flash 2.2s ease-out; border-radius: 10px; }
+      @keyframes tx-flash { 0%, 35% { box-shadow: 0 0 0 4px rgba(38,166,154,0.55); background: rgba(38,166,154,0.12); }
+                            100% { box-shadow: 0 0 0 4px rgba(38,166,154,0); background: transparent; } }
+
+      /* Reference tabs (Methods & Versions, Tutorial, Learn) sit at the navbar's right edge.
+         All tabs need ~1,450 px at default padding: tighten slightly down to 1,280 px; below
+         that the split is off and the menu wraps as before, keeping the three tabs together. */
+      @media (min-width: 1280px) and (max-width: 1460px) {
+        .navbar-nav.tx-nav-split > li > a { padding-left: 9px; padding-right: 9px; font-size: 13px; }
+      }
+      @media (min-width: 1280px) {
+        .navbar-nav.tx-nav-split { float: none; display: flex; flex-wrap: wrap; align-items: stretch; }
+        .navbar-nav.tx-nav-split > li { float: none; }
+        .navbar-nav.tx-nav-split > li.tx-nav-right-first { margin-left: auto; }
+      }
+    ")),
+tags$style(HTML("
+      .tx-upload { margin-bottom: 1rem; }
+      .tx-upload .uppy-Dashboard-inner { border-radius: 10px; border: 2px dashed #90caf9; background: #f8fbff; }
+      .tx-upload .uppy-Dashboard-note { line-height: 1.4; }
+      .tx-upload-loading, .tx-upload-error { padding: 2.5rem 1rem; text-align: center; color: #607d8b;
+        border: 2px dashed #cfd8dc; border-radius: 10px; }
+      .tx-upload-error { color: #c62828; border-color: #ef9a9a; }
+      .tx-ready { margin-top: 0.75rem; border: 1px solid #c8e6c9; background: #f1f8e9; border-radius: 10px; padding: 0.6rem 0.9rem; }
+      .tx-ready-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;
+        flex-wrap: wrap; font-weight: 600; color: #2e7d32; margin-bottom: 0.35rem; }
+      .tx-ready-head a { font-weight: 400; font-size: 0.85rem; color: #c62828; cursor: pointer; }
+      .tx-ready-list { max-height: 220px; overflow-y: auto; }
+      .tx-ready-row { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.2rem 0;
+        border-top: 1px solid #e3efd9; font-size: 0.9rem; }
+      .tx-ready-row:first-child { border-top: 0; }
+      .tx-ready-name { overflow-wrap: anywhere; font-family: SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; }
+      .tx-ready-size { color: #607d8b; white-space: nowrap; }
+      .tx-ready-row a { color: #9e9e9e; cursor: pointer; margin-left: 0.5rem; }
+      .tx-ready-row a:hover { color: #c62828; }
+      .tx-ready-note { font-size: 0.8rem; color: #607d8b; margin-top: 0.35rem; }
+      .tx-ready-warn { font-size: 0.85rem; color: #8d6e00; margin-top: 0.35rem; }
+    ")),
+tags$script(HTML("
       // Safe Shiny input setter - queues action if Shiny isn't connected yet
       function safeSetInput(name, value) {
         if (typeof Shiny !== 'undefined' && Shiny.shinyapp &&
@@ -21190,6 +20809,11 @@ ui <- fluidPage(
         a.title = 'Tutorials and concept guides for RNA-seq analysis';
         li.appendChild(a);
         nav.appendChild(li);
+        var methods = nav.querySelector('a[data-value=\"methods_versions_tab\"]');
+        if (methods && methods.parentNode) {
+          methods.parentNode.classList.add('tx-nav-right-first');
+          nav.classList.add('tx-nav-split');
+        }
       }
       document.addEventListener('DOMContentLoaded', injectLearnNavLink);
     ")),
@@ -21496,6 +21120,7 @@ ui <- fluidPage(
                             tags$canvas(id = "bio-canvas"),
                             
                             tags$div(class = "modern-hero-content",
+                                     tx_whats_new_pill(),
                                      h1(class = "modern-hero-title", "TransXplorer"),
                                      p(class = "modern-hero-subtitle",
                                        "Unlock the Power of RNA-seq Analysis",
@@ -22084,27 +21709,17 @@ ui <- fluidPage(
                    div(class = "parameter-section",
                        h4(icon("sliders-h"), " Analysis Parameters", style = "color: #1565c0; margin-bottom: 1rem;"),
                        
-                       # File Upload (Server Mode)
+                       # File Upload (Server Mode): resumable uploads through tusd (www/tx-upload.js)
                        conditionalPanel(
                          condition = "input.analysis_mode == 'server'",
-                         div(class = "upload-zone fastq-zone",
+                         div(class = "tx-upload",
                              id = "fastq-upload-zone",
-                             icon("cloud-upload-alt"),
-                             h5("Drop FASTQ files here or click to browse"),
-                             fileInput("fastq_files",
-                                       NULL,
-                                       multiple = TRUE,
-                                       accept = c(".fastq", ".fq", ".fastq.gz", ".fq.gz"),
-                                       buttonLabel = "Browse Files",
-                                       placeholder = "No files selected"
-                             ),
-                             div(class = "status-indicator status-ready",
-                                 id = "upload-status",
-                                 "Ready to upload"
-                             )
+                             div(id = "tx-uppy",
+                                 div(class = "tx-upload-loading", icon("spinner", class = "fa-spin"), " Preparing upload...")),
+                             uiOutput("tx_ready_files")
                          )
                        ),
-                       
+
                        # Sequencing Type
                        div(
                          style = "margin: 1rem 0;",
@@ -30088,6 +29703,104 @@ ui <- fluidPage(
 # ============================================================================
 TX_ENRICHR_CACHE <- Sys.getenv("TX_ENRICHR_CACHE", "/srv/transxplorer/results/.enrichr_libraries")
 TX_JOBS_DIR <- Sys.getenv("TX_JOBS_DIR", "/srv/transxplorer/results/jobs")
+
+# ============================================================================
+# Resumable FASTQ uploads (tus protocol)
+#  The browser (Uppy) streams files in chunks to the tusd container, which keeps
+#  <id> (data) and <id>.info (JSON: size, offset, metadata) in TX_TUS_DIR. Each
+#  browser holds a random token; tusd's pre-create hook accepts an upload only
+#  when TX_TUS_TOKENS/<token> exists. The finished uploads carrying a session's
+#  token are the files that session's FASTQ job will process.
+# ============================================================================
+TX_TUS_DIR <- Sys.getenv("TX_TUS_DIR", "/srv/transxplorer/uploads/tus")
+TX_TUS_TOKENS <- Sys.getenv("TX_TUS_TOKENS", "/srv/transxplorer/uploads/tus_tokens")
+TX_WORK_DIR <- Sys.getenv("TX_WORK_DIR", "/srv/transxplorer/uploads/work")
+TX_TUS_KEEP_DAYS <- 3
+TX_FASTQ_NAME_RE <- "^[A-Za-z0-9._-]+\\.(fastq|fq)(\\.gz)?$"
+
+tx_new_upload_token <- function() paste(as.character(openssl::rand_bytes(16)), collapse = "")
+
+tx_empty_uploads <- function() {
+  data.frame(name = character(0), size = numeric(0), type = character(0),
+             datapath = character(0), id = character(0), stringsAsFactors = FALSE)
+}
+
+tx_tus_read_info <- function(info_file) {
+  tryCatch(jsonlite::fromJSON(info_file, simplifyVector = TRUE), error = function(e) NULL)
+}
+
+# Finished uploads for one token, one row per file name (a re-upload replaces the older copy)
+tx_tus_list <- function(token) {
+  if (is.null(token) || !dir.exists(TX_TUS_DIR)) return(tx_empty_uploads())
+  infos <- list.files(TX_TUS_DIR, pattern = "\\.info$", full.names = TRUE)
+  rows <- lapply(infos, function(f) {
+    x <- tx_tus_read_info(f)
+    if (is.null(x) || !identical(x$MetaData$token, token)) return(NULL)
+    # filestore keeps the received bytes in the data file; .info "Offset" is not updated
+    data_file <- sub("\\.info$", "", f)
+    if (isTRUE(x$SizeIsDeferred) || is.null(x$Size) || !file.exists(data_file) || file.size(data_file) != x$Size) return(NULL)
+    nm <- x$MetaData$filename %||% ""
+    if (!grepl(TX_FASTQ_NAME_RE, nm, ignore.case = TRUE)) return(NULL)
+    data.frame(name = nm, size = as.numeric(x$Size), type = "", datapath = data_file,
+               id = basename(data_file), mtime = as.numeric(file.mtime(f)), stringsAsFactors = FALSE)
+  })
+  df <- do.call(rbind, rows[!vapply(rows, is.null, TRUE)])
+  if (is.null(df) || nrow(df) == 0) return(tx_empty_uploads())
+  df <- df[order(df$mtime, decreasing = TRUE), , drop = FALSE]
+  dup <- duplicated(df$name)
+  if (any(dup)) {
+    for (p in df$datapath[dup]) unlink(c(p, paste0(p, ".info")))
+    df <- df[!dup, , drop = FALSE]
+  }
+  df <- df[order(df$name), , drop = FALSE]
+  df$mtime <- NULL
+  rownames(df) <- NULL
+  df
+}
+
+# Delete one finished upload, only if it belongs to this token
+tx_tus_remove <- function(token, id) {
+  if (!grepl("^[A-Za-z0-9+_-]+$", id %||% "")) return(FALSE)
+  data_file <- file.path(TX_TUS_DIR, id)
+  x <- tx_tus_read_info(paste0(data_file, ".info"))
+  if (is.null(x) || !identical(x$MetaData$token, token)) return(FALSE)
+  unlink(c(data_file, paste0(data_file, ".info")))
+  TRUE
+}
+
+# Hand uploads to a job: move them (same filesystem, so instant) under their real names
+tx_tus_claim <- function(df, dest_dir) {
+  dir.create(dest_dir, recursive = TRUE, showWarnings = FALSE)
+  for (i in seq_len(nrow(df))) {
+    dst <- file.path(dest_dir, df$name[i])
+    if (!file.rename(df$datapath[i], dst)) {
+      if (!file.copy(df$datapath[i], dst)) stop("Could not prepare uploaded file ", df$name[i])
+      unlink(df$datapath[i])
+    }
+    unlink(paste0(df$datapath[i], ".info"))
+    df$datapath[i] <- dst
+  }
+  df
+}
+
+# Remove abandoned uploads, expired tokens and leftover work folders (at most once an hour)
+tx_tus_sweep <- function() {
+  marker <- file.path(TX_TUS_TOKENS, ".last_sweep")
+  if (file.exists(marker) && difftime(Sys.time(), file.mtime(marker), units = "hours") < 1) return(invisible())
+  try({
+    file.create(marker)
+    now <- Sys.time()
+    old <- function(f, days) difftime(now, file.mtime(f), units = "days") > days
+    for (f in list.files(TX_TUS_DIR, full.names = TRUE)) {
+      data_file <- sub("\\.info$", "", f)
+      last <- max(file.mtime(c(data_file, paste0(data_file, ".info"))), na.rm = TRUE)
+      if (is.finite(last) && difftime(now, last, units = "days") > TX_TUS_KEEP_DAYS) unlink(f)
+    }
+    for (f in list.files(TX_TUS_TOKENS, full.names = TRUE)) if (old(f, 30)) unlink(f)
+    for (d in list.dirs(TX_WORK_DIR, recursive = FALSE)) if (old(d, 7)) unlink(d, recursive = TRUE)
+  }, silent = TRUE)
+  invisible()
+}
 
 .tx_enrichr_mem <- new.env(parent = emptyenv())
 # Enrichr renamed some libraries; map names used in the app to the published ones
@@ -46043,22 +45756,23 @@ server <- function(input, output, session) {
   validate_fastq_inputs <- function(input) {
     errors <- c()
     
+    fq <- isolate(fastq_uploads())
     # Check file upload
-    if (is.null(input$fastq_files) || nrow(input$fastq_files) == 0) {
+    if (is.null(fq) || nrow(fq) == 0) {
       errors <- c(errors, "❌ No FASTQ files uploaded")
     }
-    
+
     # Check file count for paired-end
-    if (!is.null(input$fastq_files) && input$sequencing_type == "paired") {
-      if (nrow(input$fastq_files) %% 2 != 0) {
+    if (!is.null(fq) && input$sequencing_type == "paired") {
+      if (nrow(fq) %% 2 != 0) {
         errors <- c(errors, "❌ Paired-end sequencing requires an even number of files")
       }
     }
     
     # Check file naming convention
-    if (!is.null(input$fastq_files)) {
-      file_names <- input$fastq_files$name
-      valid_extensions <- any(grepl("\\.(fastq|fq)(\\.gz)?$", file_names, ignore.case = TRUE))
+    if (!is.null(fq)) {
+      file_names <- fq$name
+valid_extensions <- any(grepl("\\.(fastq|fq)(\\.gz)?$", file_names, ignore.case = TRUE))
       if (!valid_extensions) {
         errors <- c(errors, "❌ Invalid file format. Please upload FASTQ files (.fastq, .fq, .fastq.gz, .fq.gz)")
       }
@@ -46083,9 +45797,9 @@ server <- function(input, output, session) {
     }
     
     # Check file size (40GB limit for server)
-    if (!is.null(input$fastq_files)) {
-      total_size <- sum(input$fastq_files$size, na.rm = TRUE)
-      if (total_size > 40 * 1024^3) {  # 40GB in bytes
+    if (!is.null(fq)) {
+      total_size <- sum(fq$size, na.rm = TRUE)
+if (total_size > 40 * 1024^3) {  # 40GB in bytes
         errors <- c(errors, "Total file size exceeds the 40 GB server limit. Use compressed (.gz) FASTQ files, split the study into batches, or use the Docker option for larger studies.")
       }
     }
@@ -46169,8 +45883,9 @@ server <- function(input, output, session) {
   
   # Create unique temporary directory
   create_analysis_directory <- function() {
-    base_dir <- "/tmp/transxplorer_sessions"
-    if (!dir.exists(base_dir)) {
+    # Work on the same filesystem as the uploads so files are moved, never copied
+    base_dir <- if (dir.exists(TX_WORK_DIR) && file.access(TX_WORK_DIR, 2) == 0) TX_WORK_DIR else "/tmp/transxplorer_sessions"
+if (!dir.exists(base_dir)) {
       dir.create(base_dir, recursive = TRUE, mode = "0755")
     }
     
@@ -46781,18 +46496,19 @@ server <- function(input, output, session) {
   
   # Validate inputs
   validate_inputs <- function(input) {
-    if (is.null(input$fastq_files)) stop("No FASTQ files uploaded")
-    if (is.null(input$fastq_files$datapath)) stop("No file paths found in uploaded files")
-    if (length(input$fastq_files$datapath) == 0) stop("Empty file path list")
-    if (is.null(input$genome_build)) stop("Please select a genome build")
+    fq <- isolate(fastq_uploads())
+    if (is.null(fq)) stop("No FASTQ files uploaded")
+    if (is.null(fq$datapath)) stop("No file paths found in uploaded files")
+    if (length(fq$datapath) == 0) stop("Empty file path list")
+if (is.null(input$genome_build)) stop("Please select a genome build")
     if (is.null(input$sequencing_type)) stop("Please select sequencing type")
     
-    for (file in input$fastq_files$datapath) {
+    for (file in fq$datapath) {
       if (!file.exists(file)) stop(paste("File not found:", file))
       if (file.access(file, mode = 4) != 0) stop(paste("File is not readable:", file))
     }
     
-    if (input$sequencing_type == "paired" && length(input$fastq_files$datapath) %% 2 != 0) {
+    if (input$sequencing_type == "paired" && length(fq$datapath) %% 2 != 0) {
       stop("Paired-end sequencing requires an even number of files")
     }
     
@@ -47305,28 +47021,107 @@ server <- function(input, output, session) {
     return(values$fc_output)
   }
   
+  # ===== Resumable FASTQ uploads (see tx_tus_* helpers and www/tx-upload.js) =====
+  tx_upload_token <- reactiveVal(NULL)
+  tx_upload_tick <- reactiveVal(0)
+  tx_refresh_uploads <- function() tx_upload_tick(isolate(tx_upload_tick()) + 1)
+
+  observeEvent(input$tx_upload_hello, {
+    tx_tus_sweep()
+    dir.create(TX_TUS_TOKENS, recursive = TRUE, showWarnings = FALSE)
+    tok <- input$tx_upload_hello$token %||% ""
+    if (!grepl("^[a-f0-9]{32}$", tok) || !file.exists(file.path(TX_TUS_TOKENS, tok))) tok <- tx_new_upload_token()
+    file.create(file.path(TX_TUS_TOKENS, tok))   # create, or refresh its age
+    tx_upload_token(tok)
+    session$sendCustomMessage("tx_upload_init", list(token = tok))
+    tx_refresh_uploads()
+  })
+  observeEvent(input$tx_upload_done, {
+    tx_refresh_uploads()
+    # The sequencing packages take ~10 s to load; do it while the other files are still uploading
+    if (!exists("seq_loaded", envir = .GlobalEnv)) later::later(function() try(load_sequencing_packages(), silent = TRUE), 1)
+  })
+observeEvent(input$tx_upload_remove, {
+    tok <- tx_upload_token(); req(tok)
+    ids <- if (identical(input$tx_upload_remove$id, "__all__")) isolate(fastq_uploads())$id else input$tx_upload_remove$id
+    for (id in ids) tx_tus_remove(tok, id)
+    tx_refresh_uploads()
+  })
+
+  # Finished uploads for this browser, in the shape of a Shiny fileInput (name, size, type, datapath)
+  fastq_uploads <- reactive({
+    tx_upload_tick()
+    df <- tx_tus_list(tx_upload_token())
+    if (nrow(df) == 0) NULL else df
+  })
+
+  # Files still transferring in the browser (throttled summary from tx-upload.js)
+  tx_active_uploads <- reactive({
+    st <- input$tx_upload_state
+    if (is.null(st)) 0 else as.integer(st$active %||% 0)
+  })
+
+  output$tx_ready_files <- renderUI({
+    df <- fastq_uploads()
+    if (is.null(df)) return(NULL)
+    gb <- sum(df$size) / 1024^3
+    fmt <- function(b) if (b >= 1024^3) sprintf("%.2f GB", b / 1024^3) else sprintf("%.1f MB", b / 1024^2)
+    rows <- lapply(seq_len(nrow(df)), function(i) {
+      div(class = "tx-ready-row",
+          span(class = "tx-ready-name", df$name[i]),
+          span(span(class = "tx-ready-size", fmt(df$size[i])),
+               tags$a(icon("times"), title = paste("Remove", df$name[i]),
+                      onclick = sprintf("Shiny.setInputValue('tx_upload_remove', {id: '%s', n: Date.now()}, {priority: 'event'})", df$id[i]))))
+    })
+    warn <- NULL
+    if (identical(input$sequencing_type, "paired") && tx_active_uploads() == 0) {
+      key <- function(x) sub("_R?[12](_[0-9]{3})?\\.(fastq|fq)(\\.gz)?$", "", x, ignore.case = TRUE)
+      r1 <- grepl("_R?1(_[0-9]{3})?\\.(fastq|fq)", df$name, ignore.case = TRUE)
+      r2 <- grepl("_R?2(_[0-9]{3})?\\.(fastq|fq)", df$name, ignore.case = TRUE)
+      lone <- unique(c(setdiff(key(df$name[r1]), key(df$name[r2])), setdiff(key(df$name[r2]), key(df$name[r1]))))
+      unnamed <- df$name[!(r1 | r2)]
+      if (length(lone) || length(unnamed)) {
+        warn <- div(class = "tx-ready-warn", icon("exclamation-triangle"), " ",
+                    if (length(lone)) paste0("Missing R1/R2 partner: ", paste(lone, collapse = ", "), ". "),
+                    if (length(unnamed)) paste0("Not named _R1/_R2 or _1/_2: ", paste(unnamed, collapse = ", "), "."))
+      }
+    }
+    div(class = "tx-ready",
+        div(class = "tx-ready-head",
+            span(icon("check-circle"), sprintf(" Ready on the server: %d file%s, %.2f GB", nrow(df), if (nrow(df) == 1) "" else "s", gb)),
+            tags$a("Remove all", onclick = "Shiny.setInputValue('tx_upload_remove', {id: '__all__', n: Date.now()}, {priority: 'event'})")),
+        div(class = "tx-ready-list", rows),
+        warn,
+        div(class = "tx-ready-note",
+            sprintf("Uploaded files are kept for %d days, so you can reload the page or come back later before starting the analysis.", TX_TUS_KEEP_DAYS)))
+  })
+
   # Reactive values for file upload status
   upload_status <- reactiveValues(
     files_ready = FALSE,
     total_size = 0,
-    file_count = 0
+    file_count = 0,
+    active = 0,
+    pct = 0
   )
-  
+
   # Monitor file upload status
   observe({
-    if (!is.null(input$fastq_files)) {
-      # Check if files are completely uploaded
-      all_exist <- all(file.exists(input$fastq_files$datapath))
-      upload_status$files_ready <- all_exist
-      upload_status$file_count <- nrow(input$fastq_files)
-      upload_status$total_size <- sum(input$fastq_files$size) / (1024^3)  # Convert to GB
+    df <- fastq_uploads()
+    active <- tx_active_uploads()
+    upload_status$active <- active
+    upload_status$pct <- as.integer(input$tx_upload_state$pct %||% 0)
+    if (!is.null(df)) {
+      upload_status$files_ready <- active == 0
+      upload_status$file_count <- nrow(df)
+      upload_status$total_size <- sum(df$size) / (1024^3)  # Convert to GB
     } else {
       upload_status$files_ready <- FALSE
       upload_status$file_count <- 0
       upload_status$total_size <- 0
     }
   })
-  
+
   # Render the run button with dynamic enable/disable
   output$run_button_ui <- renderUI({
     req(input$analysis_mode == "server")
@@ -47338,25 +47133,27 @@ server <- function(input, output, session) {
     
     button_class <- if(is_ready) "btn-enhanced" else "btn-secondary"
     button_label <- if(is_ready) {
-      paste0("🚀 Start Analysis (", upload_status$file_count, " files, ", 
+      paste0("🚀 Start Analysis (", upload_status$file_count, " files, ",
              round(upload_status$total_size, 2), " GB)")
-    } else if (upload_status$file_count == 0) {
-      "⏳ Waiting for files..."
+    } else if (upload_status$active > 0) {
+      paste0("⏳ Uploading... ", upload_status$pct, "% (", upload_status$active,
+             if (upload_status$active == 1) " file" else " files", " in progress)")
     } else {
-      "⏳ Files uploading..."
+      "⏳ Waiting for files..."
     }
-    
+
     tagList(
       actionButton("run_processing",
                    label = button_label,
                    class = button_class,
-                   style = "width: 100%; font-size: 1.1rem; padding: 1rem;"),
-      if (!is_ready && upload_status$file_count > 0) {
+                   style = "width: 100%; font-size: 1.1rem; padding: 1rem;",
+                   onclick = if (is_ready) "txRunPressed(this)"),
+if (!is_ready && upload_status$active > 0) {
         div(style = "margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 5px; border-left: 4px solid #ffc107;",
             icon("info-circle"), " Please wait for all files to finish uploading before starting analysis."
         )
       }
-    )
+)
   })
   
   # Disable button during processing
@@ -47398,9 +47195,15 @@ server <- function(input, output, session) {
       analysis_dir <- create_analysis_directory()
     
       # Prepare parameters for processing
+      fq <- isolate(fastq_uploads())
+      if (!isTRUE(values$use_remote) && !is.null(fq)) {
+        fq <- tx_tus_claim(fq, file.path(analysis_dir, "incoming"))
+        session$sendCustomMessage("tx_upload_reset", list())
+        tx_refresh_uploads()
+      }
       processing_params <- list(
-        fastq_files_df = input$fastq_files,
-        sequencing_type = input$sequencing_type,
+        fastq_files_df = fq,
+sequencing_type = input$sequencing_type,
         genome_build = input$genome_build,
         quant_method = input$quant_method %||% "hisat2",
         custom_genome = if(input$genome_build == "custom") input$custom_genome else NULL,
@@ -47419,7 +47222,7 @@ server <- function(input, output, session) {
       shinyjs::disable("run_processing")
       shinyjs::runjs("
         var btn = document.getElementById('run_processing');
-        if (btn) { btn.dataset.originalHtml = btn.innerHTML;
+        if (btn) { if (!btn.dataset.originalHtml) btn.dataset.originalHtml = btn.innerHTML;
           btn.innerHTML = '<i class=\"fa fa-spinner fa-spin\" style=\"margin-right:6px;\"></i> Processing...';
           btn.classList.add('btn-disabled-running'); }
       ")
@@ -47880,8 +47683,9 @@ server <- function(input, output, session) {
               qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
               if (!is.null(params$job_id)) qm$update_job_status(params$job_id, "error", error = e$message)
             }, error = function(e2) NULL)
+            try(unlink(params$tmp_dir, recursive = TRUE), silent = TRUE)   # no retry from these files; free the disk
           })
-        },
+},
         args = list(
           params_file = bg_params_file,
           completion_file = completion_file,
@@ -47915,9 +47719,9 @@ server <- function(input, output, session) {
   })
 
   # ===== Check FASTQ names at upload time (not only when Start is clicked) =====
-  observeEvent(list(input$fastq_files, input$sequencing_type), {
-    req(input$fastq_files)
-    errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
+  observeEvent(list(fastq_uploads(), input$sequencing_type, tx_active_uploads()), {
+    req(fastq_uploads(), tx_active_uploads() == 0)
+errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
     errs <- errs[grepl("Paired-end|missing their R1|Invalid file format|exceeds", errs)]
     if (length(errs) > 0) {
       showNotification(HTML(paste(c("<strong>Please check your files before starting:</strong>", errs), collapse = "<br>")),
@@ -48079,7 +47883,8 @@ server <- function(input, output, session) {
       error_msg <- paste(validation_errors, collapse = "\n")
       showNotification(error_msg, type = "error", duration = 10)
       update_processing_log("Validation failed", "error")
-      for (error in validation_errors) {
+      shinyjs::runjs("txRunRestore()")
+for (error in validation_errors) {
         update_processing_log(error, "error")
       }
       return()
@@ -48106,9 +47911,9 @@ server <- function(input, output, session) {
       job_id <- add_to_queue(
         session_id = queue_status$session_id,
         job_data = list(
-          fastq_files = input$fastq_files$name,  # Store file names
-          fastq_paths = input$fastq_files$datapath,  # Store paths
-          genome = input$genome_build,
+          fastq_files = fastq_uploads()$name,  # Store file names
+          fastq_paths = fastq_uploads()$datapath,  # Store paths
+genome = input$genome_build,
           type = input$sequencing_type,
           custom_genome = if(input$genome_build == "custom") input$custom_genome$name else NULL,
           custom_gtf = if(input$genome_build == "custom") input$custom_gtf$name else NULL,
@@ -48176,8 +47981,8 @@ server <- function(input, output, session) {
       job_id <- add_to_queue(
         session_id = queue_status$session_id,
         job_data = list(
-          fastq_files = input$fastq_files$name,
-          genome = input$genome_build,
+          fastq_files = fastq_uploads()$name,
+genome = input$genome_build,
           type = input$sequencing_type,
           timestamp = Sys.time()
         )
@@ -48283,8 +48088,9 @@ server <- function(input, output, session) {
       )
       update_processing_log(paste("Error:", result$error), "error")
       values$error_message <- result$error
+      values$bg_process <- NULL   # handled: stop the 2-second poll (it would repeat this every tick)
     }
-  })
+})
   
   # Helper to clean up the temporary directory for this session
   cleanup_temp_dir <- function(dir_path) {
@@ -48311,12 +48117,12 @@ server <- function(input, output, session) {
   })
   
   output$upload_status <- renderUI({
-    if (is.null(input$fastq_files)) {
+    if (is.null(fastq_uploads())) {
       div(class = "status-indicator status-ready", "Ready to upload")
     } else {
-      file_count <- nrow(input$fastq_files)
-      total_size <- round(sum(input$fastq_files$size, na.rm = TRUE) / (1024^2), 1)  # MB
-      
+      file_count <- nrow(fastq_uploads())
+      total_size <- round(sum(fastq_uploads()$size, na.rm = TRUE) / (1024^2), 1)  # MB
+
       if (total_size > 3072) {  # 3GB in MB
         div(class = "status-indicator status-error",
             paste("⚠️", file_count, "files (", total_size, "MB) - Exceeds 3GB limit"))
@@ -48486,6 +48292,9 @@ server <- function(input, output, session) {
         }
         salmon_tpm <- file.path(values$fc_output$output_dir, "counts", "salmon_tpm.txt")
         if (file.exists(salmon_tpm)) file.copy(salmon_tpm, file.path(temp_dir, "salmon_tpm.txt"))
+        # Per-sample HISAT2 / Salmon logs (alignment rates, mapping warnings)
+        logs_source <- file.path(values$fc_output$output_dir, "alignment_logs")
+        if (dir.exists(logs_source) && length(list.files(logs_source)) > 0) file.copy(logs_source, temp_dir, recursive = TRUE)
         
         # --- DYNAMIC HTML GENERATION ---
         
@@ -49011,7 +48820,7 @@ document.addEventListener("DOMContentLoaded", function() {
       )
       
       # Sample Information
-      num_samples <- if (!is.null(counts_data)) ncol(counts_data) - 1 else nrow(input$fastq_files)
+      num_samples <- if (!is.null(counts_data)) ncol(counts_data) - 1 else nrow(fastq_uploads())
       
       html_parts <- c(html_parts,
                       "<h2>📋 Sample Information</h2>",
@@ -66660,34 +66469,6 @@ document.addEventListener("DOMContentLoaded", function() {
   #test_genes <- c("TP53", "EGFR", "BRCA1")
   #test_results <- enhanced_chembl_query_fixed(test_genes, max_drugs_per_gene = 5, min_confidence = 0.3)
   
-  create_minimal_mock_data <- function(gene_symbols) {
-    if (length(gene_symbols) == 0) return(data.frame())
-    
-    # Create just 1-2 interactions per gene
-    all_mock <- data.frame()
-    
-    for (gene in gene_symbols[1:min(3, length(gene_symbols))]) {
-      mock_row <- data.frame(
-        gene_name = gene,
-        target_chembl_id = paste0("MOCK_TARGET_", sample(1000:9999, 1)),
-        molecule_name = paste0("MOCK_DRUG_", gene),
-        molecule_id = paste0("MOCK_", sample(10000:99999, 1)),
-        compound_chembl_id = paste0("MOCK_", sample(10000:99999, 1)),
-        standard_type = "IC50",
-        standard_value = sample(c(100, 500, 1000), 1),
-        standard_units = "nM",
-        activity_comment = "Mock data",
-        confidence_score = 0.6,
-        database_source = "Mock_Minimal",
-        clinical_phase = 0,
-        stringsAsFactors = FALSE
-      )
-      all_mock <- rbind(all_mock, mock_row)
-    }
-    
-    print(paste("Created minimal mock data:", nrow(all_mock), "interactions"))
-    return(all_mock)
-  }
   
   # Helper function for activity confidence calculation
   calculate_activity_confidence <- function(standard_type, standard_value, standard_units) {
@@ -68618,39 +68399,6 @@ document.addEventListener("DOMContentLoaded", function() {
     return(pmax(0.1, pmin(1.0, score)))
   }
   
-  create_enhanced_mock_chembl_data <- function(gene_symbols) {
-    
-    print("Creating enhanced mock ChEMBL data...")
-    
-    n_genes <- min(length(gene_symbols), 10)
-    selected_genes <- head(gene_symbols, n_genes)
-    
-    all_mock_data <- data.frame()
-    
-    for (gene in selected_genes) {
-      n_compounds <- sample(3:8, 1)  # Random number of compounds per gene
-      
-      gene_data <- data.frame(
-        gene_name = gene,
-        target_chembl_id = paste0("CHEMBLT", sample(1000:9999, 1)),
-        molecule_name = paste0("DRUG_", sample(LETTERS, 1), sample(100:999, 1)), # More readable mock drug name
-        molecule_id = paste0("CHEMBLM", sample(100000:999999, n_compounds)),
-        compound_chembl_id = paste0("CHEMBLC", sample(100000:999999, n_compounds)),
-        standard_type = sample(c("IC50", "Ki", "Kd", "EC50", "Inhibition"), n_compounds, replace = TRUE),
-        standard_value = round(10^runif(n_compounds, 0, 4), 1),  # 1-10000 range
-        standard_units = sample(c("nM", "uM", "%"), n_compounds, replace = TRUE),
-        confidence_score = round(runif(n_compounds, 0.3, 0.9), 2),
-        database_source = "ChEMBL_Mock",
-        clinical_phase = sample(0:3, n_compounds, replace = TRUE, prob = c(0.6, 0.2, 0.15, 0.05)),
-        stringsAsFactors = FALSE
-      )
-      
-      all_mock_data <- rbind(all_mock_data, gene_data)
-    }
-    
-    print(paste("Generated mock data for", n_genes, "genes with", nrow(all_mock_data), "interactions"))
-    return(all_mock_data)
-  }
   
   safe_extract <- function(data, path, default = NA) {
     
@@ -71286,43 +71034,6 @@ document.addEventListener("DOMContentLoaded", function() {
   
   
   # ADD THE MISSING MOCK DATA FUNCTION
-  create_mock_chembl_data_enhanced <- function(gene_symbols) {
-    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
-    
-    print("Creating enhanced mock ChEMBL data...")
-    
-    if (length(gene_symbols) == 0) {
-      return(data.frame())
-    }
-    
-    all_mock_data <- data.frame()
-    
-    for (gene in gene_symbols) {
-      n_compounds <- sample(2:5, 1)  # 2-5 compounds per gene
-      
-      gene_data <- data.frame(
-        gene_name = gene,
-        target_chembl_id = paste0("CHEMBL_TARGET_", sample(1000:9999, 1)),
-        molecule_name = paste0("DRUG_", gene, "_", 1:n_compounds),
-        molecule_id = paste0("CHEMBL_MOL_", sample(10000:99999, n_compounds)),
-        compound_chembl_id = paste0("CHEMBL", sample(100000:999999, n_compounds)),
-        standard_type = sample(c("IC50", "Ki", "EC50", "Kd"), n_compounds, replace = TRUE),
-        standard_value = round(10^runif(n_compounds, 1, 4), 1),  # 10-10000 nM
-        standard_units = "nM",
-        activity_comment = "",
-        confidence_score = round(runif(n_compounds, 0.4, 0.95), 2),
-        database_source = "ChEMBL_Mock",
-        clinical_phase = sample(0:4, n_compounds, replace = TRUE),
-        stringsAsFactors = FALSE
-      )
-      
-      all_mock_data <- rbind(all_mock_data, gene_data)
-    }
-    
-    print(paste("Created", nrow(all_mock_data), "mock ChEMBL interactions for", length(gene_symbols), "genes"))
-    
-    return(all_mock_data)
-  }
   
   debug_drug_data <- function(drug_data) {
     print("=== DEBUGGING DRUG DATA ===")
@@ -71347,38 +71058,6 @@ document.addEventListener("DOMContentLoaded", function() {
   
   create_mock_opentargets_data <- function(gene_symbols, analysis_focus) {
     stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
-    
-    if (length(gene_symbols) == 0) return(data.frame())
-    
-    # Adjust number of interactions based on focus
-    n_per_gene <- switch(analysis_focus,
-                         "drug_discovery" = 2,
-                         "disease_context" = 4,
-                         "comprehensive" = 3
-    )
-    
-    n_interactions <- min(30, length(gene_symbols) * n_per_gene)
-    
-    # IMPORTANT: Use SAME column structure as ChEMBL data, including clinical_phase
-    mock_data <- data.frame(
-      gene_name = sample(gene_symbols, n_interactions, replace = TRUE),
-      target_chembl_id = paste0("OT_", sample(1000:9999, n_interactions)),
-      molecule_name = paste0("OT_DRUG_", sample(1000:9999, n_interactions)),
-      molecule_id = paste0("OT_DRUG_", sample(1000:9999, n_interactions)),
-      standard_type = "Clinical Association",
-      standard_value = stats::runif(n_interactions, 0.1, 1.0), # Explicit stats::runif
-      standard_units = "Association Score",
-      confidence_score = stats::runif(n_interactions, 0.5, 0.95), # Explicit stats::runif
-      database_source = "OpenTargets_Mock",
-      clinical_phase = sample(c(0, 1, 2, 3, 4), n_interactions, replace = TRUE), # Include clinical_phase
-      safety_concerns = sample(c("Low", "Medium", "High"), n_interactions, replace = TRUE), # Added for mock consistency
-      disease_area = sample(c("Oncology", "Immunology", "Neurology", "Metabolism"), n_interactions, replace = TRUE), # Keep if needed elsewhere
-      stringsAsFactors = FALSE
-    )
-    
-    print(paste("Created", nrow(mock_data), "OpenTargets mock interactions"))
-    
-    return(mock_data)
   }
   
   
@@ -71407,52 +71086,10 @@ document.addEventListener("DOMContentLoaded", function() {
     ))
   }
   
-  create_mock_chembl_data_single <- function(gene_name) {
-    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
-    
-    # Create 2-3 mock interactions per gene
-    n_interactions <- sample(2:4, 1)
-    
-    mock_data <- data.frame(
-      gene_name = gene_name,
-      target_chembl_id = paste0("CHEMBL", sample(1000:9999, n_interactions)),
-      molecule_name = paste0("CHEMBL", sample(100000:999999, n_interactions)),
-      molecule_id = paste0("CHEMBL", sample(100000:999999, n_interactions)),
-      standard_type = sample(c("IC50", "EC50", "Ki", "Inhibition"), n_interactions, replace = TRUE),
-      standard_value = exp(stats::rnorm(n_interactions, log(500), 1)),  # Realistic activity values
-      standard_units = "nM",
-      confidence_score = stats::runif(n_interactions, 0.4, 0.9),
-      database_source = "ChEMBL_Mock",
-      clinical_phase = 0, # ADDED: Ensure clinical_phase is present in mock data
-      stringsAsFactors = FALSE
-    )
-    
-    return(mock_data)
-  }
   
   
   
   # Create mock ChEMBL data if real function doesn't exist
-  create_mock_chembl_data <- function(genes) {
-    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
-    
-    n_interactions <- min(100, length(genes) * 5)
-    
-    mock_data <- data.frame(
-      gene_name = sample(genes, n_interactions, replace = TRUE),
-      molecule_name = paste0("CHEMBL", sample(100000:999999, n_interactions)),
-      molecule_id = paste0("CHEMBL", sample(100000:999999, n_interactions)),
-      target_name = sample(genes, n_interactions, replace = TRUE),
-      standard_type = sample(c("IC50", "EC50", "Ki", "Kd"), n_interactions, replace = TRUE),
-      standard_value = exp(stats::rnorm(n_interactions, log(1000), 2)),
-      confidence_score = stats::runif(n_interactions, 0.3, 1.0),
-      database_source = "ChEMBL",
-      clinical_phase = 0, # ADDED: Ensure clinical_phase is present in mock data
-      stringsAsFactors = FALSE
-    )
-    
-    return(mock_data)
-  }
   
   # Simple network creation function (keep as is)
   create_drug_target_network_simple <- function(drug_data, selected_genes) {
@@ -75586,55 +75223,7 @@ document.addEventListener("DOMContentLoaded", function() {
   # 5. OpenTargets ANALYSIS WITH ENSEMBL IDs
   # ============================================================================
   
-  run_opentargets_comprehensive_analysis <- function(ensembl_ids, max_drugs_per_gene) {
-    
-    print("=== OpenTargets COMPREHENSIVE ANALYSIS ===")
-    print("Focus: Clinical validation + druggability + disease context")
-    
-    if (length(ensembl_ids) == 0) {
-      print("No ENSEMBL IDs available for OpenTargets")
-      return(data.frame())
-    }
-    
-    print(paste("Querying OpenTargets for", length(ensembl_ids), "ENSEMBL IDs"))
-    
-    # For now, create enhanced mock data that simulates real OpenTargets structure
-    # In production, this would use real OpenTargets API with ENSEMBL IDs
-    opentargets_data <- create_enhanced_opentargets_mock_data(ensembl_ids, max_drugs_per_gene)
-    
-    print(paste("OpenTargets comprehensive results:", nrow(opentargets_data), "entries"))
-    return(opentargets_data)
-  }
   
-  create_enhanced_opentargets_mock_data <- function(ensembl_ids, max_per_gene) {
-    
-    if (length(ensembl_ids) == 0) return(data.frame())
-    
-    # Create realistic OpenTargets-style data
-    n_interactions <- min(50, length(ensembl_ids) * max_per_gene)
-    
-    mock_data <- data.frame(
-      ensembl_id = sample(ensembl_ids, n_interactions, replace = TRUE),
-      gene_name = paste0("GENE_", sample(1:1000, n_interactions)),  # Would be converted from ENSEMBL in real usage
-      molecule_name = paste0("DRUG_OT_", sample(1000:9999, n_interactions)),
-      molecule_id = paste0("CHEMBL", sample(1000000:9999999, n_interactions)),
-      clinical_phase = sample(c(-1, 0, 1, 2, 3, 4), n_interactions, replace = TRUE, prob = c(0.1, 0.3, 0.2, 0.2, 0.15, 0.05)),
-      disease_area = sample(c("Oncology", "Immunology", "Neurology", "Metabolism", "Cardiovascular"), n_interactions, replace = TRUE),
-      druggability_score = stats::runif(n_interactions, 0.3, 1.0),
-      safety_score = stats::runif(n_interactions, 0.2, 0.9),
-      clinical_evidence_score = stats::runif(n_interactions, 0.4, 0.95),
-      database_source = "OpenTargets",
-      analysis_context = "comprehensive",
-      stringsAsFactors = FALSE
-    ) %>%
-      dplyr::mutate(
-        confidence_score = (druggability_score + safety_score + clinical_evidence_score) / 3,
-        standard_type = "Clinical Association",
-        standard_value = confidence_score
-      )
-    
-    return(mock_data)
-  }
   
   # ============================================================================
   # 6. COMPREHENSIVE INTEGRATION AND PRIORITIZATION
@@ -84714,120 +84303,6 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   # Create mock PPI results for testing
-  create_mock_ppi_results <- function(all_genes, up_genes, down_genes, selected_genes) {
-    stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-    
-    print("Creating mock PPI results for testing...")
-    
-    # Create mock interactions
-    n_genes <- min(50, length(all_genes))
-    sample_genes <- head(all_genes, n_genes)
-    
-    if (length(sample_genes) < 2) {
-      return(list(
-        error = "Not enough genes for mock analysis",
-        analysis_type = "ppi"
-      ))
-    }
-    
-    # Create random interactions
-    n_interactions <- min(100, n_genes * 3)
-    mock_interactions <- data.frame(
-      gene_from = sample(sample_genes, n_interactions, replace = TRUE),
-      gene_to = sample(sample_genes, n_interactions, replace = TRUE),
-      combined_score = runif(n_interactions, 0.4, 0.95),
-      stringsAsFactors = FALSE
-    )
-    
-    # Remove self-interactions
-    mock_interactions <- mock_interactions[mock_interactions$gene_from != mock_interactions$gene_to, ]
-    
-    # Create mock hub proteins
-    all_proteins <- unique(c(mock_interactions$gene_from, mock_interactions$gene_to))
-    degree_counts <- table(c(mock_interactions$gene_from, mock_interactions$gene_to))
-    
-    mock_hubs <- data.frame(
-      protein = names(degree_counts),
-      degree = as.numeric(degree_counts),
-      stringsAsFactors = FALSE
-    )
-    
-    mock_hubs$betweenness <- runif(nrow(mock_hubs), 0, 1)
-    mock_hubs$closeness <- runif(nrow(mock_hubs), 0, 1)
-    mock_hubs$eigenvector <- runif(nrow(mock_hubs), 0, 1)
-    mock_hubs$hub_score <- with(mock_hubs, degree/max(degree) * 0.5 + betweenness * 0.3 + closeness * 0.2)
-    mock_hubs$hub_type <- "Normal"
-    mock_hubs$hub_type[mock_hubs$hub_score > quantile(mock_hubs$hub_score, 0.75)] <- "Hub"
-    mock_hubs$hub_type[mock_hubs$hub_score > quantile(mock_hubs$hub_score, 0.90)] <- "Major Hub"
-    
-    mock_hubs$gene_source <- ifelse(mock_hubs$protein %in% all_genes, "Input DEG", "Network Only")
-    mock_hubs$regulation <- ifelse(mock_hubs$protein %in% up_genes, "Up-regulated",
-                                   ifelse(mock_hubs$protein %in% down_genes, "Down-regulated", "None"))
-    
-    # Create mock network data
-    mock_network <- create_safe_network_visualization(mock_interactions, mock_hubs, selected_genes)
-    
-    # Create mock metrics
-    mock_metrics <- list(
-      n_nodes = length(all_proteins),
-      n_edges = nrow(mock_interactions),
-      density = round(2 * nrow(mock_interactions) / (length(all_proteins) * (length(all_proteins) - 1)), 4),
-      avg_degree = round(mean(degree_counts), 2),
-      diameter = sample(3:6, 1),
-      avg_path_length = round(runif(1, 2, 4), 2),
-      clustering_coefficient = round(runif(1, 0.3, 0.7), 3),
-      n_components = 1,
-      largest_component_size = length(all_proteins)
-    )
-    
-    # Create mock enrichment
-    mock_enrichment <- list(
-      GO_Biological_Process = data.frame(
-        Term = c("protein binding", "signal transduction", "cell adhesion"),
-        Adjusted.P.value = c(0.001, 0.01, 0.02),
-        stringsAsFactors = FALSE
-      )
-    )
-    
-    # Build final mock results
-    return(list(
-      network_data = mock_network,
-      ppi_interactions = mock_interactions,
-      hub_proteins = mock_hubs,
-      summary_stats = list(
-        basic_stats = list(
-          total_proteins = length(all_proteins),
-          total_interactions = nrow(mock_interactions),
-          input_genes = length(all_genes),
-          mapped_genes = length(intersect(all_genes, all_proteins)),
-          coverage_rate = round(length(intersect(all_genes, all_proteins)) / length(all_genes) * 100, 1)
-        ),
-        hub_stats = list(
-          total_hubs = sum(mock_hubs$hub_type %in% c("Hub", "Major Hub")),
-          major_hubs = sum(mock_hubs$hub_type == "Major Hub"),
-          input_hubs = sum(mock_hubs$gene_source == "Input DEG" & mock_hubs$hub_type %in% c("Hub", "Major Hub"))
-        ),
-        topology_stats = mock_metrics,
-        n_edges = nrow(mock_interactions)
-      ),
-      network_metrics = list(
-        global_metrics = mock_metrics,
-        node_metrics = mock_hubs
-      ),
-      functional_enrichment = mock_enrichment,
-      analysis_params = list(
-        organism = "human",
-        confidence_threshold = 0.4,
-        network_type = "physical",
-        n_input_genes = length(all_genes),
-        n_mapped_genes = length(all_proteins),
-        mapping_rate = 0.78,
-        analysis_date = Sys.time()
-      ),
-      selected_genes = selected_genes,
-      analysis_type = "ppi"
-    ))
-  }# ==========================
   # HELPER FUNCTIONS FOR PPI ANALYSIS
   # ==========================
   
@@ -85625,66 +85100,6 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   # Create mock PPI results for testing
-  create_mock_ppi_results <- function(all_genes, up_genes, down_genes, selected_genes) {
-    stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-    
-    print("📊 Creating mock PPI results for testing...")
-    
-    if (length(all_genes) < 2) {
-      return(list(
-        error = "Insufficient genes for mock network",
-        selected_genes = selected_genes,
-        analysis_type = "ppi"
-      ))
-    }
-    
-    # Create mock interactions
-    n_interactions <- min(50, length(all_genes) * 2)
-    mock_interactions <- data.frame(
-      gene_from = sample(all_genes, n_interactions, replace = TRUE),
-      gene_to = sample(all_genes, n_interactions, replace = TRUE),
-      combined_score = runif(n_interactions, 0.4, 0.95),
-      stringsAsFactors = FALSE
-    )
-    
-    # Remove self-interactions
-    mock_interactions <- mock_interactions[mock_interactions$gene_from != mock_interactions$gene_to, ]
-    
-    # Create mock hub analysis
-    mock_hubs <- data.frame(
-      gene = head(all_genes, 10),
-      degree = sample(3:15, min(10, length(all_genes)), replace = TRUE),
-      hub_type = c(rep("Major Hub", 3), rep("Hub", 4), rep("Connector", 3))[1:min(10, length(all_genes))],
-      gene_source = "Input DEG",
-      regulation = ifelse(head(all_genes, 10) %in% up_genes, "Up",
-                          ifelse(head(all_genes, 10) %in% down_genes, "Down", "Unknown")),
-      stringsAsFactors = FALSE
-    )
-    
-    # Create mock network visualization
-    mock_viz <- create_safe_network_visualization(mock_interactions, mock_hubs, selected_genes)
-    
-    return(list(
-      network_data = mock_viz,
-      ppi_interactions = mock_interactions,
-      hub_proteins = mock_hubs,
-      network_metrics = list(
-        global_metrics = list(n_nodes = length(unique(c(mock_interactions$gene_from, mock_interactions$gene_to))),
-                              n_edges = nrow(mock_interactions),
-                              density = 0.3,
-                              clustering_coefficient = 0.4)
-      ),
-      summary_stats = list(
-        basic_stats = list(total_proteins = length(unique(c(mock_interactions$gene_from, mock_interactions$gene_to))),
-                           total_interactions = nrow(mock_interactions)),
-        hub_stats = list(total_hubs = nrow(mock_hubs))
-      ),
-      functional_enrichment = list(),
-      selected_genes = selected_genes,
-      analysis_type = "ppi",
-      note = "Mock data - install STRINGdb package for real analysis"
-    ))
-  }
   
   # Display completion summary
   display_ppi_completion_summary <- function(ppi_results) {
@@ -93388,35 +92803,6 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   #RETAKE PPI ANALYSIS
-  perform_ppi_analysis_clean <- function(selected_genes, input,
-                                         confidence_threshold = 0.4,
-                                         max_interactions = 200) {
-    
-    cat("🧬 Starting Clean PPI Analysis...\n")
-    
-    # ==== STEP 1: PREPARE GENES ====
-    all_genes <- extract_all_genes_clean(selected_genes)
-    cat("✅ Extracted", length(all_genes), "genes for analysis\n")
-    
-    if (length(all_genes) < 2) {
-      return(create_empty_ppi_result("Need at least 2 genes for PPI analysis"))
-    }
-    
-    # ==== STEP 2: GET INTERACTIONS ====
-    interactions <- get_ppi_interactions_clean(all_genes, confidence_threshold, max_interactions)
-    
-    if (nrow(interactions) == 0) {
-      return(create_empty_ppi_result("No protein interactions found"))
-    }
-    
-    cat("✅ Found", nrow(interactions), "protein interactions\n")
-    
-    # ==== STEP 3: BUILD COMPLETE RESULTS ====
-    results <- build_ppi_results_clean(interactions, selected_genes, all_genes)
-    
-    cat("✅ PPI Analysis completed successfully!\n")
-    return(results)
-  }
   
   #' Extract All Genes from Selected Genes Structure
   extract_all_genes_clean <- function(selected_genes) {
@@ -93440,80 +92826,7 @@ document.addEventListener("DOMContentLoaded", function() {
     return(all_genes)
   }
   
-  #' Get PPI Interactions - Clean Implementation
-  get_ppi_interactions_clean <- function(genes, confidence = 0.4, max_interactions = 200) {
-    
-    cat("🔗 Querying protein interactions...\n")
-    
-    # Try STRING database first
-    interactions <- try_string_database_clean(genes, confidence, max_interactions)
-    
-    # If STRING fails, create demo data for development
-    if (nrow(interactions) == 0) {
-      cat("⚠️ STRING unavailable, creating demo interactions\n")
-      interactions <- create_demo_interactions_clean(genes)
-    }
-    
-    return(interactions)
-  }
   
-  #' Try STRING Database - Simplified Approach
-  try_string_database_clean <- function(genes, confidence, max_interactions) {
-    
-    # Initialize empty result
-    interactions <- data.frame(
-      protein_a = character(0),
-      protein_b = character(0),
-      confidence_score = numeric(0),
-      stringsAsFactors = FALSE
-    )
-    
-    # Check if STRINGdb is available
-    if (!requireNamespace("STRINGdb", quietly = TRUE)) {
-      cat("❌ STRINGdb package not available\n")
-      return(interactions)
-    }
-    
-    tryCatch({
-      # Create STRING database object
-      string_db <- STRINGdb::STRINGdb$new(
-        version = "12.0",
-        species = 9606,  # Human
-        score_threshold = as.integer(confidence * 1000)
-      )
-      
-      # Create gene mapping dataframe
-      gene_df <- data.frame(gene = genes, stringsAsFactors = FALSE)
-      
-      # Map genes to STRING
-      mapped <- string_db$map(gene_df, "gene", removeUnmappedRows = TRUE, quiet = TRUE)
-      
-      if (nrow(mapped) < 2) {
-        cat("❌ Insufficient genes mapped to STRING\n")
-        return(interactions)
-      }
-      
-      cat("✅ Mapped", nrow(mapped), "genes to STRING database\n")
-      
-      # Get interactions
-      string_interactions <- string_db$get_interactions(mapped$STRING_id)
-      
-      if (nrow(string_interactions) == 0) {
-        cat("❌ No interactions found in STRING\n")
-        return(interactions)
-      }
-      
-      # Convert to clean format with proper gene symbols
-      interactions <- convert_string_to_clean_format(string_interactions, mapped)
-      
-      cat("✅ Retrieved", nrow(interactions), "interactions from STRING\n")
-      
-    }, error = function(e) {
-      cat("❌ STRING query failed:", e$message, "\n")
-    })
-    
-    return(interactions)
-  }
   
   #' Convert STRING Results to Clean Format
   convert_string_to_clean_format <- function(string_interactions, mapped_genes) {
@@ -93564,44 +92877,6 @@ document.addEventListener("DOMContentLoaded", function() {
     return(clean_interactions)
   }
   
-  #' Create Demo Interactions for Development
-  create_demo_interactions_clean <- function(genes) {
-    
-    # Use subset of genes for demo
-    demo_genes <- head(genes, min(6, length(genes)))
-    
-    if (length(demo_genes) < 2) {
-      return(data.frame(
-        protein_a = character(0),
-        protein_b = character(0),
-        confidence_score = numeric(0),
-        stringsAsFactors = FALSE
-      ))
-    }
-    
-    # Create realistic demo interactions
-    n_genes <- length(demo_genes)
-    interactions <- data.frame(
-      protein_a = c(demo_genes[1], demo_genes[1], demo_genes[2], demo_genes[3]),
-      protein_b = c(demo_genes[2], demo_genes[3], demo_genes[4], demo_genes[1]),
-      confidence_score = c(0.85, 0.72, 0.68, 0.91),
-      stringsAsFactors = FALSE
-    )
-    
-    # Add more interactions if we have more genes
-    if (n_genes >= 5) {
-      extra <- data.frame(
-        protein_a = c(demo_genes[4], demo_genes[5], demo_genes[2]),
-        protein_b = c(demo_genes[5], demo_genes[1], demo_genes[5]),
-        confidence_score = c(0.76, 0.64, 0.58),
-        stringsAsFactors = FALSE
-      )
-      interactions <- rbind(interactions, extra)
-    }
-    
-    cat("✅ Created", nrow(interactions), "demo interactions\n")
-    return(interactions)
-  }
   
   #' Build Complete PPI Results Structure
   build_ppi_results_clean <- function(interactions, selected_genes, all_input_genes) {
@@ -94211,24 +93486,6 @@ document.addEventListener("DOMContentLoaded", function() {
   
   
   # Simulate PPI data (fallback when STRING not available)
-  simulate_ppi_data <- function(genes, confidence) {
-    
-    if (length(genes) < 2) return(data.frame())
-    
-    # Create random interactions
-    n_interactions <- min(100, length(genes) * 3)
-    
-    interactions <- data.frame(
-      gene_from = sample(genes, n_interactions, replace = TRUE),
-      gene_to = sample(genes, n_interactions, replace = TRUE),
-      combined_score = runif(n_interactions, confidence, 1.0),
-      stringsAsFactors = FALSE
-    ) %>%
-      filter(gene_from != gene_to) %>%
-      distinct(gene_from, gene_to, .keep_all = TRUE)
-    
-    return(interactions)
-  }
   
   # Output renderers for results display
   output$total_nodes_display <- renderText({
@@ -102138,23 +101395,6 @@ document.addEventListener("DOMContentLoaded", function() {
   #' Create mock PPI data for testing when STRING API is unavailable
   create_mock_ppi_data <- function(gene_symbols, n_interactions = 50) {
     stop("Protein-protein interaction data (STRING) could not be retrieved, so no network was built. Please try again later. TransXplorer never substitutes simulated data.")
-    
-    if (length(gene_symbols) < 2) {
-      return(data.frame())
-    }
-    
-    # Create random interactions between genes
-    interactions <- data.frame(
-      gene_from = sample(gene_symbols, n_interactions, replace = TRUE),
-      gene_to = sample(gene_symbols, n_interactions, replace = TRUE),
-      combined_score = runif(n_interactions, 0.4, 0.95),
-      interaction_source = "Mock_STRING",
-      stringsAsFactors = FALSE
-    ) %>%
-      filter(gene_from != gene_to) %>%
-      distinct(gene_from, gene_to, .keep_all = TRUE)
-    
-    return(interactions)
   }
   
   create_empty_ppi_results <- function() {
