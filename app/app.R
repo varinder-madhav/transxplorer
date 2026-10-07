@@ -20715,8 +20715,35 @@ ui <- fluidPage(
     tags$link(rel = "stylesheet", href = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"),
     tags$link(href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Poppins:wght@700;900&display=swap", rel = "stylesheet"),
     tags$script(src = "custom.js"),
-    tags$script(src = "tx-upload.js?v=6"),
-    tags$script(HTML("
+    tags$script(src = "tx-upload.js?v=8"),
+    tags$style(HTML("
+      .tx-source { margin-bottom: 4px; }
+      .tx-source .btn-group-container-sw, .tx-source .btn-group { width: 100%; }
+      .tx-source .btn { font-size: 13px; padding: 8px 4px; white-space: normal; line-height: 1.2;
+        background: #fff; color: #455a64; border-color: #cfd8e3; box-shadow: none; }
+      .tx-source .btn:hover { background: #f1f6fd; }
+      .tx-source .btn.active, .tx-source .btn.active:hover { background: #1565c0; border-color: #1565c0; color: #fff; }
+      .tx-source .btn i { display: block; margin: 0 auto 4px; font-size: 15px; }
+      .tx-source .btn-group-justified, .tx-source .btn-group { display: flex; }
+      .tx-source .btn { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 58px; }
+      .tx-source-hint { font-size: 12.5px; color: #607d8b; margin: 10px 0 14px; line-height: 1.4; }
+      .tx-field-label { font-weight: 600; display: block; margin-bottom: 6px; }
+      .tx-field-help { display: block; margin: -6px 0 10px; line-height: 1.4; }
+      .tx-settings-head { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #1565c0;
+        border-top: 1px solid #e3e8ef; padding-top: 14px; margin-top: 18px; }
+      .tx-detect { margin-top: 12px; border: 1px solid #c8e6c9; background: #f1f8e9; border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+      .tx-detect.has-problem { border-color: #ffcc80; background: #fff8e1; }
+      .tx-detect-title { font-weight: 700; color: #2e7d32; margin-bottom: 4px; }
+      .tx-detect.has-problem .tx-detect-title { color: #8d6e00; }
+      .tx-detect-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid rgba(0,0,0,0.06); }
+      .tx-detect-row .k { color: #607d8b; white-space: nowrap; }
+      .tx-detect-row .v { font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+      .tx-detect-row .v .sub { display: block; font-weight: 400; font-size: 12px; color: #607d8b; }
+      .tx-detect-note { margin-top: 6px; font-size: 12px; color: #8d6e00; line-height: 1.4; }
+      .tx-detect details { margin-top: 6px; }
+      .tx-detect summary { cursor: pointer; color: #1565c0; font-size: 12.5px; }
+    ")),
+tags$script(HTML("
       // Hero 'What's new' pill: scroll to the footer changelog and flash it (the footer is
       // rendered by the server after page load, so wait up to ~15 s for it)
       function txGoToWhatsNew(tries) {
@@ -21708,10 +21735,32 @@ tags$script(HTML("
                    # Analysis Parameters
                    div(class = "parameter-section",
                        h4(icon("sliders-h"), " Analysis Parameters", style = "color: #1565c0; margin-bottom: 1rem;"),
-                       
-                       # File Upload (Server Mode): resumable uploads through tusd (www/tx-upload.js)
+
+                       # Where the reads come from (server mode): one source at a time
                        conditionalPanel(
                          condition = "input.analysis_mode == 'server'",
+                         div(class = "tx-source",
+                             radioGroupButtons(
+                               inputId = "fastq_source", label = NULL, justified = TRUE,
+                               choiceNames = list(tagList(icon("upload"), tags$span("Upload files")),
+                                                  tagList(icon("globe"), tags$span("Public data")),
+                                                  tagList(icon("history"), tags$span("Retrieve a job"))),
+                               choiceValues = c("upload", "public", "retrieve"),
+                               selected = "upload"
+                             ),
+                             div(class = "tx-source-hint",
+                                 conditionalPanel("input.fastq_source == 'upload'",
+                                                  "Upload your own FASTQ files (up to 40 GB in total)."),
+                                 conditionalPanel("input.fastq_source == 'public'",
+                                                  "Analyse SRA/ENA runs by accession. The server downloads them, so nothing is uploaded from your computer."),
+                                 conditionalPanel("input.fastq_source == 'retrieve'",
+                                                  "Every run gets a job ID and keeps running after you close the page. Enter it to load the results."))
+                         )
+                       ),
+
+                       # File Upload (Server Mode): resumable uploads through tusd (www/tx-upload.js)
+                       conditionalPanel(
+                         condition = "input.analysis_mode == 'server' && input.fastq_source == 'upload'",
                          div(class = "tx-upload",
                              id = "fastq-upload-zone",
                              div(id = "tx-uppy",
@@ -21720,7 +21769,40 @@ tags$script(HTML("
                          )
                        ),
 
-                       # Sequencing Type
+                       # Public data (SRA / ENA)
+                       conditionalPanel(
+                         condition = "input.analysis_mode == 'server' && input.fastq_source == 'public'",
+                         div(class = "tx-public",
+                             tags$label("Accessions", class = "tx-field-label"),
+                             textAreaInput("ena_accessions", NULL, rows = 3, placeholder = "SRR1234567, SRR1234568\nor PRJNA123456"),
+                             tags$small(class = "text-muted tx-field-help",
+                                        "Runs (SRR/ERR/DRR), samples, experiments, or a whole study or project (SRP, PRJNA, PRJEB...). ",
+                                        "Up to 100 runs and 200 GB per job."),
+                             actionButton("ena_lookup", "Look up runs", icon = icon("search"), class = "btn btn-primary btn-sm"),
+                             uiOutput("ena_lookup_result")
+                         )
+                       ),
+
+                       # Retrieve a job
+                       conditionalPanel(
+                         condition = "input.analysis_mode == 'server' && input.fastq_source == 'retrieve'",
+                         div(class = "tx-retrieve",
+                             tags$label("Job ID", class = "tx-field-label"),
+                             textInput("fastq_job_id", NULL, placeholder = "job_20261006_142501_ab12cd34"),
+                             actionButton("fastq_retrieve_job", "Retrieve results", icon = icon("download"), class = "btn btn-primary btn-sm"),
+                             tags$small(class = "text-muted tx-field-help", style = "margin-top: 8px;",
+                                        "Results open in the panels on the right and can be downloaded below.")
+                         )
+                       ),
+
+                       # Settings shared by uploads, public data and the Docker script
+                       conditionalPanel(
+                         condition = "input.analysis_mode == 'docker' || input.fastq_source != 'retrieve'",
+                         div(class = "tx-settings-head", "Settings"),
+
+                       # Sequencing Type (uploads and Docker only; public runs carry their own layout)
+                       conditionalPanel(
+                         condition = "input.analysis_mode == 'docker' || input.fastq_source == 'upload'",
                        div(
                          style = "margin: 1rem 0;",
                          tags$label("Sequencing Type:", style = "font-weight: 600; margin-bottom: 0.5rem; display: block;"),
@@ -21735,8 +21817,8 @@ tags$script(HTML("
                            selected = "paired",
                            inline = TRUE
                          )
-                       ),
-                       
+                       )),
+
                        # Quantification Method
                        div(style = "margin: 1rem 0;",
                            tags$label("Quantification Method:", style = "font-weight: 600; margin-bottom: 0.5rem; display: block;"),
@@ -21788,11 +21870,12 @@ tags$script(HTML("
                              ),
                              selected = "hg38"
                            )
+                       )
                        ),
-                       
+
                        # Custom Genome Options
                        conditionalPanel(
-                         condition = "input.genome_build == 'custom' && input.analysis_mode == 'server'",
+                         condition = "input.genome_build == 'custom' && input.analysis_mode == 'server' && input.fastq_source != 'retrieve'",
                          div(class = "feature-highlight",
                              h5(icon("upload"), " Custom Genome Files"),
                              fileInput("custom_genome",
@@ -22123,31 +22206,16 @@ tags$script(HTML("
                    ),
                    
                    
-                   # Run Analysis Button (Server Mode)
+                   # Start button (server mode), one per source
                    conditionalPanel(
-                     condition = "input.analysis_mode == 'server'",
-                     div(style = "margin-top: 1.5rem;",
-                         uiOutput("run_button_ui")
-                     ),
-                     div(style = "margin-top: 1rem; padding: 10px; background: #f5f7fb; border-radius: 6px;",
-                         tags$label("Or analyse public data (SRA / ENA)", style = "font-weight: 600;"),
-                         tags$small(class = "text-muted", style = "display: block; margin-bottom: 6px;",
-                                    "Enter run accessions (SRR, ERR, DRR) or a project/study (PRJNA, PRJEB, SRP...). ",
-                                    "The server downloads each run itself, so nothing is uploaded from your computer. ",
-                                    "Choose the reference genome and quantification method above."),
-                         textAreaInput("ena_accessions", NULL, rows = 3, placeholder = "SRR1234567, SRR1234568\nor PRJNA123456"),
-                         actionButton("ena_lookup", "Look up runs", icon = icon("search"), class = "btn btn-default btn-sm"),
-                         uiOutput("ena_lookup_result")
-                     ),
-                     div(style = "margin-top: 1rem; padding: 10px; background: #f5f7fb; border-radius: 6px;",
-                         tags$label("Retrieve results by job ID", style = "font-weight: 600;"),
-                         tags$small(class = "text-muted", style = "display: block; margin-bottom: 6px;",
-                                    "Every run gets a job ID and keeps running if you close the page."),
-                         textInput("fastq_job_id", NULL, placeholder = "job_20261006_142501_ab12cd34"),
-                         actionButton("fastq_retrieve_job", "Retrieve", icon = icon("download"), class = "btn btn-default btn-sm")
-                     )
+                     condition = "input.analysis_mode == 'server' && input.fastq_source == 'upload'",
+                     div(style = "margin-top: 1.5rem;", uiOutput("run_button_ui"))
                    ),
-                   
+                   conditionalPanel(
+                     condition = "input.analysis_mode == 'server' && input.fastq_source == 'public'",
+                     div(style = "margin-top: 1.5rem;", uiOutput("ena_run_button"))
+                   ),
+
                    # Download Results
                    conditionalPanel(
                      condition = "input.analysis_mode == 'server'",
@@ -47771,6 +47839,10 @@ errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
                     error = function(e) e)
     if (inherits(res, "error")) { showNotification(conditionMessage(res), type = "error", duration = 10); return() }
     tx_remote_runs(res)
+    # Pick the reference genome from the runs' organism when it is one of the built-in genomes
+    sp <- unique(res$scientific_name)
+    hit <- names(tx_genome_species)[tx_genome_species %in% sp]
+    if (length(sp) == 1 && length(hit) == 1) updateSelectInput(session, "genome_build", selected = hit)
   })
   tx_validate_remote <- function() {
     rr <- tx_remote_runs(); errs <- character(0)
@@ -47787,32 +47859,70 @@ errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
       errs <- c(errs, "Custom genome requires both FASTA and GTF files")
     errs
   }
+  tx_genome_labels <- c(hg38 = "Human (hg38)", mm10 = "Mouse (mm10)", rn6 = "Rat (rn6)", dm6 = "Drosophila (dm6)",
+                        danRer11 = "Zebrafish (danRer11)", wbcel235 = "C. elegans (wbcel235)", r64 = "Yeast (r64)",
+                        araTha = "Arabidopsis (araTha)", galGal6 = "Chicken (galGal6)", susScr11 = "Pig (susScr11)",
+                        custom = "Custom genome")
   output$ena_lookup_result <- renderUI({
     rr <- tx_remote_runs(); req(rr)
     gb <- sum(rr$total_bytes) / 1024^3
     species <- unique(rr$scientific_name)
-    expected <- tx_genome_species[input$genome_build %||% ""]
-    warn <- c(
-      if (!is.na(expected) && !all(species == expected))
-        sprintf("These runs are from %s, but the selected genome is %s.", paste(species, collapse = ", "), expected),
+    layouts <- unique(rr$library_layout)
+    gsel <- input$genome_build %||% ""
+    expected <- tx_genome_species[gsel]
+    supported <- names(tx_genome_species)[tx_genome_species %in% species]
+    ok_icon <- function(ok) if (ok) icon("check-circle", class = "ok", style = "color:#2e7d32;") else icon("exclamation-triangle", style = "color:#e65100;")
+    organism_ok <- length(species) == 1 && (identical(gsel, "custom") || (!is.na(expected) && expected == species))
+    layout_ok <- length(layouts) == 1
+    genome_sub <- if (length(species) > 1) "Several organisms: analyse each in its own job"
+                  else if (identical(gsel, "custom")) "Custom genome: upload its FASTA and GTF below"
+                  else if (!is.na(expected) && expected == species) "Selected automatically from the organism"
+                  else if (length(supported) == 0) "Not a built-in genome: choose Custom genome and upload its FASTA and GTF"
+                  else sprintf("Does not match %s: change the reference genome below", species)
+    notes <- c(
       if (any(rr$library_strategy != "RNA-Seq")) "Some runs are not RNA-Seq.",
       if (length(attr(rr, "invalid"))) paste("Ignored invalid entries:", paste(attr(rr, "invalid"), collapse = ", ")),
-      tx_validate_remote()
+      setdiff(tx_validate_remote(), if (!layout_ok) "The runs mix single-end and paired-end data; analyse them in separate jobs.")
     )
-    tagList(
-      tags$p(style = "margin: 8px 0 4px 0;", sprintf("%d runs \u00b7 %s \u00b7 %.1f GB to download \u00b7 %s",
-                                                     nrow(rr), paste(unique(rr$library_layout), collapse = "/"), gb, paste(species, collapse = ", "))),
-      tags$div(style = "max-height: 180px; overflow-y: auto; font-size: 12px;",
-               tags$table(class = "table table-condensed",
-                          tags$thead(tags$tr(tags$th("Run"), tags$th("Sample"), tags$th("GB"))),
-                          tags$tbody(lapply(seq_len(nrow(rr)), function(i) tags$tr(
-                            tags$td(rr$run_accession[i]), tags$td(substr(rr$sample_title[i], 1, 40)),
-                            tags$td(sprintf("%.2f", rr$total_bytes[i] / 1024^3))))))),
-      if (length(warn)) tags$div(class = "alert alert-warning", style = "padding: 6px 10px; font-size: 12px;", HTML(paste(warn, collapse = "<br>"))),
-      downloadButton("ena_run_table", "Run table (CSV)", class = "btn btn-default btn-xs"),
-      actionButton("run_processing_ena", sprintf("Start analysis of %d runs", nrow(rr)), icon = icon("play"),
-                   class = "btn btn-primary btn-sm", style = "margin-left: 6px;")
+    problem <- !organism_ok || !layout_ok || length(notes) > 0
+    row <- function(k, v, sub = NULL, ok = NULL)
+      div(class = "tx-detect-row", span(class = "k", k),
+          span(class = "v", if (!is.null(ok)) ok_icon(ok), " ", v, if (!is.null(sub)) span(class = "sub", sub)))
+    div(class = paste("tx-detect", if (problem) "has-problem"),
+        div(class = "tx-detect-title", icon(if (problem) "exclamation-circle" else "check-circle"),
+            if (problem) " Found runs: check the points below" else " Ready to analyse"),
+        row("Runs", sprintf("%d run%s", nrow(rr), if (nrow(rr) == 1) "" else "s")),
+        row("Organism", paste(species, collapse = ", "), ok = length(species) == 1),
+        row("Genome", tx_genome_labels[[gsel]] %||% gsel, sub = genome_sub, ok = organism_ok),
+        row("Library", if (layout_ok) paste0(tools::toTitleCase(tolower(layouts)), "-end") else "Single- and paired-end mixed",
+            sub = if (layout_ok) "Detected from the run metadata" else "Analyse them in separate jobs", ok = layout_ok),
+        row("Download", sprintf("%.1f GB", gb)),
+        if (length(notes)) div(class = "tx-detect-note", HTML(paste(notes, collapse = "<br>"))),
+        tags$details(
+          tags$summary("Show runs"),
+          tags$div(style = "max-height: 180px; overflow-y: auto; font-size: 12px; margin-top: 6px;",
+                   tags$table(class = "table table-condensed",
+                              tags$thead(tags$tr(tags$th("Run"), tags$th("Sample"), tags$th("GB"))),
+                              tags$tbody(lapply(seq_len(nrow(rr)), function(i) tags$tr(
+                                tags$td(rr$run_accession[i]), tags$td(substr(rr$sample_title[i], 1, 40)),
+                                tags$td(sprintf("%.2f", rr$total_bytes[i] / 1024^3))))))),
+          downloadButton("ena_run_table", "Run table (CSV)", class = "btn btn-default btn-xs")
+        )
     )
+  })
+  output$ena_run_button <- renderUI({
+    rr <- tx_remote_runs()
+    style <- "width: 100%; font-size: 1.1rem; padding: 1rem;"
+    if (is.null(rr)) return(actionButton("run_processing_ena", "⏳ Look up runs first", class = "btn-secondary", style = style, disabled = TRUE))
+    species <- unique(rr$scientific_name)
+    gsel <- input$genome_build %||% ""
+    genome_ok <- length(species) == 1 && (identical(gsel, "custom") || identical(unname(tx_genome_species[gsel]), species))
+    ready <- genome_ok && length(tx_validate_remote()) == 0
+    actionButton("run_processing_ena",
+                 if (ready) sprintf("🚀 Start Analysis (%d run%s, %.1f GB)", nrow(rr), if (nrow(rr) == 1) "" else "s", sum(rr$total_bytes) / 1024^3)
+                 else "⚠️ Resolve the points above to start",
+                 class = if (ready) "btn-enhanced" else "btn-secondary", style = style,
+                 disabled = !ready, onclick = if (ready) "txRunPressed(this)")
   })
   output$ena_run_table <- downloadHandler(
     filename = function() paste0("public_runs_", Sys.Date(), ".csv"),
@@ -48013,7 +48123,8 @@ genome = input$genome_build,
 
     # Re-enable button
     shinyjs::enable("run_processing")
-    shinyjs::runjs("
+    shinyjs::runjs("txRunRestore()")
+shinyjs::runjs("
       var btn = document.getElementById('run_processing');
       if (btn && btn.dataset.originalHtml) {
         btn.innerHTML = btn.dataset.originalHtml;

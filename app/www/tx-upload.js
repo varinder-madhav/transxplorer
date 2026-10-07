@@ -37,12 +37,14 @@
     setTimeout(function () { btn.disabled = true; }, 0);
   };
   window.txRunRestore = function () {
-    var btn = document.getElementById('run_processing');
-    if (!btn || !btn.dataset.originalHtml) return;
-    btn.innerHTML = btn.dataset.originalHtml;
-    delete btn.dataset.originalHtml;
-    btn.classList.remove('btn-disabled-running');
-    btn.disabled = false;
+    ['run_processing', 'run_processing_ena'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (!btn || !btn.dataset.originalHtml) return;
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+      btn.classList.remove('btn-disabled-running');
+      btn.disabled = false;
+    });
   };
 
   function endpoint() {
@@ -111,6 +113,7 @@
   function build(U) {
     var target = document.getElementById('tx-uppy');
     if (!target || uppy) return;
+    target.innerHTML = '';   // drop the "Preparing upload..." placeholder
 
     uppy = new U.Uppy({
       id: 'tx-fastq',
@@ -133,7 +136,7 @@
       inline: true,
       target: target,
       width: '100%',
-      height: 320,
+      height: 260,
       showProgressDetails: true,
       proudlyDisplayPoweredByUppy: false,
       hideCancelButton: false,
