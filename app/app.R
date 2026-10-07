@@ -1,3 +1,8 @@
+# The app code runs uncompiled. With R's JIT on, the second visitor to a fresh R
+# process triggers byte-compilation of the whole server() function (~86k lines),
+# which blocks every session for ~90 s. Packages are pre-compiled and unaffected.
+invisible(compiler::enableJIT(0))
+
 # Load R packages - OPTIMIZED VERSION
 # Core Shiny Framework 
 library(shiny)
