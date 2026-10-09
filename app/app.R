@@ -20572,7 +20572,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-09", tag = "Fixed",    text = "TCGA: re-sequenced duplicate tumour samples (e.g. 89 in GBM) are counted once in differential expression and box plots; cohorts with fewer than 3 normal samples are no longer tested against normals, and cohorts without normals say what is compared; MA plots show the tested comparison."),
+  list(date = "2026-10-09", tag = "Fixed",    text = "Differential expression: normalised or log-scale data (microarray, TPM, FPKM, RPKM) is now analysed with limma on log2 expression instead of being rounded into counts; a detected batch variable is matched to samples by name and kept in the model whenever it can be estimated; pairwise comparisons work again."),
+list(date = "2026-10-09", tag = "Fixed",    text = "TCGA: re-sequenced duplicate tumour samples (e.g. 89 in GBM) are counted once in differential expression and box plots; cohorts with fewer than 3 normal samples are no longer tested against normals, and cohorts without normals say what is compared; MA plots show the tested comparison."),
 list(date = "2026-10-09", tag = "Fixed",    text = "FASTQ jobs: queued jobs now start on their own even if you close the page, a job that stops unexpectedly frees its slot at once, and three jobs can run at the same time. Salmon now reports gene-level counts, count tables name each column by sample, and public downloads are checked against ENA's checksums."),
 list(date = "2026-10-06", tag = "New",      text = "Resumable FASTQ uploads: large files upload in chunks, continue automatically after a dropped connection, and stay on the server for 3 days so you can reload the page or come back later before starting."),
 list(date = "2026-10-06", tag = "New",      text = "Analyse public RNA-seq data by SRA/ENA accession: the server downloads each run itself (up to 200 GB per job). Uploads can now be up to 40 GB, and samples are processed one at a time to keep disk use low."),
@@ -30375,6 +30376,21 @@ tx_queue_tick <- function() {
   later::later(tx_queue_tick, 10)
 }
 later::later(tx_queue_tick, 5)
+
+# What an uploaded expression matrix holds: "counts" (raw or expected read counts), "log"
+# (log-scale expression, e.g. microarray) or "linear" (normalised: TPM, FPKM, RPKM, CPM).
+# Expected counts (RSEM, Salmon) are non-integer but rarely between 0 and 1; normalised
+# values of lowly expressed genes very often are.
+tx_expression_scale <- function(m) {
+  v <- as.numeric(as.matrix(m))
+  v <- v[is.finite(v)]
+  if (length(v) > 2e5) v <- v[round(seq(1, length(v), length.out = 2e5))]
+  if (length(v) == 0) return("counts")
+  if (any(v < 0)) return("log")
+  if (mean(v == round(v)) > 0.99) return("counts")
+  if (max(v) <= 30) return("log")
+  if (mean(v > 0 & v < 1) > 0.15) "linear" else "counts"
+}
 
 .tx_enrichr_mem <- new.env(parent = emptyenv())
 # Enrichr renamed some libraries; map names used in the app to the published ones
@@ -52560,8 +52576,8 @@ document.addEventListener("DOMContentLoaded", function() {
           showNotification(
             HTML(paste0(
               "<strong>Note:</strong> This appears to be microarray data (log2-transformed). ",
-              "TransXplorer's DEG analysis works with both RNA-seq counts and microarray data. ",
-              "For microarray data, <strong>limma</strong> is recommended as the analysis method."
+              "DEG analysis will use <strong>limma on the log2 values</strong> (limma-trend), ",
+              "whichever method is selected: edgeR, DESeq2 and limma-voom are for raw RNA-seq counts."
             )),
             type = "warning", duration = 12
           )
@@ -56992,7 +57008,50 @@ document.addEventListener("DOMContentLoaded", function() {
     if (isolate(input$comparison_method_main) == "specific") {
       req(input$reference_group_main_specific, input$treatment_group_main_specific)
     }
-    
+
+    # edgeR, DESeq2 and limma-voom model raw read counts. Normalised or log-scale values are
+    # analysed with limma on log2 expression instead (rounding them into "counts" is invalid).
+    data_scale <- tx_expression_scale(rv_deg_main$raw_counts)
+    deg_engine <- if (data_scale == "counts") input$deg_package_main else "limma"
+    rv_deg_main$deg_method_used <- if (data_scale == "counts") input$deg_package_main else "limma-trend (log2 expression)"
+    if (data_scale != "counts") {
+      showNotification(HTML(paste0(
+        "<strong>These values are not raw read counts</strong> (they look like ",
+        if (data_scale == "log") "log-scale expression, e.g. microarray" else "normalised expression such as TPM, FPKM or RPKM",
+        "). edgeR, DESeq2 and limma-voom need raw counts, so this analysis uses <strong>limma on log2 expression</strong> ",
+        "(limma-trend). For count-based analysis, upload raw counts.")), type = "warning", duration = 20)
+    }
+
+    # Batch labels for the given samples, matched by sample name: the detected batch variable,
+    # or a "batch" column in the metadata
+    tx_batch_values <- function(sample_names) {
+      sg <- rv_deg_main$sample_groups
+      bd <- rv_deg_main$batch_detection_results
+      col <- if (isTRUE(bd$has_batch) && !is.null(bd$recommended_batch)) bd$recommended_batch
+             else if (!is.null(sg) && "batch" %in% colnames(sg)) "batch" else NULL
+      if (is.null(col) || is.null(sg) || !col %in% colnames(sg)) return(NULL)
+      list(name = col, values = sg[[col]][match(sample_names, sg$sample)])
+    }
+    # A batch term can be fitted alongside the groups unless it is fully confounded with them
+    tx_batch_estimable <- function(batch_factor, groups) {
+      if (anyNA(batch_factor) || nlevels(batch_factor) < 2) return(FALSE)
+      X <- model.matrix(~ batch_factor + groups)
+      qr(X)$rank == ncol(X)
+    }
+    tx_add_batch <- function(sample_names, groups) {
+      bt <- tx_batch_values(sample_names)
+      if (is.null(bt)) return(NULL)
+      bf <- factor(bt$values)
+      if (tx_batch_estimable(bf, groups)) {
+        showNotification(paste0("Including '", bt$name, "' in the DEG model (", nlevels(bf), " batches)."), type = "message", duration = 6)
+        return(bf)
+      }
+      showNotification(paste0("The batch variable '", bt$name, "' could not be included: it is fully confounded with the groups ",
+                              "compared (or missing for some samples), so batch and group effects cannot be separated. ",
+                              "These results are not batch-adjusted."), type = "warning", duration = 15)
+      NULL
+    }
+
     shinyjs::show("analysis_progress_main")
     progress_text_id <- "analysis_progress_main"
     
@@ -57020,11 +57079,11 @@ document.addEventListener("DOMContentLoaded", function() {
       deg_trace("main#2 entered tryCatch")
       # Step 1: Normalize data
       update_progress("Step 1/5: Normalizing data...", 20)
-      deg_trace("Step1 start | deg_package=", as.character(input$deg_package_main),
+      deg_trace("Step1 start | deg_package=", as.character(deg_engine),
                 "| norm=", as.character(input$normalization_method_main))
 
       norm_data_for_limma <- NULL
-      if (input$deg_package_main == "limma") {
+      if (deg_engine == "limma") {
         deg_trace("Step1 calling normalizeData()")
         norm_data_for_limma <- normalizeData(rv_deg_main$raw_counts, input$normalization_method_main)
         deg_trace("Step1 normalizeData returned | dim=",
@@ -57103,7 +57162,7 @@ document.addEventListener("DOMContentLoaded", function() {
       rv_deg_main$has_multiple_comparisons <- FALSE # Reset flag
 
       update_progress("Step 4/5: Running differential expression analysis...", 80)
-      deg_trace("Step4 start | engine=", as.character(input$deg_package_main))
+      deg_trace("Step4 start | engine=", as.character(deg_engine))
       
       # ========================================================================
       # MODIFIED DESIGN MATRIX AND CONTRAST LOGIC WITH BATCH SUPPORT
@@ -57166,57 +57225,12 @@ document.addEventListener("DOMContentLoaded", function() {
           row.names = colnames(counts_for_deg)
         )
         
-        # Check if batch exists for these samples
-        batch_col_name <- NULL
-        
-        # Determine which batch column to use
-        if (!is.null(rv_deg_main$batch_detection_results) && 
-            rv_deg_main$batch_detection_results$has_batch) {
-          # Use automatically detected batch column
-          batch_col_name <- rv_deg_main$batch_detection_results$recommended_batch
-          print(paste("✅ DEG will use automatically detected batch column:", batch_col_name))
-        } else if ("batch" %in% colnames(rv_deg_main$sample_groups)) {
-          # Use manually specified batch column
-          batch_col_name <- "batch"
-          print("✅ DEG will use manually specified batch column")
-        }
-        
-        # Apply batch if detected
-        if (!is.null(batch_col_name) && batch_col_name %in% colnames(rv_deg_main$sample_groups)) {
-          # Extract batch info for the subset of samples
-          batch_vector <- rv_deg_main$sample_groups[[batch_col_name]][samples_to_keep_idx]
-          batch_factor <- factor(batch_vector)
-          
-          # Check if batch is confounded with condition
-          batch_condition_table <- table(batch_factor, current_groups_factor)
-          print("Batch-Condition contingency table:")
-          print(batch_condition_table)
-          
-          # Warn if batch is completely confounded
-          if (any(rowSums(batch_condition_table > 0) == 1) || 
-              any(colSums(batch_condition_table > 0) == 1)) {
-            showNotification(
-              "⚠️ Warning: Batch variable is confounded with condition. Batch correction may not be possible.",
-              type = "warning", duration = 10
-            )
-            use_batch <- FALSE
-          } else {
-            use_batch <- TRUE
-            col_data_df$batch <- batch_factor
-            
-            showNotification(
-              paste("✅ Including", batch_col_name, "in DEG model:",
-                    length(unique(batch_factor)), "batches detected"),
-              type = "message", duration = 5
-            )
-          }
-        } else {
-          use_batch <- FALSE
-          print("ℹ️ No batch variable available for DEG analysis")
-        }
-        
+        batch_factor <- tx_add_batch(colnames(counts_for_deg), current_groups_factor)
+        use_batch <- !is.null(batch_factor)
+        if (use_batch) col_data_df$batch <- batch_factor
+
         # Create design matrix/formula based on package and batch
-        if (input$deg_package_main == "deseq2") {
+        if (deg_engine == "deseq2") {
           # DESeq2 uses formula
           if (use_batch) {
             design_formula <- ~ batch + condition
@@ -57252,11 +57266,11 @@ document.addEventListener("DOMContentLoaded", function() {
         deg_result_df_single <- run_single_deg_analysis(
           counts_data = counts_for_deg,
           normalized_data = norm_data_for_limma[, samples_to_keep_idx, drop=FALSE],
-          design_matrix = if (input$deg_package_main != "deseq2") design else NULL,
+          design_matrix = if (deg_engine != "deseq2") design else NULL,
           col_data_df = col_data_df,
-          design_formula = if (input$deg_package_main == "deseq2") design_formula else ~ condition,
+          design_formula = if (deg_engine == "deseq2") design_formula else ~ condition,
           contrast_def = contrast_definition,
-          deg_package = input$deg_package_main,
+          deg_package = deg_engine, data_scale = data_scale,
           ref_group = ref_group,
           treat_group = treat_group
         )
@@ -57374,54 +57388,11 @@ document.addEventListener("DOMContentLoaded", function() {
           row.names = colnames(counts_for_deg)
         )
         
-        batch_col_name <- NULL
+        batch_factor <- tx_add_batch(colnames(counts_for_deg), current_groups_factor)
+        use_batch <- !is.null(batch_factor)
+        if (use_batch) col_data_df$batch <- batch_factor
         
-        # Determine which batch column to use
-        if (!is.null(rv_deg_main$batch_detection_results) && 
-            rv_deg_main$batch_detection_results$has_batch) {
-          batch_col_name <- rv_deg_main$batch_detection_results$recommended_batch
-          print(paste("✅ Pairwise DEG will use automatically detected batch column:", batch_col_name))
-        } else if ("batch" %in% colnames(rv_deg_main$sample_groups)) {
-          batch_col_name <- "batch"
-          print("✅ Pairwise DEG will use manually specified batch column")
-        }
-        
-        if (!is.null(batch_col_name) && batch_col_name %in% colnames(rv_deg_main$sample_groups)) {
-          # Extract batch info for the SUBSET of samples (specific comparison)
-          # Match sample order to counts_for_deg columns
-          sample_indices <- match(colnames(counts_for_deg), rv_deg_main$sample_groups$sample)
-          batch_vector <- rv_deg_main$sample_groups[[batch_col_name]][sample_indices]
-          batch_factor <- factor(batch_vector)
-          
-          # Check if batch is confounded with condition
-          batch_condition_table <- table(batch_factor, current_groups_factor)
-          print("Batch-Condition contingency table (specific comparison):")
-          print(batch_condition_table)
-          
-          # Warn if batch is completely confounded
-          if (any(rowSums(batch_condition_table > 0) == 1) || 
-              any(colSums(batch_condition_table > 0) == 1)) {
-            showNotification(
-              "Warning: Batch variable may be confounded with condition.",
-              type = "warning", duration = 10
-            )
-            use_batch <- FALSE
-          } else {
-            col_data_df$batch <- batch_factor
-            use_batch <- TRUE
-            
-            showNotification(
-              paste("Including", batch_col_name, "in specific comparison:",
-                    length(unique(batch_factor)), "batches"),
-              type = "message", duration = 5
-            )
-          }
-        } else {
-          use_batch <- FALSE
-          print("No batch variable available for specific DEG analysis")
-        }
-        
-        if (input$deg_package_main == "deseq2") {
+        if (deg_engine == "deseq2") {
           design_formula <- if (use_batch) ~ batch + condition else ~ condition
           contrast_definition <- list(
             type = "contrast_vector", 
@@ -57444,11 +57415,11 @@ document.addEventListener("DOMContentLoaded", function() {
         deg_result_df_single <- run_single_deg_analysis(
           counts_data = counts_for_deg,
           normalized_data = norm_data_for_limma[, samples_to_keep_idx, drop=FALSE],
-          design_matrix = if (input$deg_package_main != "deseq2") design else NULL,
+          design_matrix = if (deg_engine != "deseq2") design else NULL,
           col_data_df = col_data_df,
-          design_formula = if (input$deg_package_main == "deseq2") design_formula else ~ condition,
+          design_formula = if (deg_engine == "deseq2") design_formula else ~ condition,
           contrast_def = contrast_definition,
-          deg_package = input$deg_package_main,
+          deg_package = deg_engine, data_scale = data_scale,
           ref_group = ref_group,
           treat_group = treat_group
         )
@@ -57478,25 +57449,12 @@ document.addEventListener("DOMContentLoaded", function() {
           row.names = colnames(rv_deg_main$raw_counts)
         )
         
-        if (has_batch) {
-          # Use all samples' batch info
-          batch_vector_full <- rv_deg_main$sample_groups$batch
-          batch_factor_full <- factor(batch_vector_full)
-          
-          col_data_df_full$batch <- batch_factor_full
-          use_batch <- TRUE
-          
-          showNotification(
-            paste("✅ Including batch in pairwise comparisons:",
-                  length(unique(batch_factor_full)), "batches"),
-            type = "message", duration = 5
-          )
-        } else {
-          use_batch <- FALSE
-        }
+        batch_factor_full <- tx_add_batch(colnames(rv_deg_main$raw_counts), full_group_factor)
+        use_batch <- !is.null(batch_factor_full)
+        if (use_batch) col_data_df_full$batch <- batch_factor_full
         # ====================================================================
         
-        if (input$deg_package_main == "edgeR" || input$deg_package_main == "limma") {
+        if (deg_engine == "edgeR" || deg_engine == "limma") {
           
           # Design matrix for edgeR/limma pairwise
           if (use_batch) {
@@ -57507,7 +57465,8 @@ document.addEventListener("DOMContentLoaded", function() {
             print("Pairwise design (edgeR/limma): ~0 + condition")
           }
           colnames(design_pairwise) <- make.names(colnames(design_pairwise))
-          
+          colnames(design_pairwise)[seq_len(nlevels(full_group_factor))] <- make.names(levels(full_group_factor))
+
           # Generate all pairwise contrasts
           contrast_pairs <- combn(levels(full_group_factor), 2, simplify = FALSE)
           
@@ -57515,9 +57474,9 @@ document.addEventListener("DOMContentLoaded", function() {
             ref_group_pair <- pair[1]
             treat_group_pair <- pair[2]
             comparison_name <- paste(treat_group_pair, "vs", ref_group_pair)
-            shinyjs::html(progress_text_id, paste("Running", input$deg_package_main, "for", comparison_name, "..."))
+            shinyjs::html(progress_text_id, paste("Running", deg_engine, "for", comparison_name, "..."))
             
-            contrast_formula <- paste(treat_group_pair, ref_group_pair, sep="-")
+            contrast_formula <- paste(make.names(treat_group_pair), make.names(ref_group_pair), sep = "-")
             myCont.matrix <- limma::makeContrasts(contrasts=c(contrast_formula), levels=design_pairwise)
             
             deg_pairwise_result <- run_single_deg_analysis(
@@ -57527,7 +57486,7 @@ document.addEventListener("DOMContentLoaded", function() {
               col_data_df = col_data_df_full,
               design_formula = ~condition,
               contrast_def = list(type = "contrast_matrix", value = myCont.matrix),
-              deg_package = input$deg_package_main,
+              deg_package = deg_engine, data_scale = data_scale,
               ref_group = ref_group_pair,
               treat_group = treat_group_pair
             )
@@ -57536,7 +57495,7 @@ document.addEventListener("DOMContentLoaded", function() {
             comparison_names_list <- c(comparison_names_list, comparison_name)
           }
           
-        } else if (input$deg_package_main == "deseq2") {
+        } else if (deg_engine == "deseq2") {
           shinyjs::html(progress_text_id, "Running DESeq2 (full model)...")
           
           # Design formula for DESeq2 pairwise
@@ -57645,13 +57604,39 @@ document.addEventListener("DOMContentLoaded", function() {
                                       col_data_df,   # Pass colData for DESeq2 (e.g., data.frame(condition=group_factor))
                                       design_formula, # Pass formula for DESeq2 (e.g., ~condition)
                                       contrast_def, deg_package,
-                                      ref_group = NULL, treat_group = NULL) {
+                                      ref_group = NULL, treat_group = NULL, data_scale = "counts") {
     deg_trace("run_single_deg_analysis entry | engine=", deg_package,
               "| counts_dim=", paste(dim(counts_data), collapse = "x"),
               "| design_dim=", paste(dim(design_matrix), collapse = "x"),
               "| contrast_type=", as.character(contrast_def$type %||% "NA"))
 
     results_df <- NULL
+
+    # Normalised or log-scale values (microarray, TPM/FPKM/RPKM): count models do not apply.
+    # limma on log2 expression with an intensity-dependent prior variance (limma-trend).
+    if (!identical(data_scale, "counts")) {
+      E <- as.matrix(counts_data)
+      if (identical(data_scale, "linear")) E <- log2(pmax(E, 0) + 1)
+      keep <- rowSums(is.finite(E)) == ncol(E)
+      keep[keep] <- apply(E[keep, , drop = FALSE], 1, var) > 0
+      if (identical(data_scale, "linear")) keep <- keep & rowSums(E >= 1) >= min(3, ncol(E) / 2)  # value >= 1 in enough samples
+      E <- E[keep, , drop = FALSE]
+      print(paste("limma-trend on log2 expression:", nrow(E), "genes kept"))
+      if (nrow(E) < 10) stop("Too few genes with varying expression remain for the analysis.")
+      fit <- limma::lmFit(E, design_matrix)
+      if (contrast_def$type == "coef") {
+        fit <- limma::eBayes(fit, trend = TRUE, robust = TRUE)
+        results_df <- limma::topTable(fit, coef = contrast_def$value, number = Inf, sort.by = "none")
+      } else if (contrast_def$type == "contrast_matrix") {
+        fit <- limma::eBayes(limma::contrasts.fit(fit, contrasts = contrast_def$value), trend = TRUE, robust = TRUE)
+        results_df <- limma::topTable(fit, coef = 1, number = Inf, sort.by = "none")
+      } else {
+        stop("Unsupported contrast type for limma")
+      }
+      names(results_df)[names(results_df) == "logFC"] <- "log2FC"
+      results_df$gene_id <- rownames(results_df)
+      return(results_df)
+    }
 
     # ✅ STEP 1: Create counts_data_processed FIRST
     counts_data_processed <- round(pmax(as.matrix(counts_data), 0))
