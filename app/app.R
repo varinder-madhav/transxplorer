@@ -20572,7 +20572,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-09", tag = "Fixed",    text = "Differential expression: normalised or log-scale data (microarray, TPM, FPKM, RPKM) is now analysed with limma on log2 expression instead of being rounded into counts; a detected batch variable is matched to samples by name and kept in the model whenever it can be estimated; pairwise comparisons work again."),
+  list(date = "2026-10-09", tag = "Fixed",    text = "Enrichment: only gene-set libraries that exist are offered, and non-mammal species are sent to the multi-species GO/KEGG enrichment; ORA accepts a background gene list, filled with all tested genes when DEGs are sent from Transcriptome Analysis; Hallmark ORA works; a names-only GSEA list runs as classic (unweighted) GSEA."),
+list(date = "2026-10-09", tag = "Fixed",    text = "Differential expression: normalised or log-scale data (microarray, TPM, FPKM, RPKM) is now analysed with limma on log2 expression instead of being rounded into counts; a detected batch variable is matched to samples by name and kept in the model whenever it can be estimated; pairwise comparisons work again."),
 list(date = "2026-10-09", tag = "Fixed",    text = "TCGA: re-sequenced duplicate tumour samples (e.g. 89 in GBM) are counted once in differential expression and box plots; cohorts with fewer than 3 normal samples are no longer tested against normals, and cohorts without normals say what is compared; MA plots show the tested comparison."),
 list(date = "2026-10-09", tag = "Fixed",    text = "FASTQ jobs: queued jobs now start on their own even if you close the page, a job that stops unexpectedly frees its slot at once, and three jobs can run at the same time. Salmon now reports gene-level counts, count tables name each column by sample, and public downloads are checked against ENA's checksums."),
 list(date = "2026-10-06", tag = "New",      text = "Resumable FASTQ uploads: large files upload in chunks, continue automatically after a dropped connection, and stay on the server for 3 days so you can reload the page or come back later before starting."),
@@ -29107,6 +29108,12 @@ tags$script(HTML("
                        uiOutput("ora_cluster_selection")
                      ),
                      
+                     textAreaInput("ora_background_list",
+                                   "Background genes (optional): all genes measured in your experiment",
+                                   rows = 3, placeholder = "Leave empty to use all annotated genes"),
+                     p(style = "color: #888; margin-top: -6px; font-size: 0.9em;", icon("info-circle"),
+                       " Filled automatically when DEGs are sent here from Transcriptome Analysis."),
+
                      # Gene count display
                      uiOutput("ora_gene_count_display")
                    )
@@ -30391,6 +30398,17 @@ tx_expression_scale <- function(m) {
   if (max(v) <= 30) return("log")
   if (mean(v > 0 & v < 1) > 0.15) "linear" else "counts"
 }
+
+# Enrichr libraries offered in Transcriptome > Pathway Enrichment that exist (each verified by
+# download, 2026-10-09). Enrichr's libraries are built on human (and some mouse) gene symbols,
+# so they are offered for mammals only; other species use the Enrichment Analysis tab, which
+# runs GO/KEGG from each species' own annotation.
+TX_ENRICHR_VERIFIED <- c("GO_Biological_Process_2023", "GO_Molecular_Function_2023", "GO_Cellular_Component_2023",
+  "KEGG_2021_Human", "KEGG_2021_Mouse", "Reactome_2022", "Reactome_Pathways_2024", "WikiPathways_2024_Human",
+  "WikiPathways_2024_Mouse", "MSigDB_Hallmark_2020", "BioCarta_2016", "BioPlanet_2019", "Panther_2016",
+  "DisGeNET", "OMIM_Disease", "OMIM_Expanded", "Human_Phenotype_Ontology", "MGI_Mammalian_Phenotype_Level_4_2019",
+  "Mouse_Gene_Atlas")
+TX_ENRICHR_MAMMALS <- c("human", "mouse", "rat", "pig", "bovine")
 
 .tx_enrichr_mem <- new.env(parent = emptyenv())
 # Enrichr renamed some libraries; map names used in the app to the published ones
@@ -59772,6 +59790,15 @@ document.addEventListener("DOMContentLoaded", function() {
       default_selection <- "GO_Biological_Process_2023"
     }
     
+    if (!current_organism %in% TX_ENRICHR_MAMMALS) {
+      return(div(class = "alert alert-warning", style = "font-size: 0.95em;",
+        HTML(paste0("<strong>Use the Enrichment Analysis tab for this organism.</strong> The libraries here are built on ",
+                    "human and mouse gene symbols, so for this species they would only match genes that happen to share ",
+                    "a human gene name. The <em>Open in Enrichment Analysis</em> button carries your DEGs (with all tested ",
+                    "genes as background) to GO and KEGG enrichment built from this species' own annotation."))))
+    }
+    choices <- lapply(choices, function(g) g[g %in% TX_ENRICHR_VERIFIED])   # only libraries that exist
+    choices <- choices[lengths(choices) > 0]
     selectInput("enrichr_database",
                 "Select Pathway Databases:",
                 choices = choices,
@@ -60209,6 +60236,11 @@ document.addEventListener("DOMContentLoaded", function() {
     # Validate organism selection first
     if (!validate_organism_selection()) {
       return() # Stop execution if validation fails
+    }
+    if (!(input$organism_db %||% "human") %in% TX_ENRICHR_MAMMALS) {
+      showNotification("For this organism, use 'Open in Enrichment Analysis': it runs GO and KEGG from the species' own annotation.",
+                       type = "warning", duration = 10)
+      return()
     }
     
     # Set analysis in progress
@@ -81706,19 +81738,18 @@ document.addEventListener("DOMContentLoaded", function() {
       if (length(padj_cols)) sig <- sig[!is.na(sig[[padj_cols[1]]]) & sig[[padj_cols[1]]] < 0.05, , drop = FALSE]
       if ("log2FC" %in% names(sig)) sig <- sig[!is.na(sig$log2FC) & abs(sig$log2FC) > 1, , drop = FALSE]
       genes <- unique(as.character(sig$gene_id)); genes <- genes[!is.na(genes) & genes != ""]
-      if (length(genes) < 5 && "log2FC" %in% names(degs)) {
-        o <- order(abs(degs$log2FC), decreasing = TRUE)
-        genes <- unique(as.character(degs$gene_id[head(o, 500)])); genes <- genes[!is.na(genes) & genes != ""]
-      }
-      if (length(genes) > 3000) genes <- genes[1:3000]
+      tested <- unique(as.character(degs$gene_id)); tested <- tested[!is.na(tested) & tested != ""]
     }
     if (length(genes) > 0) {
       updateRadioButtons(session, "enrichment_mode", selected = "ora")
       updateRadioButtons(session, "ora_inputType", selected = "paste")
       updateTextAreaInput(session, "ora_gene_list", value = paste(genes, collapse = "\n"))
-      showNotification(paste0("Loaded ", length(genes), " genes into the Enrichment Analysis tab \u2014 pick databases and run ORA, or switch to GSEA."), type = "message", duration = 8)
+      updateTextAreaInput(session, "ora_background_list", value = paste(tested, collapse = "\n"))
+      showNotification(paste0("Loaded ", length(genes), " DEGs (adjusted p < 0.05, |log2FC| > 1) into the Enrichment Analysis tab, ",
+                              "with all ", length(tested), " tested genes as the background. Pick databases and run ORA."),
+                       type = "message", duration = 10)
     } else {
-      showNotification("No DEG results to carry over yet \u2014 run DEG analysis first, or paste genes in the Enrichment tab.", type = "warning", duration = 8)
+      showNotification("No significant DEGs (adjusted p < 0.05, |log2FC| > 1) to carry over. Run DEG analysis first, or paste genes in the Enrichment tab.", type = "warning", duration = 8)
     }
     updateNavbarPage(session, "main_tabs", selected = "enrichment_analysis")
   })
@@ -112107,6 +112138,21 @@ tcga_data_filtered <- tcga_data[, valid_samples]
   })
   
   
+  # Optional ORA background (the genes measured in the experiment), converted like the gene list
+  tx_ora_background <- function() {
+    txt <- input$ora_background_list
+    if (is.null(txt) || !nzchar(trimws(txt))) return(NULL)
+    bg <- unique(parse_gene_list(txt)); bg <- bg[!is.na(bg) & nzchar(bg)]
+    if (length(bg) < 50) return(NULL)
+    det <- detect_gene_id_type(bg)
+    if (det$type %in% c("ENSG", "ENST") && det$confidence >= 50) {
+      bg <- convert_to_symbols(bg, det, input$enrichment_organism)
+    } else if (det$type == "SYMBOL" && input$enrichment_organism == "hsapiens") {
+      bg <- toupper(bg)
+    }
+    unique(bg[!is.na(bg) & nzchar(bg)])
+  }
+
   get_ora_gene_list <- function() {
     genes <- character(0)
     
@@ -112304,7 +112350,9 @@ tcga_data_filtered <- tcga_data[, valid_samples]
   # 3. GET GSEA RANKED GENES - Retrieves ranked gene list for GSEA
   # ============================================================================
   
+  gsea_rank_only <- FALSE   # TRUE when the uploaded list has gene names only (no scores)
   get_gsea_ranked_genes <- function() {
+    gsea_rank_only <<- FALSE
     ranked_genes <- NULL
     
     if (input$gsea_inputType == "preranked") {
@@ -112387,7 +112435,8 @@ tcga_data_filtered <- tcga_data[, valid_samples]
           
           # Create scores from +max to -max, centered at 0
           # This mimics log2FC distribution
-          scores <- seq(from = 3, to = -3, length.out = n)
+          scores <- seq(from = 3, to = -3, length.out = n)   # order only: GSEA then runs unweighted (gseaParam = 0)
+          gsea_rank_only <<- TRUE
           
           print(paste("Single column detected - assigned scores from", 
                       round(max(scores), 2), "to", round(min(scores), 2)))
@@ -112888,6 +112937,10 @@ tcga_data_filtered <- tcga_data[, valid_samples]
         # Store ranked gene vector and per-DB gene set lists for Classic GSEA plot
         enrichment_rv$ranked_genes <- ranked_genes
         enrichment_rv$gene_sets <- list()
+        if (isTRUE(gsea_rank_only)) {
+          showNotification("Your list has gene names only, so GSEA uses their order alone (unweighted, classic GSEA).",
+                           type = "message", duration = 10)
+        }
         
         incProgress(0.3, detail = "Running GSEA...")
         
@@ -112910,7 +112963,8 @@ tcga_data_filtered <- tcga_data[, valid_samples]
           tryCatch({
             if (!isTRUE(tx_enr_key() %in% tx_curated_keys)) {
               gdf <- tx_run_gsea(db, ranked_genes, tx_enr_key(),
-                                 input$enrichment_minGS, input$enrichment_maxGS)
+                                 input$enrichment_minGS, input$enrichment_maxGS,
+                                 exponent = if (isTRUE(gsea_rank_only)) 0 else 1)
               if (!is.null(gdf) && nrow(gdf) > 0) {
                 results_list[[db]] <- gdf
                 enrichment_rv$gene_sets[[db]] <- attr(gdf, "gene_sets")
@@ -112935,6 +112989,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
             gsea_result <- fgsea::fgseaMultilevel(
               pathways = gene_sets,
               stats = ranked_genes,
+              gseaParam = if (isTRUE(gsea_rank_only)) 0 else 1,
               minSize = input$enrichment_minGS,
               maxSize = input$enrichment_maxGS,
               scoreType = score_type,
@@ -113034,8 +113089,9 @@ tcga_data_filtered <- tcga_data[, valid_samples]
         
         # For ORA with pasted genes, use simpler approach - no background restriction
         # This finds ALL pathways containing these genes
-        background_genes <- NULL
-        print("ORA: Using all genes in database as background (standard for gene list analysis)")
+        # Background: the genes measured in the experiment when given (NULL = all annotated genes)
+        background_genes <- tx_ora_background()
+        if (!is.null(background_genes)) background_genes <- union(background_genes, gene_list)
         
         incProgress(0.3, detail = "Running ORA...")
         
@@ -113060,12 +113116,12 @@ tcga_data_filtered <- tcga_data[, valid_samples]
               print(paste("ORA: Running GO", ont, "analysis"))
               
               ora_result <- tx_run_enrichGO(gene_list, tx_enr_key(), ont,
-                input$enrichment_correction, input$enrichment_minGS, input$enrichment_maxGS)
+                input$enrichment_correction, input$enrichment_minGS, input$enrichment_maxGS, universe = background_genes)
               
             } else if (db == "KEGG") {
               # KEGG analysis - requires Entrez IDs
               ora_result <- tx_run_enrichKEGG(gene_list, tx_enr_key(),
-                input$enrichment_correction, input$enrichment_minGS, input$enrichment_maxGS)
+                input$enrichment_correction, input$enrichment_minGS, input$enrichment_maxGS, universe = background_genes)
               if (is.null(ora_result)) {
                 errors_list[[db]] <- "KEGG unavailable for this species or too few mapped genes"
                 next
@@ -113076,7 +113132,8 @@ tcga_data_filtered <- tcga_data[, valid_samples]
               print("ORA: Running Reactome analysis")
               
               entrez_genes <- convert_to_entrez(gene_list, input$enrichment_organism)
-              
+              bg_entrez <- if (!is.null(background_genes)) convert_to_entrez(background_genes, input$enrichment_organism) else NULL
+
               if (length(entrez_genes) < 5) {
                 print("ORA: Not enough Entrez IDs for Reactome analysis")
                 errors_list[[db]] <- "Could not convert enough genes to Entrez IDs"
@@ -113096,6 +113153,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
               ora_result <- ReactomePA::enrichPathway(
                 gene = entrez_genes,
                 organism = reactome_org,
+                universe = bg_entrez,
                 pvalueCutoff = 1,
                 qvalueCutoff = 1,
                 pAdjustMethod = input$enrichment_correction,
@@ -113103,12 +113161,23 @@ tcga_data_filtered <- tcga_data[, valid_samples]
                 maxGSSize = input$enrichment_maxGS
               )
               
+            } else if (db == "HALLMARK") {
+              hs <- get_gene_sets("HALLMARK", input$enrichment_organism)
+              if (length(hs) == 0) {
+                errors_list[[db]] <- "Hallmark gene sets are not available for this organism"
+                next
+              }
+              t2g <- data.frame(term = rep(names(hs), lengths(hs)), gene = unlist(hs, use.names = FALSE))
+              ora_result <- clusterProfiler::enricher(gene = gene_list, TERM2GENE = t2g, universe = background_genes,
+                pvalueCutoff = 1, qvalueCutoff = 1, pAdjustMethod = input$enrichment_correction,
+                minGSSize = input$enrichment_minGS, maxGSSize = input$enrichment_maxGS)
             } else if (db == "WP") {
               # WikiPathways analysis
               print("ORA: Running WikiPathways analysis")
               
               entrez_genes <- convert_to_entrez(gene_list, input$enrichment_organism)
-              
+              bg_entrez <- if (!is.null(background_genes)) convert_to_entrez(background_genes, input$enrichment_organism) else NULL
+
               if (length(entrez_genes) < 5) {
                 errors_list[[db]] <- "Could not convert enough genes to Entrez IDs"
                 next
@@ -113127,6 +113196,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
               ora_result <- clusterProfiler::enrichWP(
                 gene = entrez_genes,
                 organism = wp_organism,
+                universe = bg_entrez,
                 pvalueCutoff = 1,
                 qvalueCutoff = 1,
                 pAdjustMethod = input$enrichment_correction,
@@ -114548,25 +114618,28 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     }
     input$enrichment_organism
   }
-  tx_run_enrichGO <- function(genes, key, ont, padj, minGS, maxGS) {
+  # universe: optional background genes (same ID type as `genes`); NULL = all annotated genes
+  tx_run_enrichGO <- function(genes, key, ont, padj, minGS, maxGS, universe = NULL) {
     orgdb <- tx_get_orgdb(key); if (is.null(orgdb)) return(NULL)
     if (key %in% tx_curated_keys) {
-      clusterProfiler::enrichGO(gene = genes, OrgDb = orgdb,
+      clusterProfiler::enrichGO(gene = genes, OrgDb = orgdb, universe = universe,
         keyType = get_gene_keytype(key), ont = ont, pvalueCutoff = 1, qvalueCutoff = 1,
         pAdjustMethod = padj, minGSSize = minGS, maxGSSize = maxGS)
     } else {
       ent <- tx_map_to_entrez(genes, orgdb); if (length(ent) < 3) return(NULL)
-      clusterProfiler::enrichGO(gene = ent, OrgDb = orgdb, keyType = "ENTREZID", ont = ont,
+      uni <- if (!is.null(universe)) tx_map_to_entrez(universe, orgdb) else NULL
+      clusterProfiler::enrichGO(gene = ent, OrgDb = orgdb, keyType = "ENTREZID", ont = ont, universe = uni,
         pvalueCutoff = 1, qvalueCutoff = 1, pAdjustMethod = padj,
         minGSSize = minGS, maxGSSize = maxGS, readable = TRUE)
     }
   }
-  tx_run_enrichKEGG <- function(genes, key, padj, minGS, maxGS) {
+  tx_run_enrichKEGG <- function(genes, key, padj, minGS, maxGS, universe = NULL) {
     code <- tx_get_kegg_code(key); if (is.null(code)) return(NULL)
-    ent <- if (key %in% tx_curated_keys) convert_to_entrez(genes, key)
-           else tx_map_to_entrez(genes, tx_get_orgdb(key))
+    to_ent <- function(g) if (key %in% tx_curated_keys) convert_to_entrez(g, key) else tx_map_to_entrez(g, tx_get_orgdb(key))
+    ent <- to_ent(genes)
     if (length(ent) < 3) return(NULL)
-    clusterProfiler::enrichKEGG(gene = ent, organism = code, pvalueCutoff = 1,
+    uni <- if (!is.null(universe)) to_ent(universe) else NULL
+    clusterProfiler::enrichKEGG(gene = ent, organism = code, universe = uni, pvalueCutoff = 1,
       qvalueCutoff = 1, pAdjustMethod = padj, minGSSize = minGS, maxGSSize = maxGS)
   }
   # ---- GSEA for non-curated species: rank->ENTREZID then gseGO / gseKEGG ----
@@ -114590,18 +114663,18 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     v <- tapply(v, names(v), function(x) x[which.max(abs(x))])
     sort(v, decreasing = TRUE)
   }
-  tx_run_gsea <- function(db, ranked, key, minGS, maxGS) {
+  tx_run_gsea <- function(db, ranked, key, minGS, maxGS, exponent = 1) {
     orgdb <- tx_get_orgdb(key); if (is.null(orgdb)) return(NULL)
     rk <- tx_rank_to_entrez(ranked, orgdb); if (is.null(rk) || length(rk) < 10) return(NULL)
     res <- tryCatch({
       if (grepl("^GO", db)) {
         clusterProfiler::gseGO(geneList = rk, OrgDb = orgdb, keyType = "ENTREZID",
-          ont = sub("GO_", "", db), minGSSize = minGS, maxGSSize = maxGS,
+          ont = sub("GO_", "", db), minGSSize = minGS, maxGSSize = maxGS, exponent = exponent,
           pvalueCutoff = 1, verbose = FALSE)
       } else if (db == "KEGG") {
         code <- tx_get_kegg_code(key); if (is.null(code)) return(NULL)
         clusterProfiler::gseKEGG(geneList = rk, organism = code, keyType = "ncbi-geneid",
-          minGSSize = minGS, maxGSSize = maxGS, pvalueCutoff = 1, verbose = FALSE)
+          minGSSize = minGS, maxGSSize = maxGS, exponent = exponent, pvalueCutoff = 1, verbose = FALSE)
       } else NULL
     }, error = function(e) { message("tx_run_gsea ", db, " err: ", conditionMessage(e)); NULL })
     if (is.null(res)) return(NULL)
