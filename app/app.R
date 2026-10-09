@@ -47881,13 +47881,30 @@ if (length(errs) > 0) {
     ok <- grepl("^(SRR|ERR|DRR|SRX|ERX|DRX|SRS|ERS|DRS|SRP|ERP|DRP|PRJNA|PRJEB|PRJDB|SAMN|SAME|SAMD)[0-9]+$", accs)
     if (!any(ok)) stop("No valid accessions found. Use run (SRR/ERR/DRR), experiment, sample, study (SRP/ERP) or project (PRJNA/PRJEB) accessions.")
     fields <- "run_accession,sample_accession,sample_title,scientific_name,library_layout,library_strategy,fastq_ftp,fastq_bytes,fastq_md5,read_count"
-    tabs <- lapply(accs[ok], function(a) {
+    # ENA's API sometimes answers with a server error: retry, and keep track of the accessions
+    # it never answered for, so a study is never analysed with runs silently missing
+    fetch <- function(a) {
       url <- paste0("https://www.ebi.ac.uk/ena/portal/api/filereport?accession=", a,
                     "&result=read_run&fields=", fields, "&format=tsv&limit=0")
-      tryCatch(utils::read.delim(url, colClasses = "character", check.names = FALSE), error = function(e) NULL)
+      for (attempt in 1:4) {
+        t <- tryCatch(suppressWarnings(utils::read.delim(url, colClasses = "character", check.names = FALSE)),
+                      error = function(e) NULL)
+        if (!is.null(t) && "run_accession" %in% names(t)) return(t)
+        if (attempt < 4) Sys.sleep(attempt * 2)
+      }
+      NULL
+    }
+    tabs <- lapply(seq_along(accs[ok]), function(k) {
+      incProgress(1 / sum(ok), detail = accs[ok][k])
+      fetch(accs[ok][k])
     })
-    tab <- do.call(rbind, tabs[!vapply(tabs, is.null, TRUE)])
-    if (is.null(tab) || nrow(tab) == 0) stop("ENA returned no sequencing runs for these accessions.")
+    failed <- accs[ok][vapply(tabs, is.null, TRUE)]
+    no_runs <- accs[ok][vapply(tabs, function(t) !is.null(t) && nrow(t) == 0, TRUE)]
+    tab <- do.call(rbind, tabs[vapply(tabs, function(t) !is.null(t) && nrow(t) > 0, TRUE)])
+    if (is.null(tab) || nrow(tab) == 0) {
+      stop(if (length(failed)) "ENA did not respond (it is sometimes briefly unavailable). Please click Look up again in a minute."
+           else "ENA returned no sequencing runs for these accessions.")
+    }
     tab <- tab[!duplicated(tab$run_accession), , drop = FALSE]
     pick <- lapply(seq_len(nrow(tab)), function(i) {
       f <- strsplit(tab$fastq_ftp[i], ";", fixed = TRUE)[[1]]
@@ -47904,6 +47921,8 @@ if (length(errs) > 0) {
     tab$n_files <- vapply(pick, function(x) x$n, 0L)
     tab$usable <- nzchar(tab$fastq_ftp) & ((tab$library_layout == "PAIRED" & tab$n_files == 2) | (tab$library_layout == "SINGLE" & tab$n_files == 1))
     attr(tab, "invalid") <- accs[!ok]
+    attr(tab, "failed") <- failed
+    attr(tab, "no_runs") <- no_runs
     tab
   }
   observeEvent(input$ena_lookup, {
@@ -47927,6 +47946,12 @@ if (length(errs) > 0) {
     }
     if (length(unique(rr$library_layout)) > 1) errs <- c(errs, "The runs mix single-end and paired-end data; analyse them in separate jobs.")
     if (nrow(rr) > TX_REMOTE_MAX_RUNS) errs <- c(errs, sprintf("At most %d runs per job.", TX_REMOTE_MAX_RUNS))
+    if (length(attr(rr, "failed")))
+      errs <- c(errs, sprintf("ENA did not respond for %d accession(s): %s. Click Look up again (ENA is sometimes briefly unavailable).",
+                              length(attr(rr, "failed")), paste(head(attr(rr, "failed"), 10), collapse = ", ")))
+    if (length(attr(rr, "no_runs")))
+      errs <- c(errs, sprintf("No sequencing runs found for: %s. Check these accessions or remove them.",
+                              paste(head(attr(rr, "no_runs"), 10), collapse = ", ")))
     if (sum(rr$total_bytes) / 1024^3 > TX_REMOTE_MAX_GB) errs <- c(errs, sprintf("At most %d GB of FASTQ per job; split the study into batches.", TX_REMOTE_MAX_GB))
     if (identical(input$genome_build, "custom") && (is.null(input$custom_genome) || is.null(input$custom_gtf)))
       errs <- c(errs, "Custom genome requires both FASTA and GTF files")
