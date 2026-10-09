@@ -20572,7 +20572,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-06", tag = "New",      text = "Resumable FASTQ uploads: large files upload in chunks, continue automatically after a dropped connection, and stay on the server for 3 days so you can reload the page or come back later before starting."),
+  list(date = "2026-10-09", tag = "Fixed",    text = "FASTQ jobs: queued jobs now start on their own even if you close the page, a job that stops unexpectedly frees its slot at once, and three jobs can run at the same time. Salmon now reports gene-level counts, count tables name each column by sample, and public downloads are checked against ENA's checksums."),
+list(date = "2026-10-06", tag = "New",      text = "Resumable FASTQ uploads: large files upload in chunks, continue automatically after a dropped connection, and stay on the server for 3 days so you can reload the page or come back later before starting."),
 list(date = "2026-10-06", tag = "New",      text = "Analyse public RNA-seq data by SRA/ENA accession: the server downloads each run itself (up to 200 GB per job). Uploads can now be up to 40 GB, and samples are processed one at a time to keep disk use low."),
   list(date = "2026-10-06", tag = "New",      text = "FASTQ runs now keep going if you close the page: every run gets a job ID, and results can be retrieved later with \u201cRetrieve results by job ID\u201d."),
   list(date = "2026-10-06", tag = "Fixed",    text = "Survival hazard ratios are now reported as HIGH vs LOW expression, and analyses never fall back to simulated data when a database is unavailable."),
@@ -29875,6 +29876,505 @@ tx_tus_sweep <- function() {
   invisible()
 }
 
+# ---- FASTQ jobs ---------------------------------------------------------------------------
+# The pipeline runs in its own background R process, started by the queue (queue_manager.R)
+# when a processing slot is free. It reads its parameters from the job folder, writes progress
+# and log files there, and saves completion.rds when it ends. Nothing here needs a browser.
+TX_APP_DIR <- getwd()
+
+tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
+  setwd(app_dir)
+  # Source just the pipeline function (not the whole app)
+  # The function writes progress to files, no Shiny dependencies needed
+  params <- readRDS(params_file)
+
+  write_log <- function(message, type = "info") {
+    timestamp <- format(Sys.time(), "%H:%M:%S")
+    prefix <- switch(type, "info" = "[INFO]", "success" = "[DONE]",
+                    "warning" = "[WARN]", "error" = "[ERROR]", "progress" = "[STEP]", "[INFO]")
+    line <- paste0("[", timestamp, "] ", prefix, " ", message)
+    tryCatch(cat(line, "\n", file = params$log_file, append = TRUE), error = function(e) NULL)
+  }
+
+  write_progress <- function(percent, step) {
+    tryCatch(writeLines(paste0(percent, "|", step), params$progress_file), error = function(e) NULL)
+  }
+
+  # Dynamic thread allocation: 4 (default) <= n <= 8, leaving 2 cores for system/Shiny.
+  # Falls back to 4 if detectCores() fails (e.g., in a cgroup with hidden limits).
+  n_threads <- tryCatch(
+    max(4, min(8, parallel::detectCores() - 2)),
+    error = function(e) 4L
+  )
+
+  # Wrap system() with explicit return-code check.
+  # On non-zero exit: write to log + abort the pipeline cleanly.
+  run_cmd_or_fail <- function(cmd, step, sample_name = NULL) {
+    rc <- tryCatch(system(cmd, intern = FALSE), error = function(e) -1L)
+    if (!is.null(rc) && is.numeric(rc) && rc != 0) {
+      msg <- if (!is.null(sample_name)) {
+        paste0(step, " failed for sample '", sample_name, "' (exit code ", rc, ")")
+      } else {
+        paste0(step, " failed (exit code ", rc, ")")
+      }
+      write_log(msg, "error")
+      stop(msg)
+    }
+    invisible(rc)
+  }
+
+  tryCatch({
+    write_log("Starting FASTQ processing pipeline", "info")
+    write_log(paste("Using", n_threads, "threads per process"), "info")
+    write_progress(5, "Initializing pipeline...")
+
+    # Samples are processed ONE AT A TIME (QC -> trim -> align/quantify -> count), and each
+    # sample's raw reads, trimmed reads and alignments are deleted as soon as they are no
+    # longer needed. Peak disk use is the uploaded data plus one sample's temporary files.
+    input_dir <- file.path(params$tmp_dir, "input")
+    output_dir <- file.path(params$tmp_dir, "output")
+    work_dir <- file.path(params$tmp_dir, "work")
+    for (d in c(input_dir, output_dir, work_dir, file.path(output_dir, c("fastqc_raw", "fastqc_trimmed", "counts", "alignment_logs"))))
+      dir.create(d, recursive = TRUE, showWarnings = FALSE)
+    write_log("Created working directories", "success")
+
+    remote <- params$remote_runs
+    if (!is.null(remote) && nrow(remote) > 0) {
+      # Public data (SRA/ENA): each run is downloaded right before it is processed
+      samples <- lapply(seq_len(nrow(remote)), function(j) {
+        urls <- strsplit(remote$fastq_urls[j], ";", fixed = TRUE)[[1]]
+        md5 <- if (!is.null(remote$fastq_md5)) strsplit(remote$fastq_md5[j], ";", fixed = TRUE)[[1]] else character(0)
+        list(base = remote$run_accession[j], urls = urls, md5 = if (length(md5) == length(urls)) md5 else NULL,
+             files = file.path(input_dir, basename(urls)), bytes = remote$total_bytes[j])
+      })
+      options(timeout = max(getOption("timeout"), 6 * 3600))
+      write_log(paste("Public runs to download and process:", paste(remote$run_accession, collapse = ", ")), "info")
+    } else {
+      # Move (not copy) the uploaded files into the job's input folder
+      write_progress(8, "Receiving uploaded files...")
+      input_files <- character(0)
+      for (i in seq_len(nrow(params$fastq_files_df))) {
+        src <- params$fastq_files_df$datapath[i]
+        dst <- file.path(input_dir, params$fastq_files_df$name[i])
+        moved <- suppressWarnings(file.rename(src, dst))
+        if (!moved) {
+          if (!file.copy(src, dst)) stop(paste("Failed to receive file:", params$fastq_files_df$name[i]))
+          unlink(src)
+        }
+        input_files <- c(input_files, dst)
+      }
+      write_log(paste("Received", length(input_files), "files"), "success")
+
+      # Group files into samples
+      if (params$sequencing_type == "paired") {
+        r1_files <- sort(input_files[grepl("_R?1(_[0-9]{3})?\\.(fastq|fq)", basename(input_files), ignore.case = TRUE)])
+        r2_files <- sort(input_files[grepl("_R?2(_[0-9]{3})?\\.(fastq|fq)", basename(input_files), ignore.case = TRUE)])
+        if (length(r1_files) == 0 || length(r1_files) != length(r2_files)) stop("Could not pair the R1 and R2 files")
+        samples <- lapply(seq_along(r1_files), function(j) list(
+          base = sub("_R?1(_[0-9]{3})?(\\.(fastq|fq)(\\.gz)?)$", "", basename(r1_files[j]), ignore.case = TRUE),
+          files = c(r1_files[j], r2_files[j])))
+      } else {
+        samples <- lapply(input_files, function(f) list(base = sub("(\\.(fastq|fq)(\\.gz)?)$", "", basename(f)), files = f))
+      }
+    }
+    n_samples <- length(samples)
+
+    # Disk-space guard: one sample's temporary files need about 3x its input size
+    free_gb <- tryCatch({
+      x <- system(paste("df -Pk", shQuote(params$tmp_dir), "| tail -1"), intern = TRUE)
+      as.numeric(strsplit(trimws(x), "\\s+")[[1]][4]) / 1024^2
+    }, error = function(e) NA_real_)
+    largest_gb <- max(vapply(samples, function(s) if (!is.null(s$bytes)) as.numeric(s$bytes) else sum(file.size(s$files)), 0)) / 1024^3
+    need_gb <- 3 * largest_gb + 5
+    if (!is.na(free_gb) && free_gb < need_gb) {
+      stop(sprintf("Not enough free disk space on the server right now (about %.0f GB needed, %.0f GB free). Please try again later.", need_gb, free_gb))
+    }
+    write_log(sprintf("%d samples; processing one at a time (largest sample %.1f GB)", n_samples, largest_gb), "info")
+
+    quant_method <- params$quant_method %||% "hisat2"
+    counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
+    trimmomatic_jar <- "/usr/share/java/trimmomatic.jar"
+    first_existing <- function(paths) {
+      paths <- paths[nzchar(paths) & file.exists(paths)]
+      if (length(paths) > 0) paths[1] else NULL
+    }
+    # Transcript -> gene table for tximport. Salmon reports transcripts by ID only (--gencode
+    # trims the FASTA header), so genes come from the reference itself: GENCODE headers
+    # (ENST|ENSG|...) or, for a custom genome, the GTF's transcript_id / gene_id pairs.
+    # IDs without versions, as tximport(ignoreTxVersion = TRUE) compares them.
+    tx2gene_from_reference <- function(fa, gtf = NULL) {
+      hdr <- sub("^>", "", system(paste(if (grepl("\\.gz$", fa)) "zcat" else "cat", shQuote(fa), "| grep '^>'"), intern = TRUE))
+      if (length(hdr) > 0 && all(grepl("|", head(hdr, 100), fixed = TRUE))) {
+        p <- strsplit(hdr, "|", fixed = TRUE)
+        tx <- vapply(p, `[`, "", 1); gene <- vapply(p, `[`, "", 2)
+      } else if (!is.null(gtf)) {
+        prog <- tempfile(fileext = ".awk")
+        writeLines(c('$3 == "transcript" || $3 == "exon" {',
+                     '  if ($9 !~ /transcript_id "/ || $9 !~ /gene_id "/) next',
+                     '  t = $9; sub(/.*transcript_id "/, "", t); sub(/".*/, "", t)',
+                     '  g = $9; sub(/.*gene_id "/, "", g); sub(/".*/, "", g)',
+                     '  print t "\\t" g }'), prog)
+        x <- system(paste(if (grepl("\\.gz$", gtf)) "zcat" else "cat", shQuote(gtf), "| awk -F'\\t' -f", shQuote(prog), "| sort -u"), intern = TRUE)
+        p <- strsplit(x, "\t", fixed = TRUE)
+        tx <- vapply(p, `[`, "", 1); gene <- vapply(p, `[`, "", 2)
+      } else {
+        stop("Cannot tell which gene each transcript belongs to (no GENCODE headers and no GTF)")
+      }
+      tab <- data.frame(TXNAME = sub("\\..*", "", tx), GENEID = sub("\\..*", "", gene), stringsAsFactors = FALSE)
+      tab[!duplicated(tab$TXNAME), ]
+    }
+
+    # ---------------- Reference set-up (once) ----------------
+    write_progress(10, "Preparing reference...")
+    if (quant_method == "salmon") {
+      salmon_indices_base <- "/srv/salmon_indices"
+      salmon_index_dir <- file.path(work_dir, "salmon_index")
+      transcriptome_fa <- switch(params$genome_build,
+        "hg38" = file.path(salmon_indices_base, "gencode.v47.transcripts.fa.gz"),
+        "mm10" = file.path(salmon_indices_base, "gencode.vM25.transcripts.fa.gz"),   # GRCm38
+        NULL)
+      if (is.null(transcriptome_fa) && params$genome_build == "custom" &&
+          !is.null(params$custom_genome) && !is.null(params$custom_gtf)) {
+        write_log("Building transcriptome from custom genome + GTF...", "progress")
+        custom_genome_path <- file.path(input_dir, params$custom_genome$name)
+        custom_gtf_path <- file.path(input_dir, params$custom_gtf$name)
+        if (!file.exists(custom_genome_path)) file.copy(params$custom_genome$datapath, custom_genome_path)
+        if (!file.exists(custom_gtf_path)) file.copy(params$custom_gtf$datapath, custom_gtf_path)
+        transcriptome_fa <- file.path(work_dir, "custom_transcripts.fa")
+        gffread_result <- system(paste("gffread", shQuote(custom_gtf_path), "-g", shQuote(custom_genome_path),
+                                       "-w", shQuote(transcriptome_fa)), intern = FALSE)
+        if (gffread_result != 0 || !file.exists(transcriptome_fa)) {
+          write_log("gffread not available or failed. Using genome FASTA directly for Salmon.", "warning")
+          transcriptome_fa <- custom_genome_path
+        }
+      }
+      if (is.null(transcriptome_fa) || !file.exists(transcriptome_fa)) {
+        stop(paste("Salmon transcriptome reference not available for genome:", params$genome_build,
+                   ". Use HISAT2 mode or select hg38/mm10."))
+      }
+      prebuilt_index <- file.path(salmon_indices_base, paste0(params$genome_build, "_salmon_idx"))
+      if (dir.exists(prebuilt_index)) {
+        salmon_index_dir <- prebuilt_index
+        write_log("Using pre-built Salmon index", "success")
+      } else {
+        write_progress(12, "Building Salmon index (first time, will be cached)...")
+        write_log("Building Salmon index from transcriptome...", "progress")
+        dir.create(salmon_index_dir, recursive = TRUE, showWarnings = FALSE)
+        run_cmd_or_fail(paste("salmon index -t", shQuote(transcriptome_fa), "-i", shQuote(salmon_index_dir),
+                              "-p", n_threads, "--gencode > /dev/null 2>&1"), "Salmon index build")
+        if (params$genome_build != "custom") tryCatch({
+          file.copy(salmon_index_dir, salmon_indices_base, recursive = TRUE)
+          file.rename(file.path(salmon_indices_base, basename(salmon_index_dir)), prebuilt_index)
+          write_log("Salmon index cached for future use", "success")
+        }, error = function(e) write_log("Could not cache index (non-critical)", "warning"))
+      }
+      salmon_output_dir <- file.path(output_dir, "salmon_quant")
+      dir.create(salmon_output_dir, recursive = TRUE, showWarnings = FALSE)
+    } else {
+      # Resolve the HISAT2 index and a gene annotation built on the SAME assembly.
+      # Never fall back to another organism: a wrong index/GTF pair silently yields
+      # near-zero or misassigned counts.
+      hisat2_base <- "/srv/hisat2_indexes"
+      ann_base <- "/srv/annotations"
+      gb <- params$genome_build
+      gtf_file <- NULL
+      if (gb == "custom") {
+        if (is.null(params$custom_genome) || is.null(params$custom_gtf)) {
+          stop("Custom genome requires both a genome FASTA and a GTF annotation file")
+        }
+        custom_genome_path <- file.path(input_dir, params$custom_genome$name)
+        custom_gtf_path <- file.path(input_dir, params$custom_gtf$name)
+        if (!file.exists(custom_genome_path)) file.copy(params$custom_genome$datapath, custom_genome_path)
+        if (!file.exists(custom_gtf_path)) file.copy(params$custom_gtf$datapath, custom_gtf_path)
+        custom_fa_plain <- custom_genome_path
+        if (grepl("\\.gz$", custom_genome_path)) {
+          custom_fa_plain <- file.path(work_dir, "custom_genome.fa")
+          run_cmd_or_fail(paste("gunzip -c", shQuote(custom_genome_path), ">", shQuote(custom_fa_plain)),
+                          "Decompressing custom genome")
+        }
+        idx_dir <- file.path(work_dir, "hisat2_index")
+        dir.create(idx_dir, recursive = TRUE, showWarnings = FALSE)
+        write_progress(12, "Building HISAT2 index for custom genome...")
+        write_log("Building HISAT2 index for the custom genome (large genomes can take a long time)", "progress")
+        run_cmd_or_fail(paste("hisat2-build -p", n_threads, shQuote(custom_fa_plain),
+                              shQuote(file.path(idx_dir, "genome")), "> /dev/null 2>&1"),
+                        "HISAT2 index build")
+        hisat2_index <- file.path(idx_dir, "genome")
+        gtf_file <- custom_gtf_path
+      } else {
+        hisat2_index <- switch(gb,
+          "hg38" = Sys.getenv("HISAT2_HG38_INDEX", file.path(hisat2_base, "hg38", "genome")),
+          "mm10" = Sys.getenv("HISAT2_MM10_INDEX", file.path(hisat2_base, "mm10", "genome")),
+          "rn6"  = Sys.getenv("HISAT2_RN6_INDEX",  file.path(hisat2_base, "rn6", "genome")),
+          file.path(hisat2_base, gb, "genome"))
+        gtf_candidates <- switch(gb,
+          "hg38" = c(Sys.getenv("GENCODE_HG38_GTF"), file.path(ann_base, "gencode.v47.annotation.gtf")),
+          # mm10 = GRCm38: GENCODE vM25 is the last release on this assembly
+          "mm10" = file.path(ann_base, c("gencode.vM25.annotation.gtf", "gencode.vM25.annotation.gtf.gz")),
+          # rn6 = Rnor_6.0: Ensembl 104 is the last release on this assembly
+          "rn6"  = file.path(ann_base, c("Rattus_norvegicus.Rnor_6.0.104.gtf", "Rattus_norvegicus.Rnor_6.0.104.gtf.gz")),
+          # dm6 = BDGP6 (Ensembl names; chromosome names harmonised below)
+          "dm6"  = file.path(ann_base, "Drosophila_melanogaster.BDGP6.46.111.gtf"),
+          "danRer11" = c(file.path(hisat2_base, "danRer11", "genome.gtf"), file.path(ann_base, "Danio_rerio.GRCz11.111.gtf")),
+          "wbcel235" = c(file.path(hisat2_base, "wbcel235", "genome.gtf"), file.path(ann_base, "Caenorhabditis_elegans.WBcel235.111.gtf")),
+          "r64" = c(file.path(hisat2_base, "r64", "genome.gtf"), file.path(ann_base, "Saccharomyces_cerevisiae.R64-1-1.111.gtf")),
+          file.path(hisat2_base, gb, "genome.gtf"))
+        gtf_file <- first_existing(gtf_candidates)
+        if (is.null(gtf_file) && gb == "mm10") {
+          gtf_file <- first_existing(file.path(ann_base, "gencode.vM36.annotation.gtf"))
+          if (!is.null(gtf_file)) {
+            write_log("GENCODE vM25 (mm10) annotation not installed; using vM36 (GRCm39 coordinates). Gene assignment may be slightly reduced.", "warning")
+          }
+        }
+      }
+      if (!file.exists(paste0(hisat2_index, ".1.ht2"))) {
+        stop(paste0("HISAT2 index for genome '", gb, "' is not installed on the server. ",
+                    "Choose another genome, use Salmon (hg38/mm10), or run locally with Docker."))
+      }
+      if (is.null(gtf_file)) {
+        stop(paste0("No gene annotation (GTF) matching the '", gb, "' assembly is installed on the server. ",
+                    "Choose another genome or use the Custom Genome option with your own FASTA + GTF."))
+      }
+      write_log(paste0("Reference: ", gb, " | index: ", hisat2_index, " | annotation: ", basename(gtf_file)), "info")
+
+      # Harmonise chromosome names between the index and the annotation
+      # (UCSC "chr2L"/"chrM" vs Ensembl "2L"/"MT"). Only renames; never changes coordinates.
+      idx_seqs <- tryCatch({
+        x <- system(paste("hisat2-inspect -n", shQuote(hisat2_index)), intern = TRUE)
+        unique(sub("\\s.*$", "", x))
+      }, error = function(e) character(0))
+      reader <- if (grepl("\\.gz$", gtf_file)) "zcat" else "cat"
+      gtf_seqs <- tryCatch(
+        system(paste(reader, shQuote(gtf_file), "| grep -v '^#' | cut -f1 | sort -u"), intern = TRUE),
+        error = function(e) character(0))
+      if (length(idx_seqs) > 0 && length(gtf_seqs) > 0 && !any(gtf_seqs %in% idx_seqs)) {
+        to_ucsc <- ifelse(gtf_seqs %in% c("MT", "M", "mitochondrion_genome"), "chrM", paste0("chr", gtf_seqs))
+        from_ucsc <- ifelse(gtf_seqs == "chrM", "MT", sub("^chr", "", gtf_seqs))
+        new_names <- if (sum(to_ucsc %in% idx_seqs) >= sum(from_ucsc %in% idx_seqs)) to_ucsc else from_ucsc
+        keep_map <- new_names %in% idx_seqs
+        if (!any(keep_map)) {
+          stop("Chromosome names in the annotation do not match the genome index - check that the GTF belongs to the selected assembly")
+        }
+        map_file <- file.path(work_dir, "seqname_map.tsv")
+        writeLines(paste(gtf_seqs[keep_map], new_names[keep_map], sep = "\t"), map_file)
+        harmonised_gtf <- file.path(work_dir, "annotation_harmonised.gtf")
+        run_cmd_or_fail(paste(reader, shQuote(gtf_file), "| awk 'BEGIN{FS=OFS=\"\\t\"} NR==FNR{m[$1]=$2; next} /^#/{next} ($1 in m){$1=m[$1]; print}'",
+                              shQuote(map_file), "- >", shQuote(harmonised_gtf)),
+                        "Annotation chromosome-name harmonisation")
+        write_log(paste("Harmonised annotation chromosome names to match the genome index (", sum(keep_map), "sequences)"), "info")
+        gtf_file <- harmonised_gtf
+      }
+      pe_flag <- if (params$sequencing_type == "paired") "-p --countReadPairs" else ""
+    }
+
+    # ---------------- Per-sample processing ----------------
+    fc_files <- character(0); quant_dirs <- character(0)
+    for (si in seq_len(n_samples)) {
+      s <- samples[[si]]; base <- s$base
+      step_pct <- function(frac) write_progress(15 + round(80 * ((si - 1) + frac) / n_samples),
+                                                sprintf("Sample %d of %d (%s)", si, n_samples, base))
+      step_pct(0); write_log(sprintf("Sample %d of %d: %s", si, n_samples, base), "progress")
+
+      # 0. Download this run (public data only), with retries
+      if (!is.null(s$urls)) {
+        for (u in seq_along(s$urls)) {
+          ok <- FALSE
+          for (attempt in 1:4) {
+            rc <- tryCatch(utils::download.file(s$urls[u], s$files[u], mode = "wb", quiet = TRUE, method = "libcurl"),
+                           error = function(e) 1L)
+            if (identical(as.integer(rc), 0L) && file.exists(s$files[u]) && file.size(s$files[u]) > 0) {
+              if (is.null(s$md5) || identical(unname(tools::md5sum(s$files[u])), tolower(s$md5[u]))) { ok <- TRUE; break }
+              write_log(paste0("Checksum mismatch for ", basename(s$urls[u]), "; downloading again"), "warning")
+            }
+            unlink(s$files[u]); Sys.sleep(15 * attempt)
+          }
+          if (!ok) stop(paste0("Download failed for ", basename(s$urls[u]), " (run ", base, ") after 4 attempts"))
+        }
+        write_log(sprintf("Downloaded %s (%.2f GB)", base, sum(file.size(s$files)) / 1024^3), "success")
+      }
+
+      # 1. FastQC on raw reads
+      run_cmd_or_fail(paste("fastqc", paste(shQuote(s$files), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_raw")),
+                            "-t", length(s$files), "--quiet"), "FastQC (raw reads)", base)
+      # 2. Trimming
+      if (params$sequencing_type == "paired") {
+        tr <- file.path(work_dir, paste0(base, c("_R1_paired.fastq.gz", "_R1_unpaired.fastq.gz", "_R2_paired.fastq.gz", "_R2_unpaired.fastq.gz")))
+        run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "PE -threads 4 -phred33",
+                              shQuote(s$files[1]), shQuote(s$files[2]), paste(shQuote(tr), collapse = " "),
+                              "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-PE.fa:2:30:10",
+                              "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
+        trimmed <- tr[c(1, 3)]; unlink(tr[c(2, 4)])
+      } else {
+        trimmed <- file.path(work_dir, paste0(base, "_trimmed.fastq.gz"))
+        run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "SE -threads 4 -phred33",
+                              shQuote(s$files), shQuote(trimmed),
+                              "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-SE.fa:2:30:10",
+                              "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
+      }
+      # 3. FastQC on trimmed reads
+      run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_trimmed")),
+                            "-t", length(trimmed), "--quiet"), "FastQC (trimmed reads)", base)
+      unlink(s$files)                                   # raw reads no longer needed
+      step_pct(0.4)
+
+      # 4. Quantification
+      if (quant_method == "salmon") {
+        sample_dir <- file.path(salmon_output_dir, base)
+        reads <- if (length(trimmed) == 2) paste("-1", shQuote(trimmed[1]), "-2", shQuote(trimmed[2])) else paste("-r", shQuote(trimmed))
+        run_cmd_or_fail(paste("salmon quant -i", shQuote(salmon_index_dir), "-l A", reads,
+                              "--gcBias --seqBias --validateMappings -p", n_threads, "-o", shQuote(sample_dir),
+                              ">", shQuote(file.path(output_dir, "alignment_logs", paste0(base, ".salmon.log"))), "2>&1"),
+                        "Salmon quantification", base)
+        quant_dirs <- c(quant_dirs, sample_dir)
+        unlink(trimmed)
+      } else {
+        sorted_bam <- file.path(work_dir, paste0(base, "_sorted.bam"))
+        reads <- if (length(trimmed) == 2) paste("-1", shQuote(trimmed[1]), "-2", shQuote(trimmed[2])) else paste("-U", shQuote(trimmed))
+        # stream alignments straight into a sorted BAM (no SAM file on disk)
+        run_cmd_or_fail(paste("bash -c", shQuote(paste(
+          "set -o pipefail; hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index), reads,
+          "2>", shQuote(file.path(output_dir, "alignment_logs", paste0(base, ".hisat2.log"))),
+          "| samtools sort -@", n_threads, "-T", shQuote(file.path(work_dir, paste0(base, "_sorttmp"))),
+          "-o", shQuote(sorted_bam), "-"))), "HISAT2 alignment", base)
+        unlink(trimmed)                                 # trimmed reads no longer needed
+        step_pct(0.8)
+        fc_out <- file.path(work_dir, paste0("fc_", base, ".txt"))
+        run_cmd_or_fail(paste("featureCounts -T", n_threads, pe_flag, "-a", shQuote(gtf_file), "-o", shQuote(fc_out),
+                              shQuote(sorted_bam), "> /dev/null 2>&1"), "featureCounts quantification", base)
+        fc_files <- c(fc_files, fc_out)
+        unlink(sorted_bam)                              # alignments no longer needed
+      }
+      write_log(sprintf("Sample %d of %d done: %s (temporary files removed)", si, n_samples, base), "success")
+    }
+
+    # ---------------- Combine samples ----------------
+    write_progress(95, "Combining samples...")
+    if (quant_method == "salmon") {
+      quant_files <- file.path(quant_dirs, "quant.sf")
+      names(quant_files) <- basename(quant_dirs)
+      existing_quants <- quant_files[file.exists(quant_files)]
+      if (length(existing_quants) == 0) stop("No Salmon quant.sf files found")
+      tx2gene <- tx2gene_from_reference(transcriptome_fa, if (params$genome_build == "custom") custom_gtf_path else NULL)
+      tx_ids <- sub("\\..*", "", read.table(existing_quants[1], header = TRUE, sep = "\t", stringsAsFactors = FALSE)$Name)
+      mapped <- mean(tx_ids %in% tx2gene$TXNAME)
+      if (mapped < 0.95) stop(sprintf("Only %.0f%% of Salmon transcripts could be matched to a gene in the annotation", 100 * mapped))
+      write_log(sprintf("Summarising %d transcripts to %d genes", length(tx_ids), length(unique(tx2gene$GENEID[tx2gene$TXNAME %in% tx_ids]))), "info")
+txi <- tximport::tximport(existing_quants, type = "salmon", tx2gene = tx2gene,
+                                countsFromAbundance = "no", ignoreTxVersion = TRUE)
+      gene_counts <- as.data.frame(round(txi$counts))
+      gene_counts <- cbind(Geneid = rownames(gene_counts), gene_counts)
+      write.table(gene_counts, counts_file, sep = "\t", row.names = FALSE, quote = FALSE)
+      write_log(paste("Gene-level counts matrix:", nrow(gene_counts), "genes x", ncol(gene_counts) - 1, "samples"), "success")
+      tpm_df <- as.data.frame(txi$abundance)
+      tpm_df <- cbind(Geneid = rownames(tpm_df), tpm_df)
+      write.table(tpm_df, file.path(output_dir, "counts", "salmon_tpm.txt"), sep = "\t", row.names = FALSE, quote = FALSE)
+      write_log("Salmon quantification pipeline completed", "success")
+    } else {
+      tabs <- lapply(fc_files, function(f) read.delim(f, comment.char = "#", check.names = FALSE, stringsAsFactors = FALSE))
+      merged <- tabs[[1]]
+      if (length(tabs) > 1) for (k in 2:length(tabs)) {
+        if (!identical(tabs[[k]]$Geneid, merged$Geneid)) stop("Per-sample count tables do not share the same genes")
+        merged <- cbind(merged, tabs[[k]][, 7, drop = FALSE])
+      }
+      sample_names <- vapply(samples, function(x) x$base, "")
+      names(merged)[-(1:6)] <- sample_names
+      writeLines("# Program:featureCounts; per-sample runs combined by TransXplorer", counts_file)
+suppressWarnings(write.table(merged, counts_file, sep = "\t", row.names = FALSE, quote = FALSE, append = TRUE))
+      sums <- lapply(paste0(fc_files, ".summary"), function(f) read.delim(f, check.names = FALSE, stringsAsFactors = FALSE))
+      summary_merged <- sums[[1]]
+      if (length(sums) > 1) for (k in 2:length(sums)) summary_merged <- cbind(summary_merged, sums[[k]][, 2, drop = FALSE])
+      names(summary_merged)[-1] <- sample_names
+write.table(summary_merged, paste0(counts_file, ".summary"), sep = "\t", row.names = FALSE, quote = FALSE)
+      write_log(paste("Gene expression quantification completed:", nrow(merged), "genes x", ncol(merged) - 6, "samples"), "success")
+    }
+    unlink(work_dir, recursive = TRUE)
+
+    # Step 6: Complete
+    write_progress(95, "Finalizing results...")
+    write_log("Generating summary...", "progress")
+
+    summary_file <- paste0(counts_file, ".summary")
+    summary_data <- if (file.exists(summary_file)) {
+      tryCatch(read.table(summary_file, header = TRUE, sep = "\t", row.names = 1, check.names = FALSE),
+               error = function(e) NULL)
+    } else NULL
+
+    # Keep the results with the job (counts, QC reports, Salmon quantifications), so they
+    # can be retrieved by job ID after the browser session has ended
+    permanent <- FALSE
+    if (!is.null(params$job_dir)) {
+      keep_out <- file.path(params$job_dir, basename(output_dir))
+      dir.create(keep_out, recursive = TRUE, showWarnings = FALSE)
+      for (sub in c("counts", "fastqc_raw", "fastqc_trimmed", "salmon_quant", "alignment_logs")) {
+        if (dir.exists(file.path(output_dir, sub))) file.copy(file.path(output_dir, sub), keep_out, recursive = TRUE)
+      }
+      output_dir <- keep_out
+      counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
+      summary_file <- paste0(counts_file, ".summary")
+      permanent <- TRUE
+    }
+
+    write_progress(100, "Complete!")
+    write_log("Analysis completed successfully!", "success")
+
+    result <- list(
+      success = TRUE,
+      counts_file = counts_file,
+      summary_file = summary_file,
+      summary_data = summary_data,
+      output_dir = output_dir,
+      job_id = params$job_id,
+      permanent = permanent
+    )
+    saveRDS(result, completion_file)
+    tryCatch({
+      qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
+      if (!is.null(params$job_id)) qm$update_job_status(params$job_id, "complete")
+    }, error = function(e) NULL)
+    try(unlink(params$tmp_dir, recursive = TRUE), silent = TRUE)
+
+  }, error = function(e) {
+    write_log(paste("Pipeline error:", e$message), "error")
+    write_progress(0, paste("Error:", e$message))
+    saveRDS(list(success = FALSE, error = e$message, job_id = params$job_id), completion_file)
+    tryCatch({
+      qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
+      if (!is.null(params$job_id)) qm$update_job_status(params$job_id, "error", error = e$message)
+    }, error = function(e2) NULL)
+    try(unlink(params$tmp_dir, recursive = TRUE), silent = TRUE)   # no retry from these files; free the disk
+  })
+}
+
+tx_launch_job <- function(job) {
+  p <- callr::r_bg(
+    tx_fastq_pipeline_job,
+    args = list(params_file = file.path(job$job_dir, "params.rds"),
+                completion_file = file.path(job$job_dir, "completion.rds"),
+                app_dir = TX_APP_DIR),
+    supervise = FALSE,
+    cleanup = FALSE,        # keep running when the session or app process ends
+    cleanup_tree = FALSE,
+    stdout = file.path(job$job_dir, "bg_stdout.txt"),  # files, not pipes: a pipe to an exited
+    stderr = file.path(job$job_dir, "bg_stderr.txt"),  # app process would kill the job (SIGPIPE)
+    poll_connection = FALSE
+  )
+  p$get_pid()
+}
+
+# Every app process looks at the queue every 10 s: it frees the slots of finished or dead jobs
+# and starts waiting ones, so a queued job starts even if its page was closed.
+.tx_queue_state <- new.env(parent = emptyenv())
+.tx_queue_state$last_cleanup <- Sys.time()
+tx_queue_tick <- function() {
+  tryCatch(process_queue(tx_launch_job), error = function(e) message("FASTQ queue check failed: ", conditionMessage(e)))
+  if (difftime(Sys.time(), .tx_queue_state$last_cleanup, units = "hours") > 6) {
+    .tx_queue_state$last_cleanup <- Sys.time()
+    try(cleanup_old_jobs(), silent = TRUE)
+  }
+  later::later(tx_queue_tick, 10)
+}
+later::later(tx_queue_tick, 5)
+
 .tx_enrichr_mem <- new.env(parent = emptyenv())
 # Enrichr renamed some libraries; map names used in the app to the published ones
 TX_ENRICHR_ALIASES <- c(WikiPathways_2023_Human = "WikiPathway_2023_Human",
@@ -30025,7 +30525,7 @@ tx_methods_versions <- function() {
     ref("Pig susScr11 (Sscrofa11.1)", "susScr11", "Index-bundled GTF", file.path(hb, "susScr11/genome.gtf"))
   )
   references$Salmon_transcriptome <- ifelse(references$HISAT2_index == "hg38", "GENCODE v47 transcripts",
-                                     ifelse(references$HISAT2_index == "mm10", "GENCODE vM36 transcripts", "not offered (use HISAT2)"))
+                                     ifelse(references$HISAT2_index == "mm10", "GENCODE vM25 transcripts", "not offered (use HISAT2)"))
   enr_files <- list.files(TX_ENRICHR_CACHE, pattern = "\\.rds$", full.names = TRUE)
   enr_libs <- if (length(enr_files)) paste(sprintf("%s (downloaded %s)", sub("\\.rds$", "", basename(enr_files)),
                                                      format(file.mtime(enr_files), "%Y-%m-%d")), collapse = "; ") else "downloaded on first use"
@@ -44438,17 +44938,12 @@ server <- function(input, output, session) {
     return(cleaned_data)
   }
   
-  # Initialize queue system
-  queue_status <- reactiveValues(
-    session_id = session$token,
-    job_id = NULL,
-    status = "ready"
-  )
-  
+  # The FASTQ job this page follows (submitted here or retrieved by its ID)
+  tx_job_id <- reactiveVal(NULL)
   if (!is.null(queue_funcs)) {
-    queue_funcs$initialize_queue_ui(output, session, queue_status)
+    queue_funcs$initialize_queue_ui(output, session, tx_job_id)
   }
-  
+
   options(shiny.error = browser)
   options(expressions = 10000)
   pathway_network_object <- reactiveVal(NULL)
@@ -47257,16 +47752,12 @@ if (!is_ready && upload_status$active > 0) {
   })
   outputOptions(output, "is_processing", suspendWhenHidden = FALSE)
   
-  # Launch the FASTQ pipeline in a background R process. Called directly when a
-  # processing slot is free, or later by the queue watcher for queued jobs.
-  queue_watcher <- NULL
-  start_fastq_pipeline <- function() {
-      # Show processing notification
-      showNotification("🚀 Starting RNA-seq analysis pipeline...", type = "message", duration = 3)
-    
-      # Create analysis directory
+  # Submit a FASTQ job: claim the uploaded files, save the parameters in the job's folder and
+  # hand it to the queue, which starts it now if a processing slot is free, or later. The job
+  # runs in its own background process and does not depend on this page staying open.
+  tx_submit_fastq_job <- function() {
       analysis_dir <- create_analysis_directory()
-    
+
       # Prepare parameters for processing
       fq <- isolate(fastq_uploads())
       if (!isTRUE(values$use_remote) && !is.null(fq)) {
@@ -47300,503 +47791,60 @@ sequencing_type = input$sequencing_type,
           btn.classList.add('btn-disabled-running'); }
       ")
 
-      # Each run gets a persistent job folder (survives the browser session and app restarts)
-      job_id <- queue_status$job_id %||%
-        paste0("job_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_", substr(session$token, 1, 8))
+      job_id <- paste0("job_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_",
+                       substr(digest::digest(paste(session$token, runif(1))), 1, 8))
       job_dir <- file.path(TX_JOBS_DIR, job_id)
       dir.create(job_dir, recursive = TRUE, showWarnings = FALSE)
       if (file.exists(pipeline_log_file)) file.copy(pipeline_log_file, file.path(job_dir, "log.txt"), overwrite = TRUE)
       pipeline_log_file <<- file.path(job_dir, "log.txt")
       pipeline_progress_file <<- file.path(job_dir, "progress.txt")
-      writeLines("5|Initializing pipeline...", pipeline_progress_file)
+      writeLines("2|Waiting for a processing slot...", pipeline_progress_file)
       processing_params$log_file <- pipeline_log_file
       processing_params$progress_file <- pipeline_progress_file
       processing_params$job_id <- job_id
       processing_params$job_dir <- job_dir
+      saveRDS(processing_params, file.path(job_dir, "params.rds"))
+
+      submit_job(job_id, session$token, job_dir,
+                 data = list(files = if (isTRUE(values$use_remote)) processing_params$remote_runs$run_accession else fq$name,
+                             genome = input$genome_build, type = processing_params$sequencing_type))
+      tryCatch(process_queue(tx_launch_job), error = function(e) message("FASTQ queue check failed: ", conditionMessage(e)))
+      state <- tryCatch(job_queue_state(job_id), error = function(e) list(status = "queued", position = NA))
+
       values$current_job_id <- job_id
-      showNotification(HTML(paste0("<strong>Job ID: ", job_id, "</strong><br>",
-                                   "Keep this ID. The analysis keeps running if you close this page; ",
-                                   "enter the ID under <em>Retrieve results by job ID</em> to get the results later.")),
-                       type = "message", duration = NULL)
+      values$completion_file <- file.path(job_dir, "completion.rds")
+      values$bg_process <- job_id          # non-NULL while this page waits for the job's result
+      tx_job_id(job_id)
 
-      # Save completion marker path
-      completion_file <- file.path(job_dir, "completion.rds")
-      if (file.exists(completion_file)) file.remove(completion_file)
-
-      # Save the processing function and params for the background process
-      bg_params_file <- file.path(job_dir, "params.rds")
-      saveRDS(processing_params, bg_params_file)
-
-      # Launch pipeline in BACKGROUND R PROCESS (frees Shiny event loop for live updates)
-      bg_process <- callr::r_bg(
-        function(params_file, completion_file, app_dir) {
-          setwd(app_dir)
-          # Source just the pipeline function (not the whole app)
-          # The function writes progress to files, no Shiny dependencies needed
-          params <- readRDS(params_file)
-
-          write_log <- function(message, type = "info") {
-            timestamp <- format(Sys.time(), "%H:%M:%S")
-            prefix <- switch(type, "info" = "[INFO]", "success" = "[DONE]",
-                            "warning" = "[WARN]", "error" = "[ERROR]", "progress" = "[STEP]", "[INFO]")
-            line <- paste0("[", timestamp, "] ", prefix, " ", message)
-            tryCatch(cat(line, "\n", file = params$log_file, append = TRUE), error = function(e) NULL)
-          }
-
-          write_progress <- function(percent, step) {
-            tryCatch(writeLines(paste0(percent, "|", step), params$progress_file), error = function(e) NULL)
-          }
-
-          # Dynamic thread allocation: 4 (default) <= n <= 8, leaving 2 cores for system/Shiny.
-          # Falls back to 4 if detectCores() fails (e.g., in a cgroup with hidden limits).
-          n_threads <- tryCatch(
-            max(4, min(8, parallel::detectCores() - 2)),
-            error = function(e) 4L
-          )
-
-          # Wrap system() with explicit return-code check.
-          # On non-zero exit: write to log + abort the pipeline cleanly.
-          run_cmd_or_fail <- function(cmd, step, sample_name = NULL) {
-            rc <- tryCatch(system(cmd, intern = FALSE), error = function(e) -1L)
-            if (!is.null(rc) && is.numeric(rc) && rc != 0) {
-              msg <- if (!is.null(sample_name)) {
-                paste0(step, " failed for sample '", sample_name, "' (exit code ", rc, ")")
-              } else {
-                paste0(step, " failed (exit code ", rc, ")")
-              }
-              write_log(msg, "error")
-              stop(msg)
-            }
-            invisible(rc)
-          }
-
-          tryCatch({
-            write_log("Starting FASTQ processing pipeline", "info")
-            write_log(paste("Using", n_threads, "threads per process"), "info")
-            write_progress(5, "Initializing pipeline...")
-
-            # Samples are processed ONE AT A TIME (QC -> trim -> align/quantify -> count), and each
-            # sample's raw reads, trimmed reads and alignments are deleted as soon as they are no
-            # longer needed. Peak disk use is the uploaded data plus one sample's temporary files.
-            input_dir <- file.path(params$tmp_dir, "input")
-            output_dir <- file.path(params$tmp_dir, "output")
-            work_dir <- file.path(params$tmp_dir, "work")
-            for (d in c(input_dir, output_dir, work_dir, file.path(output_dir, c("fastqc_raw", "fastqc_trimmed", "counts", "alignment_logs"))))
-              dir.create(d, recursive = TRUE, showWarnings = FALSE)
-            write_log("Created working directories", "success")
-
-            remote <- params$remote_runs
-            if (!is.null(remote) && nrow(remote) > 0) {
-              # Public data (SRA/ENA): each run is downloaded right before it is processed
-              samples <- lapply(seq_len(nrow(remote)), function(j) {
-                urls <- strsplit(remote$fastq_urls[j], ";", fixed = TRUE)[[1]]
-                list(base = remote$run_accession[j], urls = urls,
-                     files = file.path(input_dir, basename(urls)), bytes = remote$total_bytes[j])
-              })
-              options(timeout = max(getOption("timeout"), 6 * 3600))
-              write_log(paste("Public runs to download and process:", paste(remote$run_accession, collapse = ", ")), "info")
-            } else {
-              # Move (not copy) the uploaded files into the job's input folder
-              write_progress(8, "Receiving uploaded files...")
-              input_files <- character(0)
-              for (i in seq_len(nrow(params$fastq_files_df))) {
-                src <- params$fastq_files_df$datapath[i]
-                dst <- file.path(input_dir, params$fastq_files_df$name[i])
-                moved <- suppressWarnings(file.rename(src, dst))
-                if (!moved) {
-                  if (!file.copy(src, dst)) stop(paste("Failed to receive file:", params$fastq_files_df$name[i]))
-                  unlink(src)
-                }
-                input_files <- c(input_files, dst)
-              }
-              write_log(paste("Received", length(input_files), "files"), "success")
-
-              # Group files into samples
-              if (params$sequencing_type == "paired") {
-                r1_files <- sort(input_files[grepl("_R?1(_[0-9]{3})?\\.(fastq|fq)", basename(input_files), ignore.case = TRUE)])
-                r2_files <- sort(input_files[grepl("_R?2(_[0-9]{3})?\\.(fastq|fq)", basename(input_files), ignore.case = TRUE)])
-                if (length(r1_files) == 0 || length(r1_files) != length(r2_files)) stop("Could not pair the R1 and R2 files")
-                samples <- lapply(seq_along(r1_files), function(j) list(
-                  base = sub("_R?1(_[0-9]{3})?(\\.(fastq|fq)(\\.gz)?)$", "", basename(r1_files[j]), ignore.case = TRUE),
-                  files = c(r1_files[j], r2_files[j])))
-              } else {
-                samples <- lapply(input_files, function(f) list(base = sub("(\\.(fastq|fq)(\\.gz)?)$", "", basename(f)), files = f))
-              }
-            }
-            n_samples <- length(samples)
-
-            # Disk-space guard: one sample's temporary files need about 3x its input size
-            free_gb <- tryCatch({
-              x <- system(paste("df -Pk", shQuote(params$tmp_dir), "| tail -1"), intern = TRUE)
-              as.numeric(strsplit(trimws(x), "\\s+")[[1]][4]) / 1024^2
-            }, error = function(e) NA_real_)
-            largest_gb <- max(vapply(samples, function(s) if (!is.null(s$bytes)) as.numeric(s$bytes) else sum(file.size(s$files)), 0)) / 1024^3
-            need_gb <- 3 * largest_gb + 5
-            if (!is.na(free_gb) && free_gb < need_gb) {
-              stop(sprintf("Not enough free disk space on the server right now (about %.0f GB needed, %.0f GB free). Please try again later.", need_gb, free_gb))
-            }
-            write_log(sprintf("%d samples; processing one at a time (largest sample %.1f GB)", n_samples, largest_gb), "info")
-
-            quant_method <- params$quant_method %||% "hisat2"
-            counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
-            trimmomatic_jar <- "/usr/share/java/trimmomatic.jar"
-            first_existing <- function(paths) {
-              paths <- paths[nzchar(paths) & file.exists(paths)]
-              if (length(paths) > 0) paths[1] else NULL
-            }
-
-            # ---------------- Reference set-up (once) ----------------
-            write_progress(10, "Preparing reference...")
-            if (quant_method == "salmon") {
-              salmon_indices_base <- "/srv/salmon_indices"
-              salmon_index_dir <- file.path(work_dir, "salmon_index")
-              transcriptome_fa <- switch(params$genome_build,
-                "hg38" = file.path(salmon_indices_base, "gencode.v47.transcripts.fa.gz"),
-                "mm10" = file.path(salmon_indices_base, "gencode.vM36.transcripts.fa.gz"),
-                NULL)
-              if (is.null(transcriptome_fa) && params$genome_build == "custom" &&
-                  !is.null(params$custom_genome) && !is.null(params$custom_gtf)) {
-                write_log("Building transcriptome from custom genome + GTF...", "progress")
-                custom_genome_path <- file.path(input_dir, params$custom_genome$name)
-                custom_gtf_path <- file.path(input_dir, params$custom_gtf$name)
-                if (!file.exists(custom_genome_path)) file.copy(params$custom_genome$datapath, custom_genome_path)
-                if (!file.exists(custom_gtf_path)) file.copy(params$custom_gtf$datapath, custom_gtf_path)
-                transcriptome_fa <- file.path(work_dir, "custom_transcripts.fa")
-                gffread_result <- system(paste("gffread", shQuote(custom_gtf_path), "-g", shQuote(custom_genome_path),
-                                               "-w", shQuote(transcriptome_fa)), intern = FALSE)
-                if (gffread_result != 0 || !file.exists(transcriptome_fa)) {
-                  write_log("gffread not available or failed. Using genome FASTA directly for Salmon.", "warning")
-                  transcriptome_fa <- custom_genome_path
-                }
-              }
-              if (is.null(transcriptome_fa) || !file.exists(transcriptome_fa)) {
-                stop(paste("Salmon transcriptome reference not available for genome:", params$genome_build,
-                           ". Use HISAT2 mode or select hg38/mm10."))
-              }
-              prebuilt_index <- file.path(salmon_indices_base, paste0(params$genome_build, "_salmon_idx"))
-              if (dir.exists(prebuilt_index)) {
-                salmon_index_dir <- prebuilt_index
-                write_log("Using pre-built Salmon index", "success")
-              } else {
-                write_progress(12, "Building Salmon index (first time, will be cached)...")
-                write_log("Building Salmon index from transcriptome...", "progress")
-                dir.create(salmon_index_dir, recursive = TRUE, showWarnings = FALSE)
-                run_cmd_or_fail(paste("salmon index -t", shQuote(transcriptome_fa), "-i", shQuote(salmon_index_dir),
-                                      "-p", n_threads, "--gencode > /dev/null 2>&1"), "Salmon index build")
-                if (params$genome_build != "custom") tryCatch({
-                  file.copy(salmon_index_dir, salmon_indices_base, recursive = TRUE)
-                  file.rename(file.path(salmon_indices_base, basename(salmon_index_dir)), prebuilt_index)
-                  write_log("Salmon index cached for future use", "success")
-                }, error = function(e) write_log("Could not cache index (non-critical)", "warning"))
-              }
-              salmon_output_dir <- file.path(output_dir, "salmon_quant")
-              dir.create(salmon_output_dir, recursive = TRUE, showWarnings = FALSE)
-            } else {
-              # Resolve the HISAT2 index and a gene annotation built on the SAME assembly.
-              # Never fall back to another organism: a wrong index/GTF pair silently yields
-              # near-zero or misassigned counts.
-              hisat2_base <- "/srv/hisat2_indexes"
-              ann_base <- "/srv/annotations"
-              gb <- params$genome_build
-              gtf_file <- NULL
-              if (gb == "custom") {
-                if (is.null(params$custom_genome) || is.null(params$custom_gtf)) {
-                  stop("Custom genome requires both a genome FASTA and a GTF annotation file")
-                }
-                custom_genome_path <- file.path(input_dir, params$custom_genome$name)
-                custom_gtf_path <- file.path(input_dir, params$custom_gtf$name)
-                if (!file.exists(custom_genome_path)) file.copy(params$custom_genome$datapath, custom_genome_path)
-                if (!file.exists(custom_gtf_path)) file.copy(params$custom_gtf$datapath, custom_gtf_path)
-                custom_fa_plain <- custom_genome_path
-                if (grepl("\\.gz$", custom_genome_path)) {
-                  custom_fa_plain <- file.path(work_dir, "custom_genome.fa")
-                  run_cmd_or_fail(paste("gunzip -c", shQuote(custom_genome_path), ">", shQuote(custom_fa_plain)),
-                                  "Decompressing custom genome")
-                }
-                idx_dir <- file.path(work_dir, "hisat2_index")
-                dir.create(idx_dir, recursive = TRUE, showWarnings = FALSE)
-                write_progress(12, "Building HISAT2 index for custom genome...")
-                write_log("Building HISAT2 index for the custom genome (large genomes can take a long time)", "progress")
-                run_cmd_or_fail(paste("hisat2-build -p", n_threads, shQuote(custom_fa_plain),
-                                      shQuote(file.path(idx_dir, "genome")), "> /dev/null 2>&1"),
-                                "HISAT2 index build")
-                hisat2_index <- file.path(idx_dir, "genome")
-                gtf_file <- custom_gtf_path
-              } else {
-                hisat2_index <- switch(gb,
-                  "hg38" = Sys.getenv("HISAT2_HG38_INDEX", file.path(hisat2_base, "hg38", "genome")),
-                  "mm10" = Sys.getenv("HISAT2_MM10_INDEX", file.path(hisat2_base, "mm10", "genome")),
-                  "rn6"  = Sys.getenv("HISAT2_RN6_INDEX",  file.path(hisat2_base, "rn6", "genome")),
-                  file.path(hisat2_base, gb, "genome"))
-                gtf_candidates <- switch(gb,
-                  "hg38" = c(Sys.getenv("GENCODE_HG38_GTF"), file.path(ann_base, "gencode.v47.annotation.gtf")),
-                  # mm10 = GRCm38: GENCODE vM25 is the last release on this assembly
-                  "mm10" = file.path(ann_base, c("gencode.vM25.annotation.gtf", "gencode.vM25.annotation.gtf.gz")),
-                  # rn6 = Rnor_6.0: Ensembl 104 is the last release on this assembly
-                  "rn6"  = file.path(ann_base, c("Rattus_norvegicus.Rnor_6.0.104.gtf", "Rattus_norvegicus.Rnor_6.0.104.gtf.gz")),
-                  # dm6 = BDGP6 (Ensembl names; chromosome names harmonised below)
-                  "dm6"  = file.path(ann_base, "Drosophila_melanogaster.BDGP6.46.111.gtf"),
-                  "danRer11" = c(file.path(hisat2_base, "danRer11", "genome.gtf"), file.path(ann_base, "Danio_rerio.GRCz11.111.gtf")),
-                  "wbcel235" = c(file.path(hisat2_base, "wbcel235", "genome.gtf"), file.path(ann_base, "Caenorhabditis_elegans.WBcel235.111.gtf")),
-                  "r64" = c(file.path(hisat2_base, "r64", "genome.gtf"), file.path(ann_base, "Saccharomyces_cerevisiae.R64-1-1.111.gtf")),
-                  file.path(hisat2_base, gb, "genome.gtf"))
-                gtf_file <- first_existing(gtf_candidates)
-                if (is.null(gtf_file) && gb == "mm10") {
-                  gtf_file <- first_existing(file.path(ann_base, "gencode.vM36.annotation.gtf"))
-                  if (!is.null(gtf_file)) {
-                    write_log("GENCODE vM25 (mm10) annotation not installed; using vM36 (GRCm39 coordinates). Gene assignment may be slightly reduced.", "warning")
-                  }
-                }
-              }
-              if (!file.exists(paste0(hisat2_index, ".1.ht2"))) {
-                stop(paste0("HISAT2 index for genome '", gb, "' is not installed on the server. ",
-                            "Choose another genome, use Salmon (hg38/mm10), or run locally with Docker."))
-              }
-              if (is.null(gtf_file)) {
-                stop(paste0("No gene annotation (GTF) matching the '", gb, "' assembly is installed on the server. ",
-                            "Choose another genome or use the Custom Genome option with your own FASTA + GTF."))
-              }
-              write_log(paste0("Reference: ", gb, " | index: ", hisat2_index, " | annotation: ", basename(gtf_file)), "info")
-
-              # Harmonise chromosome names between the index and the annotation
-              # (UCSC "chr2L"/"chrM" vs Ensembl "2L"/"MT"). Only renames; never changes coordinates.
-              idx_seqs <- tryCatch({
-                x <- system(paste("hisat2-inspect -n", shQuote(hisat2_index)), intern = TRUE)
-                unique(sub("\\s.*$", "", x))
-              }, error = function(e) character(0))
-              reader <- if (grepl("\\.gz$", gtf_file)) "zcat" else "cat"
-              gtf_seqs <- tryCatch(
-                system(paste(reader, shQuote(gtf_file), "| grep -v '^#' | cut -f1 | sort -u"), intern = TRUE),
-                error = function(e) character(0))
-              if (length(idx_seqs) > 0 && length(gtf_seqs) > 0 && !any(gtf_seqs %in% idx_seqs)) {
-                to_ucsc <- ifelse(gtf_seqs %in% c("MT", "M", "mitochondrion_genome"), "chrM", paste0("chr", gtf_seqs))
-                from_ucsc <- ifelse(gtf_seqs == "chrM", "MT", sub("^chr", "", gtf_seqs))
-                new_names <- if (sum(to_ucsc %in% idx_seqs) >= sum(from_ucsc %in% idx_seqs)) to_ucsc else from_ucsc
-                keep_map <- new_names %in% idx_seqs
-                if (!any(keep_map)) {
-                  stop("Chromosome names in the annotation do not match the genome index - check that the GTF belongs to the selected assembly")
-                }
-                map_file <- file.path(work_dir, "seqname_map.tsv")
-                writeLines(paste(gtf_seqs[keep_map], new_names[keep_map], sep = "\t"), map_file)
-                harmonised_gtf <- file.path(work_dir, "annotation_harmonised.gtf")
-                run_cmd_or_fail(paste(reader, shQuote(gtf_file), "| awk 'BEGIN{FS=OFS=\"\\t\"} NR==FNR{m[$1]=$2; next} /^#/{next} ($1 in m){$1=m[$1]; print}'",
-                                      shQuote(map_file), "- >", shQuote(harmonised_gtf)),
-                                "Annotation chromosome-name harmonisation")
-                write_log(paste("Harmonised annotation chromosome names to match the genome index (", sum(keep_map), "sequences)"), "info")
-                gtf_file <- harmonised_gtf
-              }
-              pe_flag <- if (params$sequencing_type == "paired") "-p --countReadPairs" else ""
-            }
-
-            # ---------------- Per-sample processing ----------------
-            fc_files <- character(0); quant_dirs <- character(0)
-            for (si in seq_len(n_samples)) {
-              s <- samples[[si]]; base <- s$base
-              step_pct <- function(frac) write_progress(15 + round(80 * ((si - 1) + frac) / n_samples),
-                                                        sprintf("Sample %d of %d (%s)", si, n_samples, base))
-              step_pct(0); write_log(sprintf("Sample %d of %d: %s", si, n_samples, base), "progress")
-
-              # 0. Download this run (public data only), with retries
-              if (!is.null(s$urls)) {
-                for (u in seq_along(s$urls)) {
-                  ok <- FALSE
-                  for (attempt in 1:4) {
-                    rc <- tryCatch(utils::download.file(s$urls[u], s$files[u], mode = "wb", quiet = TRUE, method = "libcurl"),
-                                   error = function(e) 1L)
-                    if (identical(as.integer(rc), 0L) && file.exists(s$files[u]) && file.size(s$files[u]) > 0) { ok <- TRUE; break }
-                    unlink(s$files[u]); Sys.sleep(15 * attempt)
-                  }
-                  if (!ok) stop(paste0("Download failed for ", basename(s$urls[u]), " (run ", base, ") after 4 attempts"))
-                }
-                write_log(sprintf("Downloaded %s (%.2f GB)", base, sum(file.size(s$files)) / 1024^3), "success")
-              }
-
-              # 1. FastQC on raw reads
-              run_cmd_or_fail(paste("fastqc", paste(shQuote(s$files), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_raw")),
-                                    "-t", length(s$files), "--quiet"), "FastQC (raw reads)", base)
-              # 2. Trimming
-              if (params$sequencing_type == "paired") {
-                tr <- file.path(work_dir, paste0(base, c("_R1_paired.fastq.gz", "_R1_unpaired.fastq.gz", "_R2_paired.fastq.gz", "_R2_unpaired.fastq.gz")))
-                run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "PE -threads 4 -phred33",
-                                      shQuote(s$files[1]), shQuote(s$files[2]), paste(shQuote(tr), collapse = " "),
-                                      "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-PE.fa:2:30:10",
-                                      "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
-                trimmed <- tr[c(1, 3)]; unlink(tr[c(2, 4)])
-              } else {
-                trimmed <- file.path(work_dir, paste0(base, "_trimmed.fastq.gz"))
-                run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "SE -threads 4 -phred33",
-                                      shQuote(s$files), shQuote(trimmed),
-                                      "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-SE.fa:2:30:10",
-                                      "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
-              }
-              # 3. FastQC on trimmed reads
-              run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_trimmed")),
-                                    "-t", length(trimmed), "--quiet"), "FastQC (trimmed reads)", base)
-              unlink(s$files)                                   # raw reads no longer needed
-              step_pct(0.4)
-
-              # 4. Quantification
-              if (quant_method == "salmon") {
-                sample_dir <- file.path(salmon_output_dir, base)
-                reads <- if (length(trimmed) == 2) paste("-1", shQuote(trimmed[1]), "-2", shQuote(trimmed[2])) else paste("-r", shQuote(trimmed))
-                run_cmd_or_fail(paste("salmon quant -i", shQuote(salmon_index_dir), "-l A", reads,
-                                      "--gcBias --seqBias --validateMappings -p", n_threads, "-o", shQuote(sample_dir),
-                                      ">", shQuote(file.path(output_dir, "alignment_logs", paste0(base, ".salmon.log"))), "2>&1"),
-                                "Salmon quantification", base)
-                quant_dirs <- c(quant_dirs, sample_dir)
-                unlink(trimmed)
-              } else {
-                sorted_bam <- file.path(work_dir, paste0(base, "_sorted.bam"))
-                reads <- if (length(trimmed) == 2) paste("-1", shQuote(trimmed[1]), "-2", shQuote(trimmed[2])) else paste("-U", shQuote(trimmed))
-                # stream alignments straight into a sorted BAM (no SAM file on disk)
-                run_cmd_or_fail(paste("bash -c", shQuote(paste(
-                  "set -o pipefail; hisat2 -p", n_threads, "--dta -x", shQuote(hisat2_index), reads,
-                  "2>", shQuote(file.path(output_dir, "alignment_logs", paste0(base, ".hisat2.log"))),
-                  "| samtools sort -@", n_threads, "-T", shQuote(file.path(work_dir, paste0(base, "_sorttmp"))),
-                  "-o", shQuote(sorted_bam), "-"))), "HISAT2 alignment", base)
-                unlink(trimmed)                                 # trimmed reads no longer needed
-                step_pct(0.8)
-                fc_out <- file.path(work_dir, paste0("fc_", base, ".txt"))
-                run_cmd_or_fail(paste("featureCounts -T", n_threads, pe_flag, "-a", shQuote(gtf_file), "-o", shQuote(fc_out),
-                                      shQuote(sorted_bam), "> /dev/null 2>&1"), "featureCounts quantification", base)
-                fc_files <- c(fc_files, fc_out)
-                unlink(sorted_bam)                              # alignments no longer needed
-              }
-              write_log(sprintf("Sample %d of %d done: %s (temporary files removed)", si, n_samples, base), "success")
-            }
-
-            # ---------------- Combine samples ----------------
-            write_progress(95, "Combining samples...")
-            if (quant_method == "salmon") {
-              quant_files <- file.path(quant_dirs, "quant.sf")
-              names(quant_files) <- basename(quant_dirs)
-              existing_quants <- quant_files[file.exists(quant_files)]
-              if (length(existing_quants) == 0) stop("No Salmon quant.sf files found")
-              tx_ids <- read.table(existing_quants[1], header = TRUE, sep = "\t", stringsAsFactors = FALSE)$Name
-              gene_ids <- if (any(grepl("\\|", tx_ids))) {
-                sapply(strsplit(tx_ids, "\\|"), function(x) sub("\\.\\d+$", "", x[2]))
-              } else sub("\\.\\d+$", "", tx_ids)
-              tx2gene <- data.frame(TXNAME = tx_ids, GENEID = gene_ids, stringsAsFactors = FALSE)
-              txi <- tximport::tximport(existing_quants, type = "salmon", tx2gene = tx2gene,
-                                        countsFromAbundance = "no", ignoreTxVersion = TRUE)
-              gene_counts <- as.data.frame(round(txi$counts))
-              gene_counts <- cbind(Geneid = rownames(gene_counts), gene_counts)
-              write.table(gene_counts, counts_file, sep = "\t", row.names = FALSE, quote = FALSE)
-              write_log(paste("Gene-level counts matrix:", nrow(gene_counts), "genes x", ncol(gene_counts) - 1, "samples"), "success")
-              tpm_df <- as.data.frame(txi$abundance)
-              tpm_df <- cbind(Geneid = rownames(tpm_df), tpm_df)
-              write.table(tpm_df, file.path(output_dir, "counts", "salmon_tpm.txt"), sep = "\t", row.names = FALSE, quote = FALSE)
-              write_log("Salmon quantification pipeline completed", "success")
-            } else {
-              tabs <- lapply(fc_files, function(f) read.delim(f, comment.char = "#", check.names = FALSE, stringsAsFactors = FALSE))
-              merged <- tabs[[1]]
-              if (length(tabs) > 1) for (k in 2:length(tabs)) {
-                if (!identical(tabs[[k]]$Geneid, merged$Geneid)) stop("Per-sample count tables do not share the same genes")
-                merged <- cbind(merged, tabs[[k]][, 7, drop = FALSE])
-              }
-              writeLines("# Program:featureCounts; per-sample runs combined by TransXplorer", counts_file)
-              suppressWarnings(write.table(merged, counts_file, sep = "\t", row.names = FALSE, quote = FALSE, append = TRUE))
-              sums <- lapply(paste0(fc_files, ".summary"), function(f) read.delim(f, check.names = FALSE, stringsAsFactors = FALSE))
-              summary_merged <- sums[[1]]
-              if (length(sums) > 1) for (k in 2:length(sums)) summary_merged <- cbind(summary_merged, sums[[k]][, 2, drop = FALSE])
-              write.table(summary_merged, paste0(counts_file, ".summary"), sep = "\t", row.names = FALSE, quote = FALSE)
-              write_log(paste("Gene expression quantification completed:", nrow(merged), "genes x", ncol(merged) - 6, "samples"), "success")
-            }
-            unlink(work_dir, recursive = TRUE)
-
-            # Step 6: Complete
-            write_progress(95, "Finalizing results...")
-            write_log("Generating summary...", "progress")
-
-            summary_file <- paste0(counts_file, ".summary")
-            summary_data <- if (file.exists(summary_file)) {
-              tryCatch(read.table(summary_file, header = TRUE, sep = "\t", row.names = 1, check.names = FALSE),
-                       error = function(e) NULL)
-            } else NULL
-
-            # Keep the results with the job (counts, QC reports, Salmon quantifications), so they
-            # can be retrieved by job ID after the browser session has ended
-            permanent <- FALSE
-            if (!is.null(params$job_dir)) {
-              keep_out <- file.path(params$job_dir, basename(output_dir))
-              dir.create(keep_out, recursive = TRUE, showWarnings = FALSE)
-              for (sub in c("counts", "fastqc_raw", "fastqc_trimmed", "salmon_quant", "alignment_logs")) {
-                if (dir.exists(file.path(output_dir, sub))) file.copy(file.path(output_dir, sub), keep_out, recursive = TRUE)
-              }
-              output_dir <- keep_out
-              counts_file <- file.path(output_dir, "counts", "feature_counts.txt")
-              summary_file <- paste0(counts_file, ".summary")
-              permanent <- TRUE
-            }
-
-            write_progress(100, "Complete!")
-            write_log("Analysis completed successfully!", "success")
-
-            result <- list(
-              success = TRUE,
-              counts_file = counts_file,
-              summary_file = summary_file,
-              summary_data = summary_data,
-              output_dir = output_dir,
-              job_id = params$job_id,
-              permanent = permanent
-            )
-            saveRDS(result, completion_file)
-            tryCatch({
-              qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
-              if (!is.null(params$job_id)) qm$update_job_status(params$job_id, "complete")
-            }, error = function(e) NULL)
-            try(unlink(params$tmp_dir, recursive = TRUE), silent = TRUE)
-
-          }, error = function(e) {
-            write_log(paste("Pipeline error:", e$message), "error")
-            write_progress(0, paste("Error:", e$message))
-            saveRDS(list(success = FALSE, error = e$message, job_id = params$job_id), completion_file)
-            tryCatch({
-              qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
-              if (!is.null(params$job_id)) qm$update_job_status(params$job_id, "error", error = e$message)
-            }, error = function(e2) NULL)
-            try(unlink(params$tmp_dir, recursive = TRUE), silent = TRUE)   # no retry from these files; free the disk
-          })
-},
-        args = list(
-          params_file = bg_params_file,
-          completion_file = completion_file,
-          app_dir = getwd()
-        ),
-        supervise = FALSE,
-        cleanup = FALSE,        # keep running when the session or app process ends
-        cleanup_tree = FALSE,
-        stdout = file.path(job_dir, "bg_stdout.txt"),  # files, not pipes: a pipe to an exited
-        stderr = file.path(job_dir, "bg_stderr.txt"),  # Shiny process would kill the job (SIGPIPE)
-        poll_connection = FALSE
-      )
-
-      # Store background process reference for polling
-      values$bg_process <- bg_process
-      values$completion_file <- completion_file
-      values$bg_job_id <- queue_status$job_id
+      if (identical(state$status, "queued")) {
+        update_processing_log(sprintf("All processing slots are busy: your job is number %s in the queue and starts automatically",
+                                      state$position), "info")
+        showNotification(HTML(paste0("<strong>Job ID: ", job_id, "</strong><br>",
+                                     "All processing slots are busy, so your job is waiting in the queue (position ", state$position, "). ",
+                                     "It starts automatically; you can close this page and enter the ID under ",
+                                     "<em>Retrieve results by job ID</em> later.")),
+                         type = "warning", duration = NULL)
+      } else {
+        showNotification(HTML(paste0("<strong>Job ID: ", job_id, "</strong><br>",
+                                     "Keep this ID. The analysis keeps running if you close this page; ",
+                                     "enter the ID under <em>Retrieve results by job ID</em> to get the results later.")),
+                         type = "message", duration = NULL)
+      }
   }
-
-  # If the browser session ends: a running job keeps going (it saves its results under its job
-  # ID and updates the queue itself); a job still waiting in the queue is withdrawn, because it
-  # can only be started from an open session.
-  session$onSessionEnded(function() {
-    jid <- isolate(queue_status$job_id)
-    if (is.null(jid)) return()
-    pos <- tryCatch(get_queue_position(isolate(queue_status$session_id)), error = function(e) NULL)
-    if (!is.null(pos) && identical(pos$status, "queued")) {
-      tryCatch(update_job_status(jid, "error", error = "Session ended while the job was waiting in the queue"),
-               error = function(e) NULL)
-    }
-  })
 
   # ===== Check FASTQ names at upload time (not only when Start is clicked) =====
   observeEvent(list(fastq_uploads(), input$sequencing_type, tx_active_uploads()), {
     req(fastq_uploads(), tx_active_uploads() == 0)
 errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
     errs <- errs[grepl("Paired-end|missing their R1|Invalid file format|exceeds", errs)]
-    if (length(errs) > 0) {
+    nm <- fastq_uploads()$name
+    r1 <- grepl("_R?1(_[0-9]{3})?\\.(fastq|fq)", nm, ignore.case = TRUE)
+    r2 <- grepl("_R?2(_[0-9]{3})?\\.(fastq|fq)", nm, ignore.case = TRUE)
+    if (identical(input$sequencing_type, "single") && any(r1) && sum(r1) == sum(r2)) {
+      errs <- c(errs, paste("These files look like paired-end reads (_1/_2 or _R1/_R2 names). If they are,",
+                            "choose <strong>Paired-end</strong>; with Single-end each file is analysed as a separate sample."))
+    }
+if (length(errs) > 0) {
       showNotification(HTML(paste(c("<strong>Please check your files before starting:</strong>", errs), collapse = "<br>")),
                        type = "warning", duration = 20)
     }
@@ -47815,7 +47863,7 @@ errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
     accs <- accs[nzchar(accs)]
     ok <- grepl("^(SRR|ERR|DRR|SRX|ERX|DRX|SRS|ERS|DRS|SRP|ERP|DRP|PRJNA|PRJEB|PRJDB|SAMN|SAME|SAMD)[0-9]+$", accs)
     if (!any(ok)) stop("No valid accessions found. Use run (SRR/ERR/DRR), experiment, sample, study (SRP/ERP) or project (PRJNA/PRJEB) accessions.")
-    fields <- "run_accession,sample_accession,sample_title,scientific_name,library_layout,library_strategy,fastq_ftp,fastq_bytes,read_count"
+    fields <- "run_accession,sample_accession,sample_title,scientific_name,library_layout,library_strategy,fastq_ftp,fastq_bytes,fastq_md5,read_count"
     tabs <- lapply(accs[ok], function(a) {
       url <- paste0("https://www.ebi.ac.uk/ena/portal/api/filereport?accession=", a,
                     "&result=read_run&fields=", fields, "&format=tsv&limit=0")
@@ -47829,8 +47877,11 @@ errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
       b <- suppressWarnings(as.numeric(strsplit(tab$fastq_bytes[i], ";", fixed = TRUE)[[1]]))
       keep <- if (identical(tab$library_layout[i], "PAIRED")) grepl("_[12]\\.f(ast)?q\\.gz$", f) else rep(TRUE, length(f))
       if (identical(tab$library_layout[i], "SINGLE") && length(f) > 1) keep <- !grepl("_[12]\\.f(ast)?q\\.gz$", f) | length(f) == 1
-      list(urls = paste0("https://", f[keep]), bytes = sum(b[keep], na.rm = TRUE), n = sum(keep))
+      m <- strsplit(tab$fastq_md5[i] %||% "", ";", fixed = TRUE)[[1]]
+      list(urls = paste0("https://", f[keep]), bytes = sum(b[keep], na.rm = TRUE), n = sum(keep),
+           md5 = if (length(m) == length(f)) paste(m[keep], collapse = ";") else "")
     })
+    tab$fastq_md5 <- vapply(pick, function(x) x$md5, "")
     tab$fastq_urls <- vapply(pick, function(x) paste(x$urls, collapse = ";"), "")
     tab$total_bytes <- vapply(pick, function(x) x$bytes, 0)
     tab$n_files <- vapply(pick, function(x) x$n, 0L)
@@ -47956,10 +48007,20 @@ errs <- tryCatch(validate_fastq_inputs(input), error = function(e) character(0))
     pipeline_log_file <<- file.path(jdir, "log.txt")
     pipeline_progress_file <<- file.path(jdir, "progress.txt")
     comp <- file.path(jdir, "completion.rds")
+    tx_job_id(jid)
     if (!file.exists(comp)) {
+      st <- tryCatch(job_queue_state(jid), error = function(e) list(status = "none"))
       prog <- tryCatch(readLines(pipeline_progress_file, warn = FALSE)[1], error = function(e) "")
-      showNotification(paste0("Job ", jid, " is still running (", sub("^[0-9]+\\|", "", prog %||% ""),
-                              "). Check again later; the log below updates live."), type = "warning", duration = 10)
+      msg <- if (identical(st$status, "queued")) {
+        sprintf("Job %s is waiting in the queue (position %d). Its results load here when it finishes.", jid, st$position)
+      } else {
+        paste0("Job ", jid, " is still running (", sub("^[0-9]+\\|", "", prog %||% ""),
+               "). Its results load here when it finishes; the log below updates live.")
+      }
+      showNotification(msg, type = "warning", duration = 10)
+      values$fc_done <- FALSE
+      values$completion_file <- comp
+      values$bg_process <- jid
       return()
     }
     res <- tryCatch(readRDS(comp), error = function(e) list(success = FALSE, error = e$message))
@@ -48007,106 +48068,7 @@ for (error in validation_errors) {
     # Load sequencing packages for FASTQ processing
     load_sequencing_packages()
     
-    # ==========================================
-    # QUEUE SYSTEM CHECK (NEW CODE STARTS HERE)
-    # ==========================================
-    
-    # Check if we need to queue this job
-    queue_info <- get_queue_info()
-    
-    cat("Queue status:\n")
-    cat("  Active jobs:", queue_info$active_jobs, "\n")
-    cat("  Queued jobs:", queue_info$queued_jobs, "\n")
-    cat("  Max concurrent:", MAX_CONCURRENT_JOBS, "\n")
-    
-    if (queue_info$active_jobs >= MAX_CONCURRENT_JOBS) {
-      # Server is busy - add to queue
-      cat("Server busy - adding job to queue\n")
-      
-      job_id <- add_to_queue(
-        session_id = queue_status$session_id,
-        job_data = list(
-          fastq_files = fastq_uploads()$name,  # Store file names
-          fastq_paths = fastq_uploads()$datapath,  # Store paths
-genome = input$genome_build,
-          type = input$sequencing_type,
-          custom_genome = if(input$genome_build == "custom") input$custom_genome$name else NULL,
-          custom_gtf = if(input$genome_build == "custom") input$custom_gtf$name else NULL,
-          timestamp = Sys.time()
-        )
-      )
-      
-      queue_status$job_id <- job_id
-      queue_status$status <- "queued"
-      
-      # Get position in queue
-      position_info <- get_queue_position(queue_status$session_id)
-      
-      # Show notification
-      showNotification(
-        HTML(paste0(
-          "<strong>Analysis Queued</strong><br>",
-          "Your position: #", position_info$position, "<br>",
-          "Active jobs: ", queue_info$active_jobs, "<br>",
-          "Estimated wait: ~", position_info$position * 15, " minutes<br>",
-          "<small>Job ID: ", job_id, "</small>"
-        )),
-        type = "warning",
-        duration = NULL,  # Keep notification visible
-        closeButton = TRUE
-      )
-      
-      update_processing_log(
-        paste0("Analysis queued (Position #", position_info$position, ")"),
-        "info"
-      )
-
-      # Watch the queue: whenever a slot frees up, promote the oldest queued job.
-      # When the promoted job is ours, start the pipeline in this session.
-      if (!is.null(queue_watcher)) queue_watcher$destroy()
-      queue_watcher <<- observe({
-        invalidateLater(10000, session)
-        tryCatch(process_queue(), error = function(e) NULL)
-        pos <- tryCatch(get_queue_position(queue_status$session_id), error = function(e) NULL)
-        if (!is.null(pos) && identical(pos$status, "processing") &&
-            identical(pos$job_id, isolate(queue_status$job_id))) {
-          queue_watcher$destroy()
-          queue_watcher <<- NULL
-          queue_status$status <- "processing"
-          isolate({
-            update_processing_log("A processing slot is free - starting your queued analysis", "info")
-            start_fastq_pipeline()
-          })
-        }
-      })
-
-      # Don't proceed with processing - job is queued
-      return()
-    }
-    
-    # ==========================================
-    # SERVER IS AVAILABLE - PROCEED WITH ANALYSIS
-    # ==========================================
-    
-    cat("Server available - starting analysis\n")
-    
-    # Mark this session as processing
-    if (!is.null(queue_status$session_id)) {
-      # Create a processing job entry
-      job_id <- add_to_queue(
-        session_id = queue_status$session_id,
-        job_data = list(
-          fastq_files = fastq_uploads()$name,
-genome = input$genome_build,
-          type = input$sequencing_type,
-          timestamp = Sys.time()
-        )
-      )
-      queue_status$job_id <- job_id
-      update_job_status(job_id, "processing")
-    }
-    
-    start_fastq_pipeline()
+    tx_submit_fastq_job()
   }
   observeEvent(input$run_processing, tx_handle_run_request(FALSE))
   observeEvent(input$run_processing_ena, tx_handle_run_request(TRUE))
@@ -48181,22 +48143,11 @@ shinyjs::runjs("
       }
       values$fc_done <- TRUE
 
-      if (!is.null(values$bg_job_id)) {
-        update_job_status(values$bg_job_id, "complete", result_path = result$counts_file)
-      }
 
       showNotification("Analysis completed successfully!", type = "message", duration = 5)
       update_processing_log("All processing steps completed successfully", "success")
     } else {
-      # Update queue status to error
-      if (!is.null(queue_status$job_id)) {
-        update_job_status(
-          queue_status$job_id,
-          "error",
-          error = result$error
-        )
-      }
-      
+
       showNotification(
         paste("❌ Analysis failed:", result$error),
         type = "error",
