@@ -20572,7 +20572,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-09", tag = "Fixed",    text = "FASTQ jobs: queued jobs now start on their own even if you close the page, a job that stops unexpectedly frees its slot at once, and three jobs can run at the same time. Salmon now reports gene-level counts, count tables name each column by sample, and public downloads are checked against ENA's checksums."),
+  list(date = "2026-10-09", tag = "Fixed",    text = "TCGA: re-sequenced duplicate tumour samples (e.g. 89 in GBM) are counted once in differential expression and box plots; cohorts with fewer than 3 normal samples are no longer tested against normals, and cohorts without normals say what is compared; MA plots show the tested comparison."),
+list(date = "2026-10-09", tag = "Fixed",    text = "FASTQ jobs: queued jobs now start on their own even if you close the page, a job that stops unexpectedly frees its slot at once, and three jobs can run at the same time. Salmon now reports gene-level counts, count tables name each column by sample, and public downloads are checked against ENA's checksums."),
 list(date = "2026-10-06", tag = "New",      text = "Resumable FASTQ uploads: large files upload in chunks, continue automatically after a dropped connection, and stay on the server for 3 days so you can reload the page or come back later before starting."),
 list(date = "2026-10-06", tag = "New",      text = "Analyse public RNA-seq data by SRA/ENA accession: the server downloads each run itself (up to 200 GB per job). Uploads can now be up to 40 GB, and samples are processed one at a time to keep disk use low."),
   list(date = "2026-10-06", tag = "New",      text = "FASTQ runs now keep going if you close the page: every run gets a job ID, and results can be retrieved later with \u201cRetrieve results by job ID\u201d."),
@@ -103794,7 +103795,21 @@ document.addEventListener("DOMContentLoaded", function() {
         setProgress(value = 0.25, message = "Extracting expression matrix")
         counts <- SummarizedExperiment::assay(data)
         coldata <- as.data.frame(SummarizedExperiment::colData(data))
-        
+
+        # One sample per patient and sample type (barcode characters 1-15). TCGA re-sequenced
+        # some tumours (e.g. 89 GBM samples on a second plate); keeping both copies would count
+        # one patient twice. The first barcode in sort order is kept.
+        bc <- colnames(counts)
+        o <- order(bc)
+        keep_samples <- (!duplicated(substr(bc[o], 1, 15)))[order(o)]
+        n_duplicates <- sum(!keep_samples)
+        counts <- counts[, keep_samples, drop = FALSE]
+        coldata <- coldata[keep_samples, , drop = FALSE]
+        vital_status <- table(coldata$vital_status)
+        definition <- table(coldata$definition)
+        tissue_or_organ <- table(coldata$tissue_or_organ_of_origin)
+        if (n_duplicates > 0) cat("Removed", n_duplicates, "re-sequenced duplicate samples\n")
+
         cat("Data loaded:", nrow(counts), "genes x", ncol(counts), "samples\n")
         
         # Pre-filter genes with zero expression across all samples for speed
@@ -103819,7 +103834,9 @@ document.addEventListener("DOMContentLoaded", function() {
         # Validate groups
         group_counts <- table(coldata$group)
         if (length(group_counts) < 2) {
-          showNotification("Need at least 2 groups for DEG analysis.", type = "error", duration = 10)
+          showNotification(paste(input$project_id, "has only one sample type, so there is nothing to compare."), type = "error", duration = 10)
+          shinyjs::enable("submit")
+          shinyjs::html("submit", "<i class='fa fa-play'></i> Run Analysis")
           return()
         }
 
@@ -103832,7 +103849,27 @@ document.addEventListener("DOMContentLoaded", function() {
         test_level <- if (length(primary_levels) > 0) primary_levels[1] else
           names(sort(group_counts[other_levels], decreasing = TRUE))[1]
         test_coef <- paste0("group", test_level)
-        
+
+        reset_submit <- function() {
+          shinyjs::enable("submit")
+          shinyjs::html("submit", "<i class='fa fa-play'></i> Run Analysis")
+        }
+        if (min(group_counts[[ref_level]], group_counts[[test_level]]) < 3) {
+          showNotification(sprintf("%s: cannot compare %s (n = %d) with %s (n = %d). Each group needs at least 3 samples%s.",
+                                   input$project_id, gsub("_", " ", test_level), group_counts[[test_level]],
+                                   gsub("_", " ", ref_level), group_counts[[ref_level]],
+                                   if (grepl("Normal", ref_level)) "; this cohort has too few normal tissue samples for a tumour-vs-normal test" else ""),
+                           type = "error", duration = 20)
+          reset_submit()
+          return()
+        }
+        if (!grepl("Normal", ref_level)) {
+          showNotification(sprintf("%s has no normal tissue samples, so this analysis compares %s (n = %d) with %s (n = %d).",
+                                   input$project_id, gsub("_", " ", test_level), group_counts[[test_level]],
+                                   gsub("_", " ", ref_level), group_counts[[ref_level]]),
+                           type = "warning", duration = 20)
+        }
+
         # Gene info
         gene_info <- as.data.frame(SummarizedExperiment::rowData(data))
         
@@ -103871,8 +103908,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
           if ("logFC" %in% names(res)) names(res)[names(res) == "logFC"] <- "log2FC"
 
-          assign("fit_tcga", fit, envir = .GlobalEnv)
-          
+
           # ============ EDGER (OPTIMIZED) ============
         } else if (input$analysis_method == "edgeR") {
           
@@ -103908,8 +103944,7 @@ document.addEventListener("DOMContentLoaded", function() {
           if ("FDR" %in% names(res)) names(res)[names(res) == "FDR"] <- "adj.P.Val"
           if ("PValue" %in% names(res)) names(res)[names(res) == "PValue"] <- "P.Value"
           
-          assign("qlf_tcga", qlf, envir = .GlobalEnv)
-          
+
           # ============ DESEQ2 (OPTIMIZED) ============
         } else if (input$analysis_method == "DESeq2") {
           
@@ -103949,8 +103984,7 @@ document.addEventListener("DOMContentLoaded", function() {
           if ("pvalue" %in% names(res)) names(res)[names(res) == "pvalue"] <- "P.Value"
           if ("baseMean" %in% names(res)) names(res)[names(res) == "baseMean"] <- "AveExpr"
           
-          assign("dds_tcga", dds, envir = .GlobalEnv)
-        }
+}
         
         # ============ POST-PROCESSING ============
         setProgress(value = 0.9, message = "Adding gene annotations")
@@ -103961,7 +103995,15 @@ document.addEventListener("DOMContentLoaded", function() {
         res$direction <- ifelse(res$log2FC > 0, "upregulated", "downregulated")
         
         res <- res[order(res$adj.P.Val), ]
-        
+
+        # MA plot data for the contrast actually tested (kept per session)
+        tcga_rv$ma <- list(
+          A = switch(input$analysis_method, edgeR = res$logCPM, DESeq2 = log10(res$AveExpr + 1), res$AveExpr),
+          M = res$log2FC, sig = res$adj.P.Val < 0.05,
+          xlab = switch(input$analysis_method, edgeR = "Average log2 CPM", DESeq2 = "log10 mean normalised count",
+                        "Average log2 expression (voom)"),
+          title = sprintf("MA plot (%s)\n%s vs %s", input$analysis_method, gsub("_", " ", test_level), gsub("_", " ", ref_level)))
+
         # Count DEGs
         sig_up <- sum(res$log2FC >= input$log2fc_threshold & 
                         res$adj.P.Val <= input$adj_pval_threshold_tcga, na.rm = TRUE)
@@ -103982,7 +104024,8 @@ document.addEventListener("DOMContentLoaded", function() {
             filtered_genes = sum(keep),
             samples_per_group = group_counts,
             total_samples = ncol(counts),
-            normalization = input$normalization_method,
+            duplicates_removed = n_duplicates,
+normalization = input$normalization_method,
             method = input$analysis_method,
             reference_group = levels(coldata$group)[1],
             test_group = test_level,
@@ -104014,7 +104057,8 @@ document.addEventListener("DOMContentLoaded", function() {
         shinyjs::html("submit", "<i class='fa fa-play'></i> Run Analysis")
         
         showNotification(
-          paste0("Analysis complete! Found ", sig_up, " upregulated and ", sig_down, " downregulated genes."),
+          paste0("Analysis complete! Found ", sig_up, " upregulated and ", sig_down, " downregulated genes.",
+                 if (n_duplicates > 0) paste0(" (", n_duplicates, " re-sequenced duplicate samples were counted once.)") else ""),
           type = "message", duration = 8
         )
         
@@ -104033,8 +104077,8 @@ document.addEventListener("DOMContentLoaded", function() {
   }) # end observeEvent
   
   # Re-enable submit button when user changes any analysis parameter
-  observeEvent(list(input$project_id, input$exp_strategy, input$analysis_method, 
-                    input$norm_method, input$pval_threshold, input$fc_threshold), {
+  observeEvent(list(input$project_id, input$exp_strategy, input$analysis_method,
+                    input$normalization_method, input$adj_pval_threshold_tcga, input$log2fc_threshold), {
                       # Only re-enable if button is currently disabled
                       shinyjs::enable("submit")
                       shinyjs::html("submit", "<i class='fa fa-play'></i> Run Analysis")
@@ -104115,40 +104159,15 @@ document.addEventListener("DOMContentLoaded", function() {
     par(mar = c(5, 4, 4, 2), mgp = c(2.5, 1, 0))
     
     tryCatch({
-      method <- tcga_rv$results$analysis_info$method
-      
-      if (method == "limma" && exists("fit_tcga", envir = .GlobalEnv)) {
-        fit <- get("fit_tcga", envir = .GlobalEnv)
-        limma::plotMA(fit, main = "MA Plot (limma-voom)",
-                      xlab = "Average log-expression", ylab = "log2-fold change")
-        abline(h = 0, col = "red", lty = 2)
-        
-      } else if (method == "edgeR" && exists("qlf_tcga", envir = .GlobalEnv)) {
-        qlf <- get("qlf_tcga", envir = .GlobalEnv)
-        # Use limma::plotMA instead of edgeR::plotMD (deprecated)
-        # Create MA plot manually from the qlf object
-        res <- edgeR::topTags(qlf, n = Inf)$table
-        avg_expr <- res$logCPM
-        log_fc <- res$logFC
-        is_sig <- res$FDR < 0.05
-        
-        plot(avg_expr, log_fc,
-             pch = 20, cex = 0.5,
-             col = ifelse(is_sig, "red", "grey60"),
-             main = "MA Plot (edgeR)",
-             xlab = "Average log-CPM",
-             ylab = "log2-fold change")
-        abline(h = 0, col = "blue", lty = 2)
-        legend("topright", legend = c("Significant", "Not Significant"),
-               col = c("red", "grey60"), pch = 20, cex = 0.8)
-        
-      } else if (method == "DESeq2" && exists("dds_tcga", envir = .GlobalEnv)) {
-        dds <- get("dds_tcga", envir = .GlobalEnv)
-        DESeq2::plotMA(DESeq2::results(dds), main = "MA Plot (DESeq2)",
-                       ylim = c(-5, 5), colSig = "red", colNonSig = "grey60")
-      } else {
+      ma <- tcga_rv$ma
+      if (is.null(ma)) {
         plot(1, type = "n", main = "MA Plot", xlab = "", ylab = "", axes = FALSE)
         text(1, 1, "Plot not available", cex = 1.2)
+      } else {
+        plot(ma$A, ma$M, pch = 20, cex = 0.5, col = ifelse(ma$sig %in% TRUE, "red", "grey60"),
+             main = ma$title, cex.main = 1, xlab = ma$xlab, ylab = "log2 fold change")
+        abline(h = 0, col = "blue", lty = 2)
+        legend("topright", legend = c("FDR < 0.05", "Not significant"), col = c("red", "grey60"), pch = 20, cex = 0.8)
       }
     }, error = function(e) {
       plot(1, type = "n", main = "Error", xlab = "", ylab = "", axes = FALSE)
@@ -105742,43 +105761,15 @@ document.addEventListener("DOMContentLoaded", function() {
     par(mar = c(5, 4, 4, 2), mgp = c(2.5, 1, 0))
     
     tryCatch({
-      if (input$analysis_method == "limma") {
-        if (exists("fit_tcga", envir = .GlobalEnv)) {
-          fit <- get("fit_tcga", envir = .GlobalEnv)
-          limma::plotMA(fit, main = "MA Plot (limma-voom)",
-                        xlab = "Average log-expression",
-                        ylab = "log2-fold change")
-          abline(h = 0, col = "red", lty = 2)
-        }
-        
-      } else if (input$analysis_method == "edgeR") {
-        if (exists("qlf_tcga", envir = .GlobalEnv)) {
-          qlf <- get("qlf_tcga", envir = .GlobalEnv)
-          # Use manual MA plot instead of deprecated plotMD
-          res <- edgeR::topTags(qlf, n = Inf)$table
-          avg_expr <- res$logCPM
-          log_fc <- res$logFC
-          is_sig <- res$FDR < 0.05
-          
-          plot(avg_expr, log_fc,
-               pch = 20, cex = 0.5,
-               col = ifelse(is_sig, "red", "grey60"),
-               main = "MA Plot (edgeR)",
-               xlab = "Average log-CPM",
-               ylab = "log2-fold change")
-          abline(h = 0, col = "blue", lty = 2)
-        }
-        
-      } else if (input$analysis_method == "DESeq2") {
-        if (exists("dds_tcga", envir = .GlobalEnv)) {
-          dds <- get("dds_tcga", envir = .GlobalEnv)
-          # DESeq2 MA plot
-          DESeq2::plotMA(DESeq2::results(dds), 
-                         main = "MA Plot (DESeq2)",
-                         ylim = c(-5, 5),
-                         colSig = "red",
-                         colNonSig = "grey60")
-        }
+      ma <- tcga_rv$ma
+      if (is.null(ma)) {
+        plot(1, type = "n", main = "MA Plot", xlab = "", ylab = "", axes = FALSE)
+        text(1, 1, "Plot not available", cex = 1.2)
+      } else {
+        plot(ma$A, ma$M, pch = 20, cex = 0.5, col = ifelse(ma$sig %in% TRUE, "red", "grey60"),
+             main = ma$title, cex.main = 1, xlab = ma$xlab, ylab = "log2 fold change")
+        abline(h = 0, col = "blue", lty = 2)
+        legend("topright", legend = c("FDR < 0.05", "Not significant"), col = c("red", "grey60"), pch = 20, cex = 0.8)
       }
     }, error = function(e) {
       plot(1, type = "n", main = "Error generating MA plot",
@@ -107874,7 +107865,9 @@ document.addEventListener("DOMContentLoaded", function() {
 
           # Filter to Normal + Tumor samples
           valid_sample_types <- c("Solid Tissue Normal", "Primary solid Tumor")
-          valid_mask <- compact$sample_type %in% valid_sample_types
+          o <- order(compact$barcode)
+          first_copy <- (!duplicated(substr(compact$barcode[o], 1, 15)))[order(o)]   # one sample per patient and type
+          valid_mask <- compact$sample_type %in% valid_sample_types & first_copy
 
           expr_values <- compact$tpm[row_idx, valid_mask]
           sample_types <- compact$sample_type[valid_mask]
@@ -107889,8 +107882,10 @@ document.addEventListener("DOMContentLoaded", function() {
 
           gene_id <- get_gene_id(tcga_data, gene_symbol)
           valid_sample_types <- c("Solid Tissue Normal", "Primary solid Tumor")
-          valid_samples <- tcga_data@colData$definition %in% valid_sample_types
-          tcga_data_filtered <- tcga_data[, valid_samples]
+          o <- order(colnames(tcga_data))
+          first_copy <- (!duplicated(substr(colnames(tcga_data)[o], 1, 15)))[order(o)]
+          valid_samples <- tcga_data@colData$definition %in% valid_sample_types & first_copy
+tcga_data_filtered <- tcga_data[, valid_samples]
 
           tcga <- as.data.frame(assay(tcga_data_filtered, "tpm_unstrand"))
           if (!(gene_id %in% rownames(tcga))) stop(paste("Gene ID", gene_id, "not found"))
@@ -107911,8 +107906,9 @@ document.addEventListener("DOMContentLoaded", function() {
 
         # Check sample sizes
         counts <- table(gene_expression$SampleType)
-        if (length(counts) != 2 || any(counts == 0)) {
-          stop(paste("Insufficient samples. Counts:", paste(names(counts), "=", counts, collapse=", ")))
+        if (length(counts) != 2 || any(counts < 2)) {
+          stop(paste0("This cohort has too few samples to compare (", paste(names(counts), "=", counts, collapse = ", "),
+                      "); at least 2 normal and 2 tumour samples are needed."))
         }
 
         # Log transform
@@ -108051,7 +108047,8 @@ document.addEventListener("DOMContentLoaded", function() {
             days_to_last_follow_up = compact$days_to_follow_up,
             stringsAsFactors = FALSE
           )
-          cli_tcga$deceased <- ifelse(cli_tcga$vital_status == "Alive", FALSE, TRUE)
+          cli_tcga$deceased <- ifelse(cli_tcga$vital_status == "Dead", TRUE,
+                                      ifelse(cli_tcga$vital_status == "Alive", FALSE, NA))   # "Not Reported" = missing
           cli_tcga$overall_survival <- ifelse(
             cli_tcga$vital_status == "Alive",
             cli_tcga$days_to_last_follow_up,
@@ -108082,7 +108079,7 @@ document.addEventListener("DOMContentLoaded", function() {
           cli_tcga <- as.data.frame(colData(tcga_data))
           cli_tcga <- cli_tcga %>%
             mutate(
-              deceased = ifelse(vital_status == "Alive", FALSE, TRUE),
+              deceased = ifelse(vital_status == "Dead", TRUE, ifelse(vital_status == "Alive", FALSE, NA)),
               overall_survival = ifelse(vital_status == "Alive", days_to_last_follow_up, days_to_death),
               submitter_id = gsub('-01.*', '', rownames(cli_tcga))
             )
@@ -108136,7 +108133,13 @@ document.addEventListener("DOMContentLoaded", function() {
           filter(!is.na(overall_survival),
                  !is.na(deceased),
                  !is.na(strata))
-        
+        if (length(unique(analysis_data$strata)) < 2) {
+          stop(paste(gene_symbol, "has the same expression in at least half of the patients (often zero), so they cannot be split into HIGH and LOW groups at the median"))
+        }
+        if (sum(analysis_data$deceased) == 0) {
+          stop("No deaths are recorded among this cohort's patients with follow-up, so survival cannot be compared")
+        }
+
         
         
         # Survival analysis
