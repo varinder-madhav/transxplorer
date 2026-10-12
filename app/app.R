@@ -1936,7 +1936,7 @@ create_complete_compact_network_ui <- function() {
                         div(
                           style = "margin-top: 20px;",
                           actionButton(
-                            "run_network_analysis_systems",
+                            "run_network_analysis_systems_ppi",
                             div(
                               icon("play-circle"),
                               "Run PPI Analysis",
@@ -2342,10 +2342,10 @@ create_complete_compact_network_ui <- function() {
                                   border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); height: 140px;",
                                                   div(style = "display: flex; align-items: center; margin-bottom: 10px;",
                                                       icon("shield-alt", style = "font-size: 24px; color: #9C27B0; margin-right: 10px;"),
-                                                      span("Safety Profile", style = "font-weight: 600; color: #2c3e50;")
+                                                      span("Clinical Maturity", style = "font-weight: 600; color: #2c3e50;")
                                                   ),
                                                   h3(textOutput("kf_dc_safety"), style = "margin: 10px 0 5px 0; color: #9C27B0;"),
-                                                  p("Favorable Safety", style = "font-size: 0.85em; color: #7f8c8d; margin: 0;")
+                                                  p("Drugs at Phase II or later", style = "font-size: 0.85em; color: #7f8c8d; margin: 0;")
                                               )
                                        )
                                      ),
@@ -2408,7 +2408,7 @@ create_complete_compact_network_ui <- function() {
                                    column(3,
                                           div(class = "overview-stat-box safety-stat-box",
                                               div(class = "stat-number", textOutput("high_safety_drugs", inline = TRUE)),
-                                              div(class = "stat-label", "High Safety Score"),
+                                              div(class = "stat-label", "Drugs at Phase II+"),
                                               div(class = "stat-icon", icon("shield-alt"))
                                           )
                                    ),
@@ -2431,7 +2431,7 @@ create_complete_compact_network_ui <- function() {
                                  br(),
                                  div(
                                    h4("Disease-Based Drug Prioritization"),
-                                   p("Drugs prioritized based on clinical evidence, safety profiles, and disease relevance."),
+                                   p("Drugs ranked by OpenTargets clinical phase: highest phase reached plus phase-derived evidence, maturity and druggability tiers. No safety or toxicity data is used."),
                                    hr()
                                  ),
                                  # Target-Disease association heatmap
@@ -2494,12 +2494,12 @@ create_complete_compact_network_ui <- function() {
                                  DT::dataTableOutput("clinical_evidence_table")
                         ),
                         
-                        # Safety Assessment Tab
-                        tabPanel("Safety Assessment",
+                        # Clinical maturity tab (phase-based; no safety data is available)
+                        tabPanel("Clinical Maturity",
                                  br(),
                                  div(
-                                   h4("Drug Safety Profile Analysis"),
-                                   p("Safety scores and risk assessment for identified drugs."),
+                                   h4("Clinical Maturity of Identified Drugs"),
+                                   p("Highest clinical phase reached per drug (OpenTargets). This is not a safety or toxicity assessment."),
                                    hr()
                                  ),
                                  DT::dataTableOutput("safety_assessment_table")
@@ -2621,7 +2621,7 @@ create_complete_compact_network_ui <- function() {
                                  br(),
                                  div(
                                    h4("Drug Prioritization Analysis"),
-                                   p("Top candidate drugs ranked by a composite priority score that integrates number of DEG targets, database confidence, clinical development phase, and measured bioactivity."),
+                                   p("Top candidate drugs ranked by a composite priority score: number of DEG targets, DGIdb interaction confidence, highest clinical phase (unknown phase scores 0), publication and source counts, and a bonus when DGIdb and OpenTargets agree. Measured bioactivity (pChEMBL) is not used."),
                                    hr()
                                  ),
                                  # Row 1 — Two bar charts side-by-side
@@ -2952,7 +2952,7 @@ create_complete_compact_network_ui <- function() {
                                  br(),
                                  div(
                                    h4("Comprehensive Drug Ranking"),
-                                   p("Multi-factor prioritization combining bioactivity, clinical evidence, and target coverage."),
+                                   p("Composite score: DEG targets hit, DGIdb interaction confidence, highest clinical phase, publications, sources and DGIdb/OpenTargets agreement. Bioactivity values are not used."),
                                    div(style = "margin-bottom: 10px;",
                                        downloadButton("download_drug_prioritization_table", "📥 Download CSV",
                                                       class = "btn btn-success btn-sm")
@@ -3973,7 +3973,7 @@ create_complete_compact_network_ui <- function() {
                               class = "summary-card",
                               style = "background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;",
                               h3(textOutput("dominant_cell_type"), style = "margin: 10px 0; font-size: 24px;"),
-                              p("Dominant Cell Type", style = "margin: 0; font-size: 14px; opacity: 0.9;")
+                              p("Dominant Cell Type (EPIC only)", style = "margin: 0; font-size: 14px; opacity: 0.9;")
                             )
                           ),
                           column(
@@ -3982,7 +3982,7 @@ create_complete_compact_network_ui <- function() {
                               class = "summary-card",
                               style = "background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;",
                               h3(textOutput("deconv_confidence"), style = "margin: 10px 0; font-size: 36px;"),
-                              p("Confidence Score", style = "margin: 0; font-size: 14px; opacity: 0.9;")
+                              p("Method", style = "margin: 0; font-size: 14px; opacity: 0.9;")
                             )
                           ),
                           column(
@@ -4030,7 +4030,7 @@ create_complete_compact_network_ui <- function() {
                                   class = "panel panel-primary",
                                   div(
                                     class = "panel-heading",
-                                    h4(icon("chart-bar"), " Cell Type Proportions Across Samples", style = "margin: 0;")
+                                    h4(icon("chart-bar"), " Cell Type Composition Across Samples", style = "margin: 0;")
                                   ),
                                   div(
                                     class = "panel-body",
@@ -4133,8 +4133,9 @@ create_complete_compact_network_ui <- function() {
                                   style = "background: #e3f2fd; border-left: 4px solid #2196f3; padding: 15px;",
                                   icon("info-circle"),
                                   strong(" About this analysis: "),
-                                  "Compare cell type proportions between your sample groups (e.g., control vs tumor). ",
-                                  "Significant differences suggest group-specific cell type enrichment."
+                                  "Compare cell type scores (EPIC: fractions) across all of your sample groups. ",
+                                  "Kruskal-Wallis test per cell type (BH-adjusted across cell types) with pairwise Wilcoxon tests (BH-adjusted); ",
+                                  "samples without a group are excluded."
                                 )
                               )
                             ),
@@ -4231,7 +4232,7 @@ create_complete_compact_network_ui <- function() {
                                     style = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px 10px 0 0;",
                                     h4(
                                       icon("chart-area"), 
-                                      " Cell Type Proportions by Group",
+                                      " Cell Type Scores by Group",
                                       style = "color: white; margin: 15px; font-weight: 600;"
                                     )
                                   ),
@@ -4295,13 +4296,13 @@ create_complete_compact_network_ui <- function() {
                                 tags$ul(
                                   tags$li(
                                     tags$strong("xCell: "), 
-                                    "Enrichment scores (not proportions). Higher scores indicate higher presence/activity of that cell type. ",
-                                    "Scores are relative and should be compared across samples."
+                                    "Enrichment scores (not proportions). Compare a cell type across samples; ",
+                                    "scores of different cell types are not comparable. Aggregate ImmuneScore/StromaScore/MicroenvironmentScore are not shown as cell types."
                                   ),
                                   tags$li(
                                     tags$strong("MCP-counter: "), 
-                                    "Absolute scores that correlate with cell abundance. ",
-                                    "Higher values = more of that cell type present."
+                                    "Scores that correlate with the abundance of one cell type across samples. ",
+                                    "They are not fractions and are not comparable between cell types."
                                   ),
                                   tags$li(
                                     tags$strong("EPIC: "), 
@@ -4324,8 +4325,8 @@ create_complete_compact_network_ui <- function() {
                                   ),
                                   tags$li(
                                     tags$strong("Dominant cell type: "),
-                                    "The cell type with the highest average proportion across all samples. ",
-                                    "This gives you a quick overview of your tissue composition."
+                                    "The cell type with the highest average fraction across all samples. ",
+                                    "Reported for EPIC only; xCell and MCP-counter scores cannot be ranked across cell types."
                                   ),
                                   tags$li(
                                     tags$strong("DEG markers: "),
@@ -5295,7 +5296,7 @@ prepare_expression_for_deconv <- function(expression_matrix, organism = "human",
       matched_groups <- user_groups[match(sample_names, user_groups$sample), ]
       
       if (any(is.na(matched_groups$group))) {
-        warning("Some samples have no group assignment - these will be labeled as 'Unknown'")
+        warning("Some samples have no group assignment - these will be labeled 'Unknown' and excluded from group tests")
         matched_groups$group[is.na(matched_groups$group)] <- "Unknown"
       }
       
@@ -5310,26 +5311,13 @@ prepare_expression_for_deconv <- function(expression_matrix, organism = "human",
                                                       "(", table(sample_groups$group), ")", 
                                                       collapse = ", ")))
     } else {
-      warning("Invalid user_groups format - expected data.frame with 'sample' and 'group' columns")
-      warning("Falling back to automatic detection from sample names")
+      warning("Invalid user_groups format - expected data.frame with 'sample' and 'group' columns; group comparison will be skipped")
     }
   }
-  
-  # PRIORITY 2: Auto-detect from naming convention (if no user groups provided)
-  if (is.null(sample_groups) && any(grepl("_", sample_names))) {
-    print("🔍 Detecting sample groups from naming convention (format: SampleName_GroupName)")
-    sample_groups <- data.frame(
-      sample = sample_names,
-      group = sub(".*_", "", sample_names),
-      stringsAsFactors = FALSE
-    )
-    print(paste("   Groups found:", paste(unique(sample_groups$group), collapse = ", ")))
-  }
-  
-  # If still no groups detected
+
+  # Groups are never inferred from sample names; without user groups the group test is skipped
   if (is.null(sample_groups)) {
-    print("ℹ️  No sample groups detected")
-    print("   💡 Tip: Use SampleName_GroupName format or provide manual group assignments")
+    print("ℹ️  No sample groups provided - group comparison will be skipped")
   }
   
   # Step 8: Final validation
@@ -5495,99 +5483,74 @@ run_epic_deconv <- function(expr_matrix) {
 
 #RESULT EXTRACTION AND STANDARDIZATION
 
+# xCell aggregate signatures (sums over cell types, not cell types themselves)
+XCELL_AGGREGATE_SCORES <- c("ImmuneScore", "StromaScore", "MicroenvironmentScore")
+
+# Only EPIC returns per-sample cell fractions. xCell and MCP-counter return scores that are
+# comparable across samples for one cell type, but not across cell types.
+deconv_is_fraction_method <- function(method) identical(method, "epic")
+
+DECONV_SCORE_LABEL <- "Score (comparable across samples, not across cell types)"
+
+drop_xcell_aggregate_scores <- function(deconv_results, method) {
+  if (identical(method, "xcell") && !is.null(rownames(deconv_results))) {
+    deconv_results <- deconv_results[!rownames(deconv_results) %in% XCELL_AGGREGATE_SCORES, , drop = FALSE]
+  }
+  deconv_results
+}
+
+# Display table for a cell_composition data.frame (EPIC: fractions in %; other methods: scores)
+format_deconv_composition_table <- function(comp) {
+  out <- data.frame(`Cell Type` = comp$cell_type, check.names = FALSE, stringsAsFactors = FALSE)
+  if ("proportion" %in% colnames(comp)) {
+    out$`Mean fraction (%)` <- round(comp$proportion * 100, 2)
+    out$`SD (%)` <- round(comp$sd_score * 100, 2)
+  } else {
+    out[[paste("Mean", DECONV_SCORE_LABEL)]] <- signif(comp$mean_score, 4)
+    out$`SD of score` <- signif(comp$sd_score, 4)
+  }
+  out
+}
+
 extract_cell_composition <- function(deconv_results, method) {
-  
+
   print(paste("Extracting cell composition from", method, "results..."))
-  
+
   tryCatch({
-    
-    if (method == "xcell") {
-      # xCell returns enrichment scores (rows = cell types, columns = samples)
-      # These are NOT proportions but enrichment scores
-      
-      cell_types <- rownames(deconv_results)
-      n_samples <- ncol(deconv_results)
-      
-      composition <- data.frame(
-        cell_type = cell_types,
-        mean_score = rowMeans(deconv_results, na.rm = TRUE),
-        sd_score = apply(deconv_results, 1, sd, na.rm = TRUE),
-        stringsAsFactors = FALSE
-      )
-      
-      # Calculate pseudo-proportions (normalized scores)
-      composition$proportion <- composition$mean_score / sum(composition$mean_score, na.rm = TRUE)
-      
-      # FIXED: Add per-sample data correctly
-      # deconv_results is already cell_types (rows) x samples (cols)
-      # Just bind it directly - no transpose needed!
-      composition <- cbind(composition, as.data.frame(deconv_results))
-      
-    } else if (method == "mcp_counter") {
-      # MCP-counter returns absolute scores (rows = cell types, columns = samples)
-      
-      cell_types <- rownames(deconv_results)
-      
-      composition <- data.frame(
-        cell_type = cell_types,
-        mean_score = rowMeans(deconv_results, na.rm = TRUE),
-        sd_score = apply(deconv_results, 1, sd, na.rm = TRUE),
-        stringsAsFactors = FALSE
-      )
-      
-      # Normalize to proportions
-      composition$proportion <- composition$mean_score / sum(composition$mean_score, na.rm = TRUE)
-      
-      # FIXED: Add per-sample data correctly - no transpose!
-      composition <- cbind(composition, as.data.frame(deconv_results))
-      
+
+    # Orient as cell types (rows) x samples (columns); EPIC returns samples x cell types
+    if (method %in% c("xcell", "mcp_counter")) {
+      score_mat <- as.matrix(deconv_results)
     } else if (method == "epic") {
-      # EPIC returns actual cell fractions (rows = samples, columns = cell types)
-      
-      cell_types <- colnames(deconv_results)
-      
-      composition <- data.frame(
-        cell_type = cell_types,
-        mean_score = colMeans(deconv_results, na.rm = TRUE),
-        sd_score = apply(deconv_results, 2, sd, na.rm = TRUE),
-        proportion = colMeans(deconv_results, na.rm = TRUE),  # Already proportions
-        stringsAsFactors = FALSE
-      )
-      
-      # FIXED: For EPIC, we DO need transpose since it's samples x cell_types
-      composition <- cbind(composition, as.data.frame(t(deconv_results)))
+      score_mat <- t(as.matrix(deconv_results))
+    } else {
+      stop(paste("Unknown deconvolution method:", method))
     }
-    
-    # Add statistical significance (t-test against zero)
-    composition$p_value <- sapply(seq_len(nrow(composition)), function(i) {
-      # Get sample values for this cell type
-      # Sample columns start after the first 4 metadata columns
-      sample_cols <- 5:ncol(composition)
-      
-      if (length(sample_cols) > 0) {
-        values <- as.numeric(composition[i, sample_cols])
-        # Remove any non-numeric or NA values
-        values <- values[!is.na(values) & is.finite(values)]
-        
-        if (length(values) > 1) {
-          test_result <- tryCatch({
-            t.test(values, mu = 0)$p.value
-          }, error = function(e) {
-            return(NA)
-          })
-          return(test_result)
-        }
-      }
-      return(NA)
-    })
-    
-    # Sort by proportion (descending)
-    composition <- composition[order(-composition$proportion), ]
-    
+    score_mat <- drop_xcell_aggregate_scores(score_mat, method)
+
+    composition <- data.frame(
+      cell_type = rownames(score_mat),
+      mean_score = rowMeans(score_mat, na.rm = TRUE),
+      sd_score = apply(score_mat, 1, sd, na.rm = TRUE),
+      stringsAsFactors = FALSE
+    )
+
+    if (deconv_is_fraction_method(method)) {
+      # EPIC cellFractions are already per-sample fractions
+      composition$proportion <- composition$mean_score
+      composition <- cbind(composition, as.data.frame(score_mat))
+      composition <- composition[order(-composition$proportion), ]
+    } else {
+      # Scores are not normalised to 100%: they cannot be compared between cell types
+      composition <- cbind(composition, as.data.frame(score_mat))
+      composition <- composition[order(composition$cell_type), ]
+    }
+    rownames(composition) <- NULL
+
     print(paste("Extracted composition for", nrow(composition), "cell types"))
-    
+
     return(composition)
-    
+
   }, error = function(e) {
     print(paste("Error extracting cell composition:", e$message))
     stop(paste("Cell composition extraction error:", e$message))
@@ -5946,6 +5909,13 @@ perform_deconvolution_analysis <- function(expression_matrix,
   # ==========================================================================
   
   print("\n--- STEP 4: Processing deconvolution results ---")
+
+  # xCell aggregate scores are not cell types; kept separately and excluded from compositions
+  xcell_aggregate_scores <- NULL
+  if (identical(method, "xcell")) {
+    xcell_aggregate_scores <- deconv_results[rownames(deconv_results) %in% XCELL_AGGREGATE_SCORES, , drop = FALSE]
+    deconv_results <- drop_xcell_aggregate_scores(deconv_results, method)
+  }
   
   # Extract cell composition
   cell_composition <- extract_cell_composition(deconv_results, method)
@@ -5983,10 +5953,17 @@ perform_deconvolution_analysis <- function(expression_matrix,
   }
   
   group_comparison <- NULL
-  
-  if (!is.null(sample_groups) && length(unique(sample_groups$group)) > 1) {
-    print("\n--- STEP 6: Comparing cell type proportions between groups ---")
-    
+  group_comparison_note <- NULL
+
+  assigned_groups <- if (!is.null(sample_groups)) {
+    setdiff(unique(na.omit(as.character(sample_groups$group))), c("", "Unknown"))
+  } else {
+    character(0)
+  }
+
+  if (length(assigned_groups) > 1) {
+    print("\n--- STEP 6: Comparing cell type scores between all groups ---")
+
     group_comparison <- tryCatch({
       compare_cell_proportions_between_groups(
         deconv_results = deconv_results,
@@ -5995,19 +5972,26 @@ perform_deconvolution_analysis <- function(expression_matrix,
         method = method
       )
     }, error = function(e) {
-      print(paste("âš ï¸ Could not compare groups:", e$message))
+      print(paste("Could not compare groups:", e$message))
       NULL
     })
-    
-    if (!is.null(group_comparison)) {
-      print(paste("âœ… Compared", length(unique(sample_groups$group)), "groups"))
+
+    if (is.null(group_comparison)) {
+      group_comparison_note <- "Group comparison skipped: needs at least 2 groups with 2 or more samples each."
     }
+  } else {
+    group_comparison_note <- "Group comparison skipped: no sample groups were provided (at least 2 groups are needed)."
   }
-  
+  if (!is.null(group_comparison_note)) print(group_comparison_note)
+
   print("\n--- STEP 7: Preparing final results structure ---")
-  
-  # Get dominant cell type
-  dominant_cell_type <- cell_composition$cell_type[which.max(cell_composition$proportion)]
+
+  # Dominant cell type only makes sense for fractions (EPIC); scores are not comparable across cell types
+  dominant_cell_type <- if (deconv_is_fraction_method(method)) {
+    cell_composition$cell_type[which.max(cell_composition$proportion)]
+  } else {
+    "N/A (score-based method)"
+  }
   
   # Count marker genes with meaningful specificity only
   n_marker_genes <- if (!is.null(marker_gene_analysis)) {
@@ -6033,7 +6017,12 @@ perform_deconvolution_analysis <- function(expression_matrix,
     
     # Group comparison (if available)
     group_comparison = group_comparison,
-    
+    group_comparison_note = group_comparison_note,
+
+    # "fraction" (EPIC) or "score" (xCell, MCP-counter)
+    value_type = if (deconv_is_fraction_method(method)) "fraction" else "score",
+    xcell_aggregate_scores = xcell_aggregate_scores,
+
     # Data preparation info
     data_info = list(
       n_samples = ncol(prepared_data$expr_matrix),
@@ -6056,6 +6045,7 @@ perform_deconvolution_analysis <- function(expression_matrix,
         total_cell_types = nrow(cell_composition),
         dominant_cell_type = dominant_cell_type,
         confidence_score = confidence_score,
+        method = method,
         marker_genes = n_marker_genes,
         has_groups = !is.null(sample_groups)
       )
@@ -6309,343 +6299,236 @@ identify_cell_type_markers_for_degs <- function(deconv_results,
 }
 
 
-compare_cell_proportions_between_groups <- function(deconv_results, 
+compare_cell_proportions_between_groups <- function(deconv_results,
                                                     cell_composition,
-                                                    sample_groups, 
+                                                    sample_groups,
                                                     method) {
-  
-  print("Comparing cell type proportions between groups...")
-  
+
+  print("Comparing cell type scores between groups (Kruskal-Wallis + pairwise Wilcoxon)...")
+
   tryCatch({
-    
-    # Ensure sample names match
+
+    # Cell types (rows) x samples (columns) for every method
     if (method %in% c("xcell", "mcp_counter")) {
-      # Results are cell_types x samples
-      sample_names <- colnames(deconv_results)
+      score_mat <- as.matrix(deconv_results)
     } else if (method == "epic") {
-      # Results are samples x cell_types
-      sample_names <- rownames(deconv_results)
+      score_mat <- t(as.matrix(deconv_results))
+    } else {
+      stop(paste("Unknown deconvolution method:", method))
     }
-    
-    # Match sample groups to results
-    sample_groups_matched <- sample_groups[match(sample_names, sample_groups$sample), ]
-    
-    if (any(is.na(sample_groups_matched$group))) {
-      print("Some samples don't have group assignments")
+    score_mat <- drop_xcell_aggregate_scores(score_mat, method)
+
+    sample_group <- as.character(sample_groups$group[match(colnames(score_mat), sample_groups$sample)])
+
+    # Samples without a group assignment are excluded from the tests
+    assigned <- !is.na(sample_group) & sample_group != "" & sample_group != "Unknown"
+    if (any(!assigned)) {
+      print(paste("Excluding", sum(!assigned), "samples without a group assignment"))
     }
-    
-    # Get unique groups
-    groups <- unique(sample_groups_matched$group)
-    groups <- groups[!is.na(groups)]
-    
-    if (length(groups) < 2) {
-      print("Need at least 2 groups for comparison")
+
+    # A group needs at least 2 samples to be tested
+    group_sizes <- table(sample_group[assigned])
+    tested_groups <- names(group_sizes)[group_sizes >= 2]
+    if (length(tested_groups) < length(group_sizes)) {
+      print(paste("Groups with < 2 samples not tested:",
+                  paste(setdiff(names(group_sizes), tested_groups), collapse = ", ")))
+    }
+    if (length(tested_groups) < 2) {
+      print("Need at least 2 groups with >= 2 samples for comparison")
       return(NULL)
     }
-    
-    print(paste("Comparing groups:", paste(groups, collapse = " vs ")))
-    
-    # Prepare comparison table
-    comparison_results <- data.frame()
-    
-    if (method %in% c("xcell", "mcp_counter")) {
-      # For each cell type (row), compare groups
-      
-      for (cell_type in rownames(deconv_results)) {
-        
-        # Get values for each group
-        group1_vals <- deconv_results[cell_type, sample_groups_matched$group == groups[1]]
-        group2_vals <- deconv_results[cell_type, sample_groups_matched$group == groups[2]]
-        
-        # Remove NAs
-        group1_vals <- group1_vals[!is.na(group1_vals)]
-        group2_vals <- group2_vals[!is.na(group2_vals)]
-        
-        if (length(group1_vals) > 1 && length(group2_vals) > 1) {
-          
-          # Calculate means
-          mean_g1 <- mean(group1_vals)
-          mean_g2 <- mean(group2_vals)
-          
-          # Perform t-test with error handling for constant data
-          test_result <- tryCatch({
-            t.test(group1_vals, group2_vals)
-          }, error = function(e) {
-            # If t-test fails (e.g., "data are essentially constant"), 
-            # create a dummy result
-            if (grepl("essentially constant", e$message, ignore.case = TRUE)) {
-              # Data has no variance - create manual comparison
-              list(
-                p.value = if (abs(mean_g1 - mean_g2) < 1e-10) 1.0 else NA,
-                statistic = 0,
-                parameter = length(group1_vals) + length(group2_vals) - 2,
-                conf.int = c(NA, NA),
-                estimate = c(mean_g1, mean_g2),
-                null.value = 0,
-                alternative = "two.sided",
-                method = "Welch Two Sample t-test (failed - constant data)"
-              )
-            } else {
-              # Other errors - return NA result
-              list(p.value = NA)
-            }
-          })
-          
-          # Calculate effect size (Cohen's d)
-          mean_diff <- mean_g1 - mean_g2
-          pooled_sd <- sqrt((var(group1_vals) + var(group2_vals)) / 2)
-          
-          # Handle zero pooled_sd
-          if (pooled_sd == 0 || is.na(pooled_sd)) {
-            cohens_d <- 0
-          } else {
-            cohens_d <- mean_diff / pooled_sd
-          }
-          
-          # ================================================================
-          # FIX: Safe fold change calculation
-          # ================================================================
-          
-          # Define a small threshold to avoid division by near-zero
-          min_threshold <- 1e-10
-          
-          if (abs(mean_g2) < min_threshold && abs(mean_g1) < min_threshold) {
-            # Both means are essentially zero - no meaningful fold change
-            fold_change <- 1.0
-            fold_change_method <- "both_zero"
-            
-          } else if (abs(mean_g2) < min_threshold) {
-            # Denominator is zero/near-zero but numerator is not
-            # Report as "Inf" or very large number with cap
-            if (mean_g1 > 0) {
-              fold_change <- Inf
-              fold_change_method <- "divide_by_zero_positive"
-            } else {
-              fold_change <- -Inf
-              fold_change_method <- "divide_by_zero_negative"
-            }
-            
-          } else {
-            # Normal calculation
-            fold_change <- mean_g1 / mean_g2
-            fold_change_method <- "normal"
-          }
-          
-          # ================================================================
-          # Alternative: Log2 Fold Change (more robust for small values)
-          # ================================================================
-          
-          # Add pseudocount to avoid log(0)
-          pseudocount <- 1e-10
-          log2_fold_change <- log2((mean_g1 + pseudocount) / (mean_g2 + pseudocount))
-          
-          # ================================================================
-          
-          comparison_results <- rbind(comparison_results, data.frame(
-            cell_type = cell_type,
-            group1 = groups[1],
-            group2 = groups[2],
-            mean_group1 = mean_g1,
-            mean_group2 = mean_g2,
-            fold_change = fold_change,
-            log2_fold_change = log2_fold_change,  # Add this for better interpretation
-            p_value = test_result$p.value,
-            cohens_d = cohens_d,
-            significance = ifelse(test_result$p.value < 0.05, "Significant", "Not Significant"),
-            stringsAsFactors = FALSE
-          ))
+
+    in_test <- assigned & sample_group %in% tested_groups
+    g <- factor(sample_group[in_test], levels = tested_groups)
+
+    print(paste("Comparing groups:", paste(tested_groups, collapse = ", ")))
+
+    rows <- lapply(rownames(score_mat), function(cell_type) {
+      x <- as.numeric(score_mat[cell_type, in_test])
+      ok <- !is.na(x)
+      x <- x[ok]
+      gg <- droplevels(g[ok])
+      if (nlevels(gg) < 2) return(NULL)
+
+      group_means <- tapply(x, gg, mean)
+      kw_p <- tryCatch(stats::kruskal.test(x, gg)$p.value, error = function(e) NA_real_)
+
+      pw <- tryCatch(
+        suppressWarnings(stats::pairwise.wilcox.test(x, gg, p.adjust.method = "BH", exact = FALSE)$p.value),
+        error = function(e) NULL
+      )
+      pairwise_txt <- NA_character_
+      if (!is.null(pw)) {
+        pw_rows <- which(!is.na(pw), arr.ind = TRUE)
+        if (nrow(pw_rows) > 0) {
+          pairwise_txt <- paste(
+            paste0(rownames(pw)[pw_rows[, 1]], " vs ", colnames(pw)[pw_rows[, 2]], ": ",
+                   formatC(pw[pw_rows], format = "e", digits = 2)),
+            collapse = "; "
+          )
         }
       }
-      
-    } else if (method == "epic") {
-      # For each cell type (column), compare groups
-      
-      for (cell_type in colnames(deconv_results)) {
-        
-        # Get values for each group
-        group1_vals <- deconv_results[sample_groups_matched$group == groups[1], cell_type]
-        group2_vals <- deconv_results[sample_groups_matched$group == groups[2], cell_type]
-        
-        # Remove NAs
-        group1_vals <- group1_vals[!is.na(group1_vals)]
-        group2_vals <- group2_vals[!is.na(group2_vals)]
-        
-        if (length(group1_vals) > 1 && length(group2_vals) > 1) {
-          
-          # Calculate means
-          mean_g1 <- mean(group1_vals)
-          mean_g2 <- mean(group2_vals)
-          
-          # Perform t-test with error handling for constant data
-          test_result <- tryCatch({
-            t.test(group1_vals, group2_vals)
-          }, error = function(e) {
-            # If t-test fails (e.g., "data are essentially constant"), 
-            # create a dummy result
-            if (grepl("essentially constant", e$message, ignore.case = TRUE)) {
-              # Data has no variance - create manual comparison
-              list(
-                p.value = if (abs(mean_g1 - mean_g2) < 1e-10) 1.0 else NA,
-                statistic = 0,
-                parameter = length(group1_vals) + length(group2_vals) - 2,
-                conf.int = c(NA, NA),
-                estimate = c(mean_g1, mean_g2),
-                null.value = 0,
-                alternative = "two.sided",
-                method = "Welch Two Sample t-test (failed - constant data)"
-              )
-            } else {
-              # Other errors - return NA result
-              list(p.value = NA)
-            }
-          })
-          
-          mean_diff <- mean_g1 - mean_g2
-          pooled_sd <- sqrt((var(group1_vals) + var(group2_vals)) / 2)
-          
-          # Handle zero pooled_sd
-          if (pooled_sd == 0 || is.na(pooled_sd)) {
-            cohens_d <- 0
-          } else {
-            cohens_d <- mean_diff / pooled_sd
-          }
-          
-          # ================================================================
-          # FIX: Safe fold change calculation (same as above)
-          # ================================================================
-          
-          min_threshold <- 1e-10
-          
-          if (abs(mean_g2) < min_threshold && abs(mean_g1) < min_threshold) {
-            fold_change <- 1.0
-          } else if (abs(mean_g2) < min_threshold) {
-            fold_change <- ifelse(mean_g1 > 0, Inf, -Inf)
-          } else {
-            fold_change <- mean_g1 / mean_g2
-          }
-          
-          # Log2 fold change
-          pseudocount <- 1e-10
-          log2_fold_change <- log2((mean_g1 + pseudocount) / (mean_g2 + pseudocount))
-          
-          # ================================================================
-          
-          comparison_results <- rbind(comparison_results, data.frame(
-            cell_type = cell_type,
-            group1 = groups[1],
-            group2 = groups[2],
-            mean_group1 = mean_g1,
-            mean_group2 = mean_g2,
-            fold_change = fold_change,
-            log2_fold_change = log2_fold_change,
-            p_value = test_result$p.value,
-            cohens_d = cohens_d,
-            significance = ifelse(test_result$p.value < 0.05, "Significant", "Not Significant"),
-            stringsAsFactors = FALSE
-          ))
-        }
-      }
-    }
-    
-    # Adjust p-values for multiple testing
-    if (nrow(comparison_results) > 0) {
-      comparison_results$p_adjusted <- p.adjust(comparison_results$p_value, method = "BH")
-      
-      # Sort by p-value
-      comparison_results <- comparison_results[order(comparison_results$p_value), ]
-      
-      print(paste("Compared", nrow(comparison_results), "cell types between groups"))
-      print(paste("Significant differences (p < 0.05):", 
-                  sum(comparison_results$p_value < 0.05, na.rm = TRUE)))
-      
-      # Print warning for Inf fold changes
-      inf_count <- sum(is.infinite(comparison_results$fold_change))
-      if (inf_count > 0) {
-        print(paste("⚠️ Warning:", inf_count, "cell types have Inf fold change (division by zero/near-zero)"))
-        print("   These cell types have very low/zero expression in one group")
-        print("   Consider using log2_fold_change for better interpretation")
-      }
-    }
-    
+
+      data.frame(
+        cell_type = cell_type,
+        test = "Kruskal-Wallis",
+        n_groups = nlevels(gg),
+        groups = paste(levels(gg), collapse = ", "),
+        group_means = paste0(names(group_means), ": ", signif(group_means, 3), collapse = "; "),
+        p_value = kw_p,
+        pairwise_wilcoxon_bh = pairwise_txt,
+        stringsAsFactors = FALSE
+      )
+    })
+
+    comparison_results <- do.call(rbind, rows[!vapply(rows, is.null, logical(1))])
+    if (is.null(comparison_results) || nrow(comparison_results) == 0) return(NULL)
+
+    # BH across cell types
+    comparison_results$p_adjusted <- p.adjust(comparison_results$p_value, method = "BH")
+    comparison_results$significance <- ifelse(!is.na(comparison_results$p_adjusted) &
+                                                comparison_results$p_adjusted < 0.05,
+                                              "Significant", "Not Significant")
+    comparison_results <- comparison_results[order(comparison_results$p_value), ]
+    rownames(comparison_results) <- NULL
+
+    print(paste("Compared", nrow(comparison_results), "cell types across", length(tested_groups), "groups"))
+    print(paste("Significant differences (BH-adjusted p < 0.05):",
+                sum(comparison_results$significance == "Significant")))
+
     return(comparison_results)
-    
+
   }, error = function(e) {
     print(paste("Error in group comparison:", e$message))
     return(NULL)
   })
 }
 
+# Display table for the group comparison returned above
+format_deconv_group_comparison_table <- function(group_comp) {
+  data.frame(
+    `Cell Type` = group_comp$cell_type,
+    `Test` = group_comp$test,
+    `Groups` = group_comp$groups,
+    `Group means` = group_comp$group_means,
+    `P-value` = signif(group_comp$p_value, 3),
+    `Adj. P (BH)` = signif(group_comp$p_adjusted, 3),
+    `Sig.` = dplyr::case_when(
+      group_comp$p_adjusted < 0.001 ~ "***",
+      group_comp$p_adjusted < 0.01 ~ "**",
+      group_comp$p_adjusted < 0.05 ~ "*",
+      TRUE ~ "ns"
+    ),
+    `Pairwise Wilcoxon (BH-adj. p)` = group_comp$pairwise_wilcoxon_bh,
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+}
+
 
 
 # VISUALIZATION FUNCTIONS
 create_cell_composition_barplot <- function(deconv_results, method, sample_groups = NULL) {
-  
-  cat("Creating cell type composition bar plot...\n")
-  
+
+  cat("Creating cell type composition plot...\n")
+
   tryCatch({
     library(ggplot2)
     library(plotly)
     library(reshape2)
     library(dplyr)
-    
-    # Extract per-sample cell type scores
+
+    is_fraction <- deconv_is_fraction_method(method)
+
+    # Cell types (rows) x samples (columns)
     if (method %in% c("xcell", "mcp_counter")) {
       cell_type_matrix <- as.matrix(deconv_results)
-      sample_names <- colnames(cell_type_matrix)
-      cell_types <- rownames(cell_type_matrix)
     } else if (method == "epic") {
       cell_type_matrix <- t(as.matrix(deconv_results))
-      sample_names <- colnames(cell_type_matrix)
-      cell_types <- rownames(cell_type_matrix)
+    } else {
+      stop(paste("Unknown deconvolution method:", method))
     }
-    
+    cell_type_matrix <- drop_xcell_aggregate_scores(cell_type_matrix, method)
+    sample_names <- colnames(cell_type_matrix)
+    cell_types <- rownames(cell_type_matrix)
+
     cat("Samples:", length(sample_names), "\n")
     cat("Cell types:", length(cell_types), "\n")
-    
-    # Normalize to proportions per sample
-    cell_type_props <- apply(cell_type_matrix, 2, function(x) x / sum(x, na.rm = TRUE))
-    
-    # Convert to long format for plotting
-    plot_data <- melt(cell_type_props)
-    colnames(plot_data) <- c("cell_type", "sample", "proportion")
-    
+
+    # EPIC fractions are shown as %; xCell/MCP-counter scores are shown as-is (never rescaled to 100%)
+    plot_data <- melt(cell_type_matrix)
+    colnames(plot_data) <- c("cell_type", "sample", "value")
+    if (is_fraction) plot_data$value <- plot_data$value * 100
+    value_label <- if (is_fraction) "Fraction of sample (%)" else DECONV_SCORE_LABEL
+    plot_data$value_label <- value_label
+    plot_data$is_fraction <- is_fraction
+
     # Add group information if available
     if (!is.null(sample_groups)) {
       plot_data$group <- sample_groups$group[match(plot_data$sample, sample_groups$sample)]
+      plot_data$group[is.na(plot_data$group)] <- "Unknown"
     } else {
       plot_data$group <- "All Samples"
     }
-    
-    # ✅ CRITICAL FIX 1: Ensure all columns are factors
+
     plot_data$sample <- factor(plot_data$sample, levels = unique(plot_data$sample))
     plot_data$cell_type <- factor(plot_data$cell_type, levels = unique(plot_data$cell_type))
     plot_data$group <- factor(plot_data$group, levels = unique(plot_data$group))
-    
-    cat("Unique groups:", length(unique(plot_data$group)), "\n")
+
     cat("Groups:", paste(unique(plot_data$group), collapse = ", "), "\n")
-    
-    # Handle large sample sizes (>50 samples)
+
     n_samples <- length(unique(plot_data$sample))
-    
+
+    if (!is_fraction) {
+      # Score-based methods: per-cell-type distribution across samples (no stacking to 100%)
+      p <- ggplot(plot_data, aes(x = cell_type, y = value, fill = group)) +
+        geom_boxplot(outlier.size = 0.8, alpha = 0.7) +
+        coord_flip() +
+        labs(
+          title = paste(toupper(gsub("_", "-", method)), "cell type scores (n =", n_samples, "samples)"),
+          x = "Cell Type",
+          y = value_label,
+          fill = "Group"
+        ) +
+        theme_minimal() +
+        theme(
+          axis.text.y = element_text(size = 8),
+          axis.title = element_text(size = 12, face = "bold"),
+          legend.position = "right",
+          plot.title = element_text(hjust = 0.5, size = 13, face = "bold")
+        ) +
+        scale_fill_viridis_d(option = "turbo", direction = -1)
+
+      p_interactive <- ggplotly(p, height = 550) %>%
+        layout(
+          font = list(family = "Arial, sans-serif"),
+          legend = list(orientation = "v", x = 1.02, y = 1),
+          margin = list(l = 160, r = 150, t = 60, b = 60)
+        )
+
+      cat("Score plot created successfully\n")
+      return(p_interactive)
+    }
+
     if (n_samples > 50) {
       # Create AGGREGATED view by group
       cat("Large dataset detected:", n_samples, "samples. Creating aggregated view...\n")
-      
+
       agg_data <- plot_data %>%
         group_by(cell_type, group) %>%
         summarise(
-          mean_proportion = mean(proportion, na.rm = TRUE),
+          mean_value = mean(value, na.rm = TRUE),
           n_samples = n(),
           .groups = "drop"
         )
-      
+
       agg_data$group_name <- agg_data$group
-      
-      p <- ggplot(agg_data, aes(x = group, y = mean_proportion * 100, fill = cell_type,
+
+      p <- ggplot(agg_data, aes(x = group, y = mean_value, fill = cell_type,
                                 customdata = group_name,
-                                text = paste0("Group: ", group, 
+                                text = paste0("Group: ", group,
                                               "\nCell Type: ", cell_type,
-                                              "\nMean: ", round(mean_proportion * 100, 2), "%",
+                                              "\nMean fraction: ", round(mean_value, 2), "%",
                                               "\nSamples: ", n_samples,
                                               "\n\n🔍 Click to view individual samples"))) +
         geom_bar(stat = "identity", position = "stack", width = 0.7) +
@@ -6653,7 +6536,7 @@ create_cell_composition_barplot <- function(deconv_results, method, sample_group
           title = paste("Average Cell Type Composition by Group (n =", n_samples, "samples)"),
           subtitle = "🔍 Click on any bar to see individual sample details",
           x = "Group",
-          y = "Mean Proportion (%)",
+          y = "Mean fraction of sample (%)",
           fill = "Cell Type"
         ) +
         theme_minimal() +
@@ -6667,7 +6550,7 @@ create_cell_composition_barplot <- function(deconv_results, method, sample_group
           panel.grid.major.x = element_blank()
         ) +
         scale_fill_viridis_d(option = "turbo", direction = -1)
-      
+
       p_interactive <- ggplotly(p, height = 550, tooltip = "text", source = "deconv_barplot_main") %>%
         event_register("plotly_click") %>%
         layout(
@@ -6675,122 +6558,60 @@ create_cell_composition_barplot <- function(deconv_results, method, sample_group
           legend = list(orientation = "v", x = 1.02, y = 1),
           margin = list(l = 60, r = 150, t = 80, b = 100)
         )
-      
+
       return(list(
         plot = p_interactive,
         full_data = plot_data,
         is_aggregated = TRUE
       ))
-      
+
     } else {
-      # Original per-sample view for smaller datasets
+      # Per-sample stacked fractions (EPIC)
       cat("Creating per-sample view...\n")
-      
-      # ✅ CRITICAL FIX 2: Handle faceting properly
+
+      p <- ggplot(plot_data, aes(x = sample, y = value, fill = cell_type)) +
+        geom_bar(stat = "identity", position = "stack", width = 0.8) +
+        labs(
+          x = "Sample",
+          y = value_label,
+          fill = "Cell Type"
+        ) +
+        theme_minimal() +
+        theme(
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 10, face = "bold"),
+          axis.text.y = element_text(size = 11),
+          axis.title = element_text(size = 13, face = "bold"),
+          legend.position = "right",
+          panel.grid.major.x = element_blank(),
+          strip.text = element_text(size = 12, face = "bold")
+        ) +
+        scale_fill_viridis_d(option = "turbo", direction = -1)
+
       if (!is.null(sample_groups) && length(unique(plot_data$group)) > 1) {
-        cat("Multiple groups detected, creating faceted plot\n")
-        
-        # Create separate plots for each group to avoid label issues
-        plot_list <- list()
-        
-        for (grp in unique(plot_data$group)) {
-          grp_data <- plot_data %>% filter(group == grp)
-          
-          # ✅ Drop unused factor levels
-          grp_data$sample <- droplevels(grp_data$sample)
-          
-          p_grp <- ggplot(grp_data, aes(x = sample, y = proportion * 100, fill = cell_type)) +
-            geom_bar(stat = "identity", position = "stack", width = 0.8) +
-            labs(
-              title = as.character(grp),
-              x = "Sample",
-              y = "Proportion (%)",
-              fill = "Cell Type"
-            ) +
-            theme_minimal() +
-            theme(
-              axis.text.x = element_text(angle = 45, hjust = 1, size = 10, face = "bold"),
-              axis.text.y = element_text(size = 11),
-              axis.title = element_text(size = 12, face = "bold"),
-              plot.title = element_text(hjust = 0.5, size = 13, face = "bold"),
-              legend.position = "right",
-              panel.grid.major.x = element_blank()
-            ) +
-            scale_fill_viridis_d(option = "turbo", direction = -1)
-          
-          plot_list[[as.character(grp)]] <- p_grp
-        }
-        
-        # Combine plots using patchwork or just use first one with proper faceting
-        # For now, use facet_wrap but with proper data handling
-        
-        # ✅ BETTER FIX: Use facet_grid with space="free_x"
-        p <- ggplot(plot_data, aes(x = sample, y = proportion * 100, fill = cell_type)) +
-          geom_bar(stat = "identity", position = "stack", width = 0.8) +
-          labs(
-            x = "Sample",
-            y = "Proportion (%)",
-            fill = "Cell Type"
-          ) +
-          theme_minimal() +
-          theme(
-            axis.text.x = element_text(angle = 45, hjust = 1, size = 10, face = "bold"),
-            axis.text.y = element_text(size = 11),
-            axis.title = element_text(size = 13, face = "bold"),
-            legend.position = "right",
-            panel.grid.major.x = element_blank(),
-            strip.text = element_text(size = 12, face = "bold")
-          ) +
-          scale_fill_viridis_d(option = "turbo", direction = -1) +
-          # ✅ KEY FIX: Use facet_grid with space="free_x" and drop=TRUE
-          facet_grid(~ group, scales = "free_x", space = "free_x", drop = TRUE)
-        
-      } else {
-        # Single group - no faceting needed
-        cat("Single group, no faceting\n")
-        
-        p <- ggplot(plot_data, aes(x = sample, y = proportion * 100, fill = cell_type)) +
-          geom_bar(stat = "identity", position = "stack", width = 0.8) +
-          labs(
-            x = "Sample",
-            y = "Proportion (%)",
-            fill = "Cell Type"
-          ) +
-          theme_minimal() +
-          theme(
-            axis.text.x = element_text(angle = 45, hjust = 1, size = 11, face = "bold"),
-            axis.text.y = element_text(size = 11),
-            axis.title = element_text(size = 13, face = "bold"),
-            legend.position = "right",
-            panel.grid.major.x = element_blank()
-          ) +
-          scale_fill_viridis_d(option = "turbo", direction = -1)
+        p <- p + facet_grid(~ group, scales = "free_x", space = "free_x", drop = TRUE)
       }
-      
-      # Convert to plotly
-      
+
       p_interactive <- ggplotly(p, height = 550) %>%
         layout(
           font = list(family = "Arial, sans-serif"),
           legend = list(orientation = "v", x = 1.02, y = 1),
           margin = list(l = 60, r = 150, t = 60, b = 100),
-          # Fix background size
           autosize = TRUE,
           paper_bgcolor = 'white',
           plot_bgcolor = 'white'
-        ) 
-      
+        )
+
       cat("Bar plot created successfully\n")
       return(p_interactive)
     }
-    
+
   }, error = function(e) {
     cat("ERROR creating bar plot:", e$message, "\n")
     print(traceback())
-    
+
     p_empty <- ggplot() +
-      annotate("text", x = 0.5, y = 0.5, 
-               label = paste("Plot generation failed:", e$message), 
+      annotate("text", x = 0.5, y = 0.5,
+               label = paste("Plot generation failed:", e$message),
                size = 5, color = "red") +
       theme_void()
     return(ggplotly(p_empty))
@@ -7056,7 +6877,7 @@ create_group_comparison_boxplot <- function(deconv_results,
       geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
       facet_wrap(~cell_type, scales = "free_y", ncol = 3) +
       labs(
-        title = "Cell Type Proportions by Group",
+        title = "Cell Type Scores by Group",
         subtitle = paste("Top", top_n, "most variable cell types"),
         x = "Group",
         y = "Score",
@@ -7395,12 +7216,14 @@ calculate_tf_activities_fixed_final <- function(expression_data, tf_regulations,
     if (!requireNamespace("viper", quietly = TRUE) || !requireNamespace("dorothea", quietly = TRUE))
       stop("VIPER/DoRothEA packages are not available")
     org <- tolower(if (is.null(organism)) "" else organism)
-    if (org %in% c("human", "mouse") && identical(tolower(if (is.null(tf_database)) "dorothea" else tf_database), "dorothea")) {
+    if (org %in% c("human", "mouse")) {
       env <- new.env()
       ds <- if (org == "human") "dorothea_hs" else "dorothea_mm"
       utils::data(list = ds, package = "dorothea", envir = env)
       regulon <- get(ds, envir = env)
-      keep_levels <- c("A", "B", "C", "D", "E")[seq_len(max(1, min(5, ceiling((if (is.null(confidence_level)) 0.6 else confidence_level) * 5))))]
+      conf_num <- c(A = 1, B = 0.8, C = 0.6, D = 0.4, E = 0.2)
+      keep_levels <- names(conf_num)[conf_num >= (if (is.null(confidence_level)) 0.6 else confidence_level) - 1e-9]
+      if (length(keep_levels) == 0) stop("No DoRothEA confidence level meets the selected threshold")
       regulon <- as.data.frame(regulon[regulon$confidence %in% keep_levels, c("tf", "confidence", "target", "mor")])
     } else {
       regulon <- data.frame(tf = tf_regulations$tf, confidence = "A", target = tf_regulations$target,
@@ -7409,7 +7232,10 @@ calculate_tf_activities_fixed_final <- function(expression_data, tf_regulations,
     }
     all_tfs <- unique(tf_regulations$tf)
     unique_tfs <- if (filter_to_degs) intersect(all_tfs, selected_genes$all_genes) else all_tfs
-    if (length(unique_tfs) == 0) unique_tfs <- all_tfs
+    if (length(unique_tfs) == 0) {
+      print("TF activity: no TF in the regulations is also in the gene list (DEG-TF filter on)")
+      return(NULL)
+    }
     regulon <- regulon[regulon$tf %in% unique_tfs, , drop = FALSE]
     if (nrow(regulon) == 0) return(NULL)
 
@@ -7629,7 +7455,7 @@ get_dorothea_regulations_fixed <- function(selected_genes, organism, min_confide
       
       # Filter by confidence level
       confidence_levels <- c("A", "B", "C", "D", "E")
-      keep_levels <- confidence_levels[1:ceiling(min_confidence * 5)]
+      keep_levels <- confidence_levels[c(1, 0.8, 0.6, 0.4, 0.2) >= min_confidence - 1e-9]
       regulons_filtered <- regulons[regulons$confidence %in% keep_levels, ]
       
       print(paste("📊 Filtered to confidence levels:", paste(keep_levels, collapse = ", ")))
@@ -7668,58 +7494,10 @@ get_dorothea_regulations_fixed <- function(selected_genes, organism, min_confide
   })
 }
 
-# 6. ORGANISM-SPECIFIC FALLBACK REGULATIONS
+# 6. ORGANISM-SPECIFIC FALLBACK REGULATIONS (removed: never generate substitute regulations)
 create_organism_specific_regulations <- function(selected_genes, organism) {
-  
-  print(paste("🔄 Creating organism-specific fallback regulations for", organism))
-  
-  # Organism-specific common TFs
-  common_tfs <- switch(tolower(organism),
-                       "human" = c("TP53", "MYC", "JUN", "FOS", "STAT1", "STAT3", "NFE2L2", "RELA",
-                                   "SP1", "CREB1", "PPARA", "PPARG", "ESR1", "AR", "HIF1A", "ATF4",
-                                   "E2F1", "RB1", "FOXO1", "SMAD3"),
-                       "mouse" = c("Trp53", "Myc", "Jun", "Fos", "Stat1", "Stat3", "Nfe2l2", "Rela",
-                                   "Sp1", "Creb1", "Ppara", "Pparg", "Esr1", "Ar", "Hif1a", "Atf4",
-                                   "E2f1", "Rb1", "Foxo1", "Smad3"),
-                       c("TP53", "MYC", "JUN", "FOS", "STAT1", "STAT3") # Generic fallback
-  )
-  
-  # Find TFs in the selected genes
-  tf_targets <- intersect(selected_genes, common_tfs)
-  
-  if (length(tf_targets) > 0) {
-    tf_regulations <- data.frame()
-    
-    for (tf in tf_targets) {
-      # Create realistic TF-target pairs
-      n_targets <- min(15, length(selected_genes))
-      targets <- sample(selected_genes[selected_genes != tf], n_targets)
-      
-      tf_regs <- data.frame(
-        tf = tf,
-        target = targets,
-        regulation_type = sample(c(-1, 1), n_targets, replace = TRUE, prob = c(0.3, 0.7)),
-        confidence = runif(n_targets, min = 0.5, max = 0.9),
-        database = paste("Synthetic", organism),
-        stringsAsFactors = FALSE
-      )
-      
-      tf_regulations <- rbind(tf_regulations, tf_regs)
-    }
-    
-    print(paste("✅ Created", nrow(tf_regulations), "synthetic regulations"))
-    return(tf_regulations)
-  }
-  
-  # If no TFs found, return empty dataframe
-  return(data.frame(
-    tf = character(0),
-    target = character(0),
-    regulation_type = numeric(0),
-    confidence = numeric(0),
-    database = character(0),
-    stringsAsFactors = FALSE
-  ))
+  stop(paste0("No TF-target regulation data could be loaded for ", organism,
+              ", so no regulatory network was built. TransXplorer does not generate substitute regulations."))
 }
 
 
@@ -7815,9 +7593,7 @@ build_regulatory_network_fixed_final <- function(tf_regulations, selected_genes,
   regulation_col <- if("mor" %in% colnames(tf_regulations)) "mor" else "regulation_type"
   
   if (!regulation_col %in% colnames(tf_regulations)) {
-    print("Warning: No regulation column found, assigning random values")
-    tf_regulations$regulation_type <- sample(c(-1, 1), nrow(tf_regulations), replace = TRUE)
-    regulation_col <- "regulation_type"
+    stop("TF-target regulations have no mode-of-regulation column (mor / regulation_type); activation/repression cannot be assigned.")
   }
   
   print(paste("Using regulation column:", regulation_col))
@@ -7860,8 +7636,7 @@ identify_master_regulators_fixed <- function(tf_regulations, selected_genes, max
   regulation_col <- if("mor" %in% colnames(tf_regulations)) "mor" else "regulation_type"
   
   if (!regulation_col %in% colnames(tf_regulations)) {
-    tf_regulations$regulation_type <- sample(c(-1, 1), nrow(tf_regulations), replace = TRUE)
-    regulation_col <- "regulation_type"
+    stop("TF-target regulations have no mode-of-regulation column (mor / regulation_type); activation/repression cannot be assigned.")
   }
   
   # Calculate comprehensive TF metrics
@@ -8920,6 +8695,7 @@ run_wgcna_analysis <- function(expression_data, selected_genes,
         modules = network_results$modules,
         selected_genes = selected_genes,
         hub_genes = hub_genes,
+        background = colnames(processed_data$filtered_expression),
         organism = organism
       )
     }, error = function(e) {
@@ -10593,7 +10369,7 @@ calculate_advanced_master_score <- function(tf_data, tf_regulations, selected_ge
     rowwise() %>%
     mutate(
       # 1. Base score from out-degree (how many genes it regulates)
-      degree_score = degree_out / max(tf_data$degree_out, na.rm = TRUE),
+      degree_score = degree_out / max(1, max(tf_data$degree_out, na.rm = TRUE)),
       
       # 2. DEG coverage - what % of DEGs does this TF regulate?
       deg_coverage = if (!is.null(selected_genes$all_genes)) {
@@ -10811,7 +10587,8 @@ generate_key_findings <- function(grn_results, motifs) {
 
 
 # Step 3: Updated enrichment function with better gene ID handling
-perform_module_enrichment_fixed_v2 <- function(modules, selected_genes, hub_genes, organism = "human") {
+perform_module_enrichment_fixed_v2 <- function(modules, selected_genes, hub_genes, organism = "human",
+                                               background = NULL) {
   
   print("🧪 Enhanced Multi-Organism Functional Enrichment Analysis v2...")
   print(paste("🔬 Target organism:", organism))
@@ -10945,6 +10722,14 @@ perform_module_enrichment_fixed_v2 <- function(modules, selected_genes, hub_gene
   print(paste("🔍 DEBUG: Total modules to process:", length(names(modules))))
   print(paste("🔍 DEBUG: Module names:", paste(names(modules), collapse = ", ")))
   
+  # Background = all WGCNA input genes, mapped like the module genes
+  background_symbols <- NULL
+  if (length(background) > 0) {
+    background_symbols <- convert_genes_multi_strategy(background, organism)
+    if (length(background_symbols) < 3)
+      stop("The WGCNA input genes could not be mapped to gene symbols for the enrichment background.")
+  }
+
   # Initialize result storage
   all_enrichment_results <- list()
   modules_processed <- 0
@@ -10994,7 +10779,9 @@ perform_module_enrichment_fixed_v2 <- function(modules, selected_genes, hub_gene
       print(paste("🔍 DEBUG: Calling enrichR::enrichr for module:", module_name))
       
       # Run enrichR analysis
-      enrichr_results <- tx_enrichr_local(converted_genes, available_dbs)
+      enrichr_results <- tx_enrichr_local(converted_genes, available_dbs,
+                                          background = if (is.null(background_symbols)) NULL
+                                                       else union(background_symbols, converted_genes))
       
       
       # Combine results from all databases
@@ -13292,19 +13079,35 @@ calc_mnc <- function(g) {
   })
 }
 
-# DMNC: Density of MNC = MNC / size(N(v))^1.7. CytoHubba's definition.
-calc_dmnc <- function(g, mnc = NULL) {
-  if (is.null(mnc)) mnc <- calc_mnc(g)
-  deg <- igraph::degree(g)
-  out <- ifelse(deg > 0, mnc / (deg ^ 1.7), 0)
-  round(out, 6)
+# DMNC: E / N^1.7, where N and E are the node and edge counts of MNC(v), the largest
+# connected component of the subgraph induced by v's neighbours (CytoHubba definition).
+# `mnc` is accepted for call compatibility and not used.
+calc_dmnc <- function(g, mnc = NULL, epsilon = 1.7) {
+  out <- vapply(seq_len(igraph::vcount(g)), function(v) {
+    nbrs <- igraph::neighbors(g, v)
+    if (length(nbrs) < 2) return(0)
+    sub <- igraph::induced_subgraph(g, nbrs)
+    comps <- igraph::components(sub)
+    big <- which(comps$membership == which.max(comps$csize))
+    if (length(big) < 2) return(0)
+    igraph::ecount(igraph::induced_subgraph(sub, big)) / length(big)^epsilon
+  }, numeric(1))
+  setNames(round(out, 6), igraph::V(g)$name)
 }
 
 # EPC: Edge Percolated Component. Simulate bond percolation `n_sim` times;
 # for each node v, average number of nodes in v's component (normalized by
 # network size). Expensive — we cap / skip on large networks.
 calc_epc <- function(g, n_sim = 500, seed = 12345) {
-  set.seed(seed)
+  # Fixed seed and RNG kind so results are identical between runs; the caller's RNG
+  # state is restored on exit
+  had_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  if (had_seed) old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  on.exit({
+    if (had_seed) assign(".Random.seed", old_seed, envir = globalenv())
+    else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) rm(".Random.seed", envir = globalenv())
+  }, add = TRUE)
+  set.seed(seed, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
   n <- igraph::vcount(g)
   e <- igraph::ecount(g)
   if (n < 2 || e < 1) return(setNames(rep(0, n), igraph::V(g)$name))
@@ -13364,7 +13167,9 @@ calculate_centrality_measures <- function(ppi_interactions,
     # ---- Classical centralities (already there) ----
     degree      <- igraph::degree(g)
     betweenness <- igraph::betweenness(g)
-    closeness   <- igraph::closeness(g)
+    # Harmonic closeness / (n-1): igraph::closeness() on a disconnected graph scores
+    # members of small fragments (e.g. an isolated pair) as maximally central
+    closeness   <- igraph::harmonic_centrality(g, normalized = TRUE)
     eigenvec    <- igraph::eigen_centrality(g)$vector
 
     # ---- CytoHubba additions ----
@@ -13670,8 +13475,12 @@ detect_network_modules <- function(ppi_interactions, method = "louvain") {
       communities <- igraph::cluster_louvain(g)
     } else if (method == "walktrap") {
       communities <- igraph::cluster_walktrap(g)
+    } else if (method == "fastgreedy") {
+      communities <- igraph::cluster_fast_greedy(igraph::simplify(g))
+    } else if (method == "edge_betweenness") {
+      communities <- igraph::cluster_edge_betweenness(igraph::simplify(g))
     } else {
-      communities <- igraph::cluster_fast_greedy(g)
+      stop("Unknown clustering method: ", method)
     }
     
     # Create module assignment data frame
@@ -15255,23 +15064,55 @@ tx_dedup_ppi <- function(df) {
 
 query_string_database_safe <- function(...) tx_dedup_ppi(query_string_database_safe_raw(...))
 
+# Organism name or numeric NCBI taxonomy ID -> STRING species ID. Unknown names stop.
+tx_string_taxid <- function(organism) {
+  org <- tolower(trimws(as.character(organism)))
+  if (grepl("^[0-9]+$", org)) return(as.integer(org))
+  id <- switch(org,
+               "human" = , "homo sapiens" = 9606,
+               "mouse" = , "mus musculus" = 10090,
+               "rat" = 10116, "zebrafish" = 7955,
+               "fly" = 7227, "worm" = , "celegans" = 6239,
+               "yeast" = 4932, "pig" = 9823,
+               "chicken" = 9031, "bovine" = 9913,
+               "arabidopsis" = 3702, NA_integer_)
+  if (is.na(id)) stop("STRING PPI: unsupported organism '", organism,
+                      "'. Choose a listed organism or give its NCBI taxonomy ID.", call. = FALSE)
+  as.integer(id)
+}
+
+# Trim a PPI edge list to max_nodes. Input genes that have interactions are always kept;
+# the remaining slots go to the highest-degree added (non-input) nodes. An input gene
+# whose only partners were trimmed keeps its highest-scoring edge.
+tx_ppi_limit_nodes <- function(ppi, input_genes, max_nodes) {
+  a <- as.character(ppi$gene_from); b <- as.character(ppi$gene_to)
+  nodes <- unique(c(a, b))
+  input_nodes <- nodes[toupper(nodes) %in% toupper(input_genes)]
+  if (length(nodes) <= max_nodes) {
+    return(list(ppi = ppi, n_input_kept = length(input_nodes), n_nodes = length(nodes), n_removed = 0L))
+  }
+  deg <- sort(table(c(a, b)), decreasing = TRUE)
+  others <- setdiff(names(deg), input_nodes)
+  keep <- c(input_nodes, head(others, max(0, max_nodes - length(input_nodes))))
+  out <- ppi[a %in% keep & b %in% keep, , drop = FALSE]
+  lost <- setdiff(input_nodes, c(as.character(out$gene_from), as.character(out$gene_to)))
+  if (length(lost) > 0) {
+    cand <- ppi[a %in% lost | b %in% lost, , drop = FALSE]
+    cand <- cand[order(-cand$combined_score), , drop = FALSE]
+    owner <- ifelse(as.character(cand$gene_from) %in% lost, as.character(cand$gene_from), as.character(cand$gene_to))
+    out <- rbind(out, cand[!duplicated(owner), , drop = FALSE])
+  }
+  rownames(out) <- NULL
+  n_out <- length(unique(c(as.character(out$gene_from), as.character(out$gene_to))))
+  list(ppi = out, n_input_kept = length(input_nodes), n_nodes = n_out, n_removed = length(nodes) - n_out)
+}
+
 query_string_database_safe_raw <- function(genes, organism = "human", confidence = 0.4, max_interactions = 1000, network_type = "full") {
 
   print("Querying STRING database...")
 
-  # Define species ID — support named organisms AND numeric taxonomy IDs
-  if (grepl("^[0-9]+$", as.character(organism))) {
-    species_id <- as.integer(organism)
-  } else {
-    species_id <- switch(tolower(organism),
-                         "human" = 9606, "homo sapiens" = 9606,
-                         "mouse" = 10090, "mus musculus" = 10090,
-                         "rat" = 10116, "zebrafish" = 7955,
-                         "fly" = 7227, "worm" = 6239,
-                         "yeast" = 4932, "pig" = 9823,
-                         "chicken" = 9031, "bovine" = 9913,
-                         "arabidopsis" = 3702, 9606)
-  }
+  # Define species ID — named organisms or numeric taxonomy IDs (unknown names stop)
+  species_id <- tx_string_taxid(organism)
 
   genes <- unique(trimws(genes))
   genes <- genes[genes != "" & !is.na(genes)]
@@ -15307,16 +15148,36 @@ query_string_database_safe_raw <- function(genes, organism = "human", confidence
   return(query_string_api(genes, species_id, confidence, max_interactions, network_type))
 }
 
+# Local STRING links table for one species and network type ("physical" or "full"),
+# cached as RDS. Used by the PPI query and by first-shell expansion.
+tx_string_local_links <- function(species_id, network_type = "full",
+                                  data_path = Sys.getenv("STRING_DATA_PATH", "/srv/string_data")) {
+  type <- if (identical(network_type, "physical")) "physical" else "full"
+  links_file <- file.path(data_path, paste0(species_id, if (type == "physical")
+    ".protein.physical.links.v12.0.txt.gz" else ".protein.links.v12.0.txt.gz"))
+  if (!file.exists(links_file)) stop("Local STRING ", type, " links file not found: ", links_file, call. = FALSE)
+  cache_dir <- file.path(tempdir(), "string_cache")
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+  links_rds <- file.path(cache_dir, paste0(species_id, "_", type, "_links.rds"))
+  if (file.exists(links_rds)) {
+    print("Loading cached interaction data...")
+    return(readRDS(links_rds))
+  }
+  print(paste("Loading STRING", type, "interaction data (first-time, will be cached)..."))
+  all_links <- data.table::fread(cmd = paste("zcat", shQuote(links_file)), header = TRUE)
+  tryCatch(saveRDS(all_links, links_rds), error = function(e) NULL)
+  print(paste("Cached", nrow(all_links), "interactions"))
+  all_links
+}
+
 # Local STRING data query for human and mouse
 query_string_local <- function(genes, species_id, confidence = 0.4, data_path = "/srv/string_data", network_type = "full") {
 
   print(paste("Querying local STRING data for species", species_id, "..."))
 
+  # No local physical file -> NULL below, so the API is asked for the physical network
   links_suffix <- if (identical(network_type, "physical")) ".protein.physical.links.v12.0.txt.gz" else ".protein.links.v12.0.txt.gz"
   links_file <- file.path(data_path, paste0(species_id, links_suffix))
-  if (!file.exists(links_file) && identical(network_type, "physical")) {
-    links_file <- file.path(data_path, paste0(species_id, ".protein.links.v12.0.txt.gz"))
-  }
   aliases_file <- file.path(data_path, paste0(species_id, ".protein.aliases.v12.0.txt.gz"))
 
   if (!file.exists(links_file) || !file.exists(aliases_file)) {
@@ -15327,8 +15188,7 @@ query_string_local <- function(genes, species_id, confidence = 0.4, data_path = 
   # Use cached RDS for faster loading on subsequent calls (store in /tmp since data dir may be read-only)
   cache_dir <- file.path(tempdir(), "string_cache")
   if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
-  aliases_rds <- file.path(cache_dir, paste0(species_id, "_aliases_symbols.rds"))
-  links_rds <- file.path(cache_dir, paste0(species_id, "_", network_type, "_links.rds"))
+  aliases_rds <- file.path(cache_dir, paste0(species_id, "_aliases_symbols_ids.rds"))
 
   # --- STEP 1: BUILD GENE SYMBOL → STRING ID MAPPING ---
   if (file.exists(aliases_rds)) {
@@ -15343,9 +15203,14 @@ query_string_local <- function(genes, species_id, confidence = 0.4, data_path = 
       col.names = c("string_id", "alias", "source")
     )
     # Keep only gene symbol sources for mapping
+    # Gene symbols plus Ensembl gene IDs and numeric NCBI (Entrez) gene IDs. In STRING v12
+    # Ensembl_EntrezGene holds the symbol; the numeric IDs are KEGG_GENEID / UniProt_DR_GeneID
+    # (and Ensembl_HGNC_entrez_id for human).
     symbol_sources <- c("Ensembl_HGNC_symbol", "Ensembl_EntrezGene",
                         "Ensembl_HGNC", "BLAST_KEGG_NAME",
-                        "Ensembl_MGI_symbol", "Ensembl_MGI")
+                        "Ensembl_MGI_symbol", "Ensembl_MGI",
+                        "Ensembl_gene", "KEGG_GENEID", "UniProt_DR_GeneID",
+                        "Ensembl_HGNC_entrez_id")
     alias_map <- all_aliases[all_aliases$source %in% symbol_sources, c("string_id", "alias")]
     alias_map <- unique(alias_map)
     tryCatch(saveRDS(alias_map, aliases_rds), error = function(e) NULL)
@@ -15353,8 +15218,9 @@ query_string_local <- function(genes, species_id, confidence = 0.4, data_path = 
     print(paste("Cached", nrow(alias_map), "gene symbol mappings"))
   }
 
-  # Map input genes to STRING IDs
-  genes_upper <- toupper(genes)
+  # Map input genes to STRING IDs (Ensembl version suffixes, e.g. ENSG00000141510.17, dropped)
+  genes_upper <- toupper(sub("^(ENS[A-Z]*[GTP][0-9]+)\\.[0-9]+$", "\\1", genes))
+  input_by_key <- setNames(genes, genes_upper)
   alias_map$alias_upper <- toupper(alias_map$alias)
   matched <- alias_map[alias_map$alias_upper %in% genes_upper, ]
 
@@ -15367,26 +15233,17 @@ query_string_local <- function(genes, species_id, confidence = 0.4, data_path = 
   string_ids <- unique(matched$string_id)
   # gene symbol → string ID (use first match)
   gene_to_sid <- setNames(matched$string_id, matched$alias_upper)
-  # string ID → gene symbol (use first match)
-  sid_to_gene <- setNames(matched$alias, matched$string_id)
+  # string ID → gene label (first match): STRING's alias, or the user's ID if it had a version suffix
+  input_label <- unname(input_by_key[matched$alias_upper])
+  sid_to_gene <- setNames(ifelse(toupper(input_label) == matched$alias_upper, matched$alias, input_label),
+                          matched$string_id)
 
   print(paste("Mapped", length(string_ids), "of", length(genes), "genes to STRING IDs"))
 
   # --- STEP 2: LOAD AND FILTER INTERACTIONS ---
   confidence_threshold <- as.integer(confidence * 1000)
 
-  if (file.exists(links_rds)) {
-    print("Loading cached interaction data...")
-    all_links <- readRDS(links_rds)
-  } else {
-    print("Loading STRING interaction data (first-time, will be cached)...")
-    all_links <- data.table::fread(
-      cmd = paste("zcat", links_file),
-      header = TRUE, stringsAsFactors = FALSE
-    )
-    tryCatch(saveRDS(all_links, links_rds), error = function(e) NULL)
-    print(paste("Cached", nrow(all_links), "interactions"))
-  }
+  all_links <- tx_string_local_links(species_id, network_type, data_path)
 
   # Filter to interactions involving our proteins at required confidence
   relevant <- all_links[
@@ -15435,6 +15292,9 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
   }
 
   tryCatch({
+    # Ensembl version suffixes are not STRING identifiers
+    genes <- unique(sub("^(ENS[A-Z]*[GTP][0-9]+)\\.[0-9]+$", "\\1", genes))
+
     # --- STEP 1: BATCHED MAPPING ---
     chunk_size <- 1000
     gene_chunks <- split(genes, ceiling(seq_along(genes)/chunk_size))
@@ -15458,6 +15318,11 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
         httr::timeout(60)
       )
 
+      # 404 = none of this batch's identifiers matched; any other non-200 is a failure
+      if (!httr::status_code(map_response) %in% c(200, 404)) {
+        stop("STRING identifier mapping returned HTTP ", httr::status_code(map_response),
+             " (batch ", i, " of ", length(gene_chunks), ")")
+      }
       if (httr::status_code(map_response) == 200) {
         content <- httr::content(map_response, "text", encoding = "UTF-8")
         chunk_mapped <- tryCatch({
@@ -15471,8 +15336,7 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
     }
 
     if (nrow(all_mapped_data) == 0) {
-      print("No genes mapped to STRING IDs via API")
-      return(create_mock_ppi_data_safe(genes))
+      stop("none of the ", length(genes), " genes could be mapped to STRING IDs for taxon ", species_id)
     }
 
     # --- STEP 2: GET NETWORK ---
@@ -15481,51 +15345,14 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
 
     print(paste("Retrieving interactions for", length(string_ids), "proteins via API..."))
 
-    all_interactions <- data.frame()
-
-    if (length(string_ids) > 2000) {
-      network_chunk_size <- 500
-      string_chunks <- split(string_ids, ceiling(seq_along(string_ids)/network_chunk_size))
-
-      for (chunk_idx in seq_along(string_chunks)) {
-        chunk_ids <- string_chunks[[chunk_idx]]
-        chunk_ids_for_api <- paste(chunk_ids, collapse = "\n")
-
-        net_response <- httr::POST(
-          url = "https://string-db.org/api/tsv/network",
-          body = list(
-            identifiers = chunk_ids_for_api,
-            species = species_id,
-            required_score = as.integer(confidence * 1000),
-            network_type = string_net_type,
-            limit = 0,
-            caller_identity = "TransXplorer"
-          ),
-          encode = "form",
-          httr::timeout(120)
-        )
-
-        if (httr::status_code(net_response) == 200) {
-          net_content <- httr::content(net_response, "text", encoding = "UTF-8")
-          chunk_interactions <- tryCatch({
-            read.table(text = net_content, sep = "\t", header = TRUE,
-                       stringsAsFactors = FALSE, quote = "", fill = TRUE)
-          }, error = function(e) NULL)
-
-          if (!is.null(chunk_interactions) && nrow(chunk_interactions) > 0) {
-            all_interactions <- rbind(all_interactions, chunk_interactions)
-          }
-        }
-        Sys.sleep(0.5)
-      }
-      interactions <- all_interactions
-    } else {
-      string_ids_for_api <- paste(string_ids, collapse = "\n")
-
+    # STRING's /network accepts at most 2000 identifiers per request. Larger lists are split
+    # into blocks of 1000 and every pair of blocks is queried together, so edges between
+    # blocks are retrieved as well; any failed request stops the query.
+    fetch_network <- function(ids) {
       net_response <- httr::POST(
         url = "https://string-db.org/api/tsv/network",
         body = list(
-          identifiers = string_ids_for_api,
+          identifiers = paste(ids, collapse = "\n"),
           species = species_id,
           required_score = as.integer(confidence * 1000),
           network_type = string_net_type,
@@ -15533,19 +15360,29 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
           caller_identity = "TransXplorer"
         ),
         encode = "form",
-        httr::timeout(120)
+        httr::timeout(300)
       )
-
       if (httr::status_code(net_response) != 200) {
-        print(paste("[FAIL] STRING network API returned status:", httr::status_code(net_response)))
-        return(create_mock_ppi_data_safe(genes))
+        stop("STRING network request for ", length(ids), " proteins returned HTTP ",
+             httr::status_code(net_response))
       }
-
       net_content <- httr::content(net_response, "text", encoding = "UTF-8")
-      interactions <- tryCatch({
+      tryCatch({
         read.table(text = net_content, sep = "\t", header = TRUE,
                    stringsAsFactors = FALSE, quote = "", fill = TRUE)
       }, error = function(e) NULL)
+    }
+
+    if (length(string_ids) <= 2000) {
+      interactions <- fetch_network(string_ids)
+    } else {
+      blocks <- split(string_ids, ceiling(seq_along(string_ids) / 1000))
+      block_pairs <- utils::combn(length(blocks), 2)
+      print(paste("Querying", ncol(block_pairs), "block pairs (STRING allows 2000 proteins per request)..."))
+      interactions <- do.call(rbind, lapply(seq_len(ncol(block_pairs)), function(j) {
+        if (j > 1) Sys.sleep(0.5)
+        fetch_network(c(blocks[[block_pairs[1, j]]], blocks[[block_pairs[2, j]]]))
+      }))
     }
 
     if (is.null(interactions) || nrow(interactions) == 0) {
@@ -15584,7 +15421,8 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
 
   }, error = function(e) {
     print(paste("STRING API Critical Error:", e$message))
-    return(create_mock_ppi_data_safe(genes))
+    stop("STRING API query failed: ", e$message, ". No network was built; TransXplorer never substitutes simulated data.",
+         call. = FALSE)
   })
 }
 
@@ -16257,6 +16095,13 @@ perform_functional_enrichment_safe <- function(all_proteins, selected_genes, org
       print("  • enrichR package not available")
       return(list())
     }
+
+    # Enrichr libraries are built on human/mouse gene symbols; other species are skipped
+    # (callers tell the user) rather than matched against human GO by upper-cased symbol
+    if (!tolower(organism) %in% TX_ENRICHR_MAMMALS) {
+      print(paste("  • Enrichr libraries not applicable to organism", organism, "- enrichment skipped"))
+      return(list())
+    }
     
     # ═══════════════════════════════════════════════════════════════
     # STEP 1: Convert gene IDs to symbols (CRITICAL FOR NON-HUMAN!)
@@ -16365,7 +16210,8 @@ perform_functional_enrichment_safe <- function(all_proteins, selected_genes, org
     # ═══════════════════════════════════════════════════════════════
     databases <- switch(tolower(organism),
                         "human" = c("GO_Biological_Process_2023", "KEGG_2021_Human", "Reactome_2022"),
-                        "mouse" = c("GO_Biological_Process_2023", "KEGG_2019_Mouse", "WikiPathways_2019_Mouse"),
+                        "mouse" = c("GO_Biological_Process_2023", "KEGG_2021_Mouse", "WikiPathways_2024_Mouse"),
+                        "rat" = , "pig" = , "bovine" = c("GO_Biological_Process_2023", "KEGG_2021_Human", "Reactome_2022"),
                         "rat" = c("GO_Biological_Process_2023", "KEGG_2021_Rat"),
                         "zebrafish" = c("GO_Biological_Process_2023", "KEGG_2019_Zebrafish"),
                         "fly" = c("GO_Biological_Process_2023", "KEGG_2019_Fly"),
@@ -16374,6 +16220,7 @@ perform_functional_enrichment_safe <- function(all_proteins, selected_genes, org
                         c("GO_Biological_Process_2023", "GO_Molecular_Function_2023")
     )
     
+    databases <- databases[databases %in% TX_ENRICHR_VERIFIED]
     print(paste("  • Using databases:", paste(databases, collapse = ", ")))
     
     # ═══════════════════════════════════════════════════════════════
@@ -17489,6 +17336,47 @@ identify_ppi_hubs_safe <- function(ppi_interactions, all_degs) {
   })
 }
 
+# OpenTargets clinical stage (drug_molecule.maximumClinicalStage, clinical_indication.maxClinicalStage)
+# -> numeric phase, matched exactly. Combined trial phases take the higher phase (ChEMBL convention);
+# PREAPPROVAL (filed after phase 3) is phase 3, not approved. UNKNOWN or missing -> NA.
+OT_STAGE_PHASE <- c(APPROVAL = 4, PHASE_4 = 4, PREAPPROVAL = 3, PHASE_3 = 3, PHASE_2_3 = 3,
+                    PHASE_2 = 2, PHASE_1_2 = 2, PHASE_1 = 1, EARLY_PHASE_1 = 1,
+                    IND = 0, PRECLINICAL = 0)
+ot_stage_to_phase <- function(stage) {
+  if (length(stage) == 0) return(numeric(0))
+  unname(OT_STAGE_PHASE[toupper(trimws(as.character(stage)))])
+}
+
+# OpenTargets rows carry no safety or bioactivity measurements: these scores are tiers of the
+# clinical phase. Unknown phase (NA): base tier for druggability/evidence, NA clinical maturity.
+add_ot_phase_scores <- function(df) {
+  ph <- df$clinical_phase
+  df$druggability_score <- dplyr::case_when(
+    is.na(ph) ~ 0.55, ph >= 4 ~ 0.95, ph == 3 ~ 0.85, ph == 2 ~ 0.75, ph == 1 ~ 0.65, TRUE ~ 0.55
+  )
+  df$clinical_maturity_score <- dplyr::case_when(
+    is.na(ph) ~ NA_real_, ph >= 4 ~ 0.9, ph >= 2 ~ 0.7, TRUE ~ 0.5
+  )
+  df$clinical_evidence_score <- dplyr::case_when(
+    is.na(ph) ~ 0.55, ph >= 3 ~ 0.85, ph >= 1 ~ 0.65, TRUE ~ 0.55
+  )
+  df$confidence_score <- rowMeans(cbind(df$druggability_score, df$clinical_maturity_score,
+                                        df$clinical_evidence_score), na.rm = TRUE)
+  df
+}
+
+# deg_results stacks every pairwise comparison (column `comparison`); Advanced analyses use the
+# comparison selected on the DE results page.
+deg_rows_for_active_comparison <- function(deg_results, active_comparison) {
+  if (is.null(deg_results) || !"comparison" %in% colnames(deg_results)) return(deg_results)
+  comps <- unique(deg_results$comparison)
+  if (length(comps) <= 1) return(deg_results)
+  if (is.null(active_comparison) || !active_comparison %in% comps) {
+    stop("Several DEG comparisons are present but none is selected; choose one on the DE results page.")
+  }
+  deg_results[deg_results$comparison == active_comparison, , drop = FALSE]
+}
+
 # Local drug-target lookup using the OpenTargets Parquet mount at
 # /srv/opentargets (set via OPENTARGETS_DATA_PATH). Returns a data.frame
 # matching the column set of query_drug_targets_comprehensive() so
@@ -17878,17 +17766,9 @@ query_drug_targets_comprehensive <- function(genes, organism = "human") {
               drug_name <- if (nrow(d_info) > 0) d_info$name[1] else cid
               max_stage <- if (nrow(d_info) > 0) d_info$maximumClinicalStage[1] else NA
 
-              # Convert stage to numeric phase
-              phase <- 0
-              if (!is.na(max_stage)) {
-                ms <- toupper(max_stage)
-                if (grepl("APPROVAL|PHASE_4|APPROVED", ms)) phase <- 4
-                else if (grepl("PHASE_3", ms)) phase <- 3
-                else if (grepl("PHASE_2", ms)) phase <- 2
-                else if (grepl("PHASE_1", ms)) phase <- 1
-              }
-
-              is_approved <- phase >= 4
+              # Exact stage match (PREAPPROVAL is not approved; UNKNOWN -> NA)
+              phase <- ot_stage_to_phase(max_stage)
+              is_approved <- isTRUE(phase >= 4)
 
               drug_row <- data.frame(
                 gene = sym[1],
@@ -18111,7 +17991,7 @@ query_dgidb_enhanced <- function(gene_symbols,
   
   print(paste("📊 Processing", length(gene_symbols), "genes via DGIdb"))
   
-  all_results <- data.frame()
+  all_rows <- list()
   
   # Process in batches of 100 genes (DGIdb handles this well)
   batch_size <- 100
@@ -18210,12 +18090,8 @@ query_dgidb_enhanced <- function(gene_symbols,
           
           if (!is.null(gene_node$interactions) && length(gene_node$interactions) > 0) {
             
-            interaction_count <- 0
-            
+            # All interactions are collected; ranking and truncation happen per gene below
             for (interaction in gene_node$interactions) {
-              
-              # Apply max_drugs_per_gene limit
-              if (interaction_count >= max_drugs_per_gene) break
               
               # Extract drug info
               drug_name <- interaction$drug$name %||% NA
@@ -18289,15 +18165,8 @@ query_dgidb_enhanced <- function(gene_symbols,
               # Get interaction score
               int_score <- as.numeric(interaction$interactionScore %||% NA)
               
-              # Determine clinical phase from sources
-              clinical_phase <- 0
-              if (isTRUE(is_approved)) {
-                clinical_phase <- 4
-              } else if (any(grepl("ClinicalTrials|Clinical", sources, ignore.case = TRUE))) {
-                clinical_phase <- 2  # Assume at least Phase 2 if in clinical trials
-              } else if (any(grepl("ChEMBL", sources, ignore.case = TRUE))) {
-                clinical_phase <- 1  # ChEMBL compounds are typically Phase 1+
-              }
+              # DGIdb reports approval only; any other phase is unknown here (NA), not inferred from source names
+              clinical_phase <- if (isTRUE(is_approved)) 4 else NA_real_
               
               # Calculate confidence score based on available evidence
               confidence_score <- calculate_dgidb_confidence(
@@ -18331,8 +18200,7 @@ query_dgidb_enhanced <- function(gene_symbols,
                 stringsAsFactors = FALSE
               )
               
-              all_results <- rbind(all_results, drug_row)
-              interaction_count <- interaction_count + 1
+              all_rows[[length(all_rows) + 1]] <- drug_row
             }
           }
         }
@@ -18347,6 +18215,21 @@ query_dgidb_enhanced <- function(gene_symbols,
     }
   }
   
+  all_results <- if (length(all_rows) > 0) dplyr::bind_rows(all_rows) else data.frame()
+
+  # Rank all interactions of each gene (approved, confidence, publications), then keep the top N
+  if (nrow(all_results) > 0) {
+    ord <- order(all_results$gene_name,
+                 -as.numeric(all_results$is_approved %in% TRUE),
+                 -all_results$confidence_score,
+                 -all_results$n_publications,
+                 all_results$drug_name)
+    all_results <- all_results[ord, , drop = FALSE]
+    rank_in_gene <- stats::ave(seq_len(nrow(all_results)), all_results$gene_name, FUN = seq_along)
+    all_results <- all_results[rank_in_gene <= max_drugs_per_gene, , drop = FALSE]
+    rownames(all_results) <- NULL
+  }
+
   elapsed <- round(difftime(Sys.time(), start_time, units = "secs"), 1)
   
   print("╔════════════════════════════════════════════════════════════════╗")
@@ -20572,7 +20455,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-09", tag = "Fixed",    text = "Enrichment: only gene-set libraries that exist are offered, and non-mammal species are sent to the multi-species GO/KEGG enrichment; ORA accepts a background gene list, filled with all tested genes when DEGs are sent from Transcriptome Analysis; Hallmark ORA works; a names-only GSEA list runs as classic (unweighted) GSEA."),
+  list(date = "2026-10-09", tag = "Improved", text = "Faster FASTQ processing: public runs are downloaded while the previous run is being processed, quality control runs alongside trimming, and trimming uses all of the job's processor threads."),
+list(date = "2026-10-09", tag = "Fixed",    text = "Enrichment: only gene-set libraries that exist are offered, and non-mammal species are sent to the multi-species GO/KEGG enrichment; ORA accepts a background gene list, filled with all tested genes when DEGs are sent from Transcriptome Analysis; Hallmark ORA works; a names-only GSEA list runs as classic (unweighted) GSEA."),
 list(date = "2026-10-09", tag = "Fixed",    text = "Differential expression: normalised or log-scale data (microarray, TPM, FPKM, RPKM) is now analysed with limma on log2 expression instead of being rounded into counts; a detected batch variable is matched to samples by name and kept in the model whenever it can be estimated; pairwise comparisons work again."),
 list(date = "2026-10-09", tag = "Fixed",    text = "TCGA: re-sequenced duplicate tumour samples (e.g. 89 in GBM) are counted once in differential expression and box plots; cohorts with fewer than 3 normal samples are no longer tested against normals, and cohorts without normals say what is compared; MA plots show the tested comparison."),
 list(date = "2026-10-09", tag = "Fixed",    text = "FASTQ jobs: queued jobs now start on their own even if you close the page, a job that stops unexpectedly frees its slot at once, and three jobs can run at the same time. Salmon now reports gene-level counts, count tables name each column by sample, and public downloads are checked against ENA's checksums."),
@@ -26984,7 +26868,7 @@ tags$script(HTML("
                     tags$ul(style = "margin: 10px 0 0 20px;",
                             tags$li("One gene/protein per line, OR"),
                             tags$li("CSV file with gene IDs in the first column"),
-                            tags$li("Gene symbols or Ensembl/Entrez IDs accepted")
+                            tags$li("Gene symbols, Ensembl gene IDs (version suffix optional) or NCBI Entrez gene IDs")
                     )
                 )
             ),
@@ -27898,7 +27782,7 @@ tags$script(HTML("
                                   tabsetPanel(type = "tabs",
                                               tabPanel("Interactions", 
                                                        br(),
-                                                       downloadButton("download_ppi_interactions_csv", "Download CSV", class="btn-sm"),
+                                                       downloadButton("download_ppi_interactions_csv_tables", "Download CSV", class="btn-sm"),
                                                        br(), br(),
                                                        DT::dataTableOutput("ppi_full_interactions_table")
                                               ),
@@ -29994,7 +29878,7 @@ tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
       as.numeric(strsplit(trimws(x), "\\s+")[[1]][4]) / 1024^2
     }, error = function(e) NA_real_)
     largest_gb <- max(vapply(samples, function(s) if (!is.null(s$bytes)) as.numeric(s$bytes) else sum(file.size(s$files)), 0)) / 1024^3
-    need_gb <- 3 * largest_gb + 5
+    need_gb <- (if (!is.null(remote) && nrow(remote) > 0) 4 else 3) * largest_gb + 5   # +1 run downloading ahead
     if (!is.na(free_gb) && free_gb < need_gb) {
       stop(sprintf("Not enough free disk space on the server right now (about %.0f GB needed, %.0f GB free). Please try again later.", need_gb, free_gb))
     }
@@ -30176,52 +30060,75 @@ tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
       pe_flag <- if (params$sequencing_type == "paired") "-p --countReadPairs" else ""
     }
 
+    # Download one public run (all its files) with retries and checksum checks. Returns TRUE or
+    # an error message; it also runs in a forked background process to fetch the next run early.
+    fetch_run <- function(s) {
+      for (u in seq_along(s$urls)) {
+        ok <- FALSE
+        for (attempt in 1:4) {
+          rc <- tryCatch(utils::download.file(s$urls[u], s$files[u], mode = "wb", quiet = TRUE, method = "libcurl"),
+                         error = function(e) 1L)
+          if (identical(as.integer(rc), 0L) && file.exists(s$files[u]) && file.size(s$files[u]) > 0) {
+            if (is.null(s$md5) || identical(unname(tools::md5sum(s$files[u])), tolower(s$md5[u]))) { ok <- TRUE; break }
+            write_log(paste0("Checksum mismatch for ", basename(s$urls[u]), "; downloading again"), "warning")
+          }
+          unlink(s$files[u]); Sys.sleep(15 * attempt)
+        }
+        if (!ok) return(paste0("Download failed for ", basename(s$urls[u]), " (run ", s$base, ") after 4 attempts"))
+      }
+      TRUE
+    }
+    prefetch <- NULL
+
     # ---------------- Per-sample processing ----------------
-    fc_files <- character(0); quant_dirs <- character(0)
+fc_files <- character(0); quant_dirs <- character(0)
     for (si in seq_len(n_samples)) {
       s <- samples[[si]]; base <- s$base
       step_pct <- function(frac) write_progress(15 + round(80 * ((si - 1) + frac) / n_samples),
                                                 sprintf("Sample %d of %d (%s)", si, n_samples, base))
       step_pct(0); write_log(sprintf("Sample %d of %d: %s", si, n_samples, base), "progress")
 
-      # 0. Download this run (public data only), with retries
+      # 0. Download this run (public data only); usually already fetched in the background
       if (!is.null(s$urls)) {
-        for (u in seq_along(s$urls)) {
-          ok <- FALSE
-          for (attempt in 1:4) {
-            rc <- tryCatch(utils::download.file(s$urls[u], s$files[u], mode = "wb", quiet = TRUE, method = "libcurl"),
-                           error = function(e) 1L)
-            if (identical(as.integer(rc), 0L) && file.exists(s$files[u]) && file.size(s$files[u]) > 0) {
-              if (is.null(s$md5) || identical(unname(tools::md5sum(s$files[u])), tolower(s$md5[u]))) { ok <- TRUE; break }
-              write_log(paste0("Checksum mismatch for ", basename(s$urls[u]), "; downloading again"), "warning")
-            }
-            unlink(s$files[u]); Sys.sleep(15 * attempt)
-          }
-          if (!ok) stop(paste0("Download failed for ", basename(s$urls[u]), " (run ", base, ") after 4 attempts"))
+        if (!is.null(prefetch) && identical(prefetch$si, si)) {
+          res <- parallel::mccollect(prefetch$job, wait = TRUE)[[1]]
+          prefetch <- NULL
+        } else {
+          res <- fetch_run(s)
         }
+        if (!isTRUE(res)) stop(if (is.character(res)) res else paste0("Download failed for run ", base))
         write_log(sprintf("Downloaded %s (%.2f GB)", base, sum(file.size(s$files)) / 1024^3), "success")
+        if (si < n_samples && !is.null(samples[[si + 1]]$urls)) {
+          prefetch <- list(si = si + 1, job = parallel::mcparallel(fetch_run(samples[[si + 1]]), silent = TRUE))
+        }
       }
 
-      # 1. FastQC on raw reads
-      run_cmd_or_fail(paste("fastqc", paste(shQuote(s$files), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_raw")),
-                            "-t", length(s$files), "--quiet"), "FastQC (raw reads)", base)
+      # 1. FastQC on raw reads, in the background while the reads are trimmed (both only read them)
+      fastqc_raw <- parallel::mcparallel(system(paste("fastqc", paste(shQuote(s$files), collapse = " "), "-o",
+                                                      shQuote(file.path(output_dir, "fastqc_raw")),
+                                                      "-t", length(s$files), "--quiet")), silent = TRUE)
       # 2. Trimming
       if (params$sequencing_type == "paired") {
         tr <- file.path(work_dir, paste0(base, c("_R1_paired.fastq.gz", "_R1_unpaired.fastq.gz", "_R2_paired.fastq.gz", "_R2_unpaired.fastq.gz")))
-        run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "PE -threads 4 -phred33",
+        run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "PE -threads", n_threads, "-phred33",
                               shQuote(s$files[1]), shQuote(s$files[2]), paste(shQuote(tr), collapse = " "),
                               "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-PE.fa:2:30:10",
                               "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
         trimmed <- tr[c(1, 3)]; unlink(tr[c(2, 4)])
       } else {
         trimmed <- file.path(work_dir, paste0(base, "_trimmed.fastq.gz"))
-        run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "SE -threads 4 -phred33",
+        run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "SE -threads", n_threads, "-phred33",
                               shQuote(s$files), shQuote(trimmed),
                               "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-SE.fa:2:30:10",
                               "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
       }
+      rc_raw <- parallel::mccollect(fastqc_raw, wait = TRUE)[[1]]
+      if (!identical(as.integer(rc_raw), 0L)) {
+        msg <- paste0("FastQC (raw reads) failed for sample '", base, "'")
+        write_log(msg, "error"); stop(msg)
+      }
       # 3. FastQC on trimmed reads
-      run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_trimmed")),
+run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_trimmed")),
                             "-t", length(trimmed), "--quiet"), "FastQC (trimmed reads)", base)
       unlink(s$files)                                   # raw reads no longer needed
       step_pct(0.4)
@@ -30345,6 +30252,8 @@ write.table(summary_merged, paste0(counts_file, ".summary"), sep = "\t", row.nam
   }, error = function(e) {
     write_log(paste("Pipeline error:", e$message), "error")
     write_progress(0, paste("Error:", e$message))
+    pf <- get0("prefetch")                                   # stop a download running ahead
+    if (is.list(pf) && !is.null(pf$job)) try(tools::pskill(pf$job$pid), silent = TRUE)
     saveRDS(list(success = FALSE, error = e$message, job_id = params$job_id), completion_file)
     tryCatch({
       qm <- new.env(); sys.source(file.path(app_dir, "queue_manager.R"), envir = qm)
@@ -35268,7 +35177,14 @@ server <- function(input, output, session) {
   # 6. When Network Analysis (Systems Biology) is triggered — package loading only
   # NOTE: Button disable/enable is handled by the UNIFIED handler at ~line 81770
   # Do NOT touch button state here to avoid race conditions with the main handler
-  observeEvent(input$run_network_analysis_systems, {
+  # Two Advanced Analysis run buttons exist (PPI panel: run_network_analysis_systems_ppi; shared
+  # panel: run_network_analysis_systems). Both start the same analysis; NULL until either is clicked.
+  network_run_trigger <- reactive({
+    n <- sum(input$run_network_analysis_systems %||% 0, input$run_network_analysis_systems_ppi %||% 0)
+    if (n > 0) n else NULL
+  })
+
+  observeEvent(network_run_trigger(), {
     load_network_packages()
     load_visualization_packages()
   }, priority = 999)
@@ -35558,7 +35474,8 @@ server <- function(input, output, session) {
       }
       
       wgcna_standalone_rv$metadata <- metadata_df
-      
+      wgcna_standalone_rv$processed_metadata <- NULL
+
       # Show modal for column selection
       showModal(modalDialog(
         title = "Select Metadata Columns for WGCNA",
@@ -36156,7 +36073,8 @@ server <- function(input, output, session) {
     }
     
     cor_matrix <- trait_cor$correlation
-    pval_matrix <- trait_cor$pvalue
+    pval_matrix <- trait_cor$padj %||% matrix(p.adjust(trait_cor$pvalue, method = "BH"),
+                                              nrow = nrow(trait_cor$pvalue), dimnames = dimnames(trait_cor$pvalue))
     
     if (is.null(cor_matrix) || is.null(pval_matrix)) {
       return(p("Trait correlation data not available", style = "color: #7f8c8d;"))
@@ -36181,7 +36099,7 @@ server <- function(input, output, session) {
     }
     
     if (length(sig_associations) == 0) {
-      return(p("No significant module-trait associations found (p < 0.05)", style = "color: #7f8c8d;"))
+      return(p("No significant module-trait associations found (BH-adjusted p < 0.05)", style = "color: #7f8c8d;"))
     }
     
     # Sort by absolute correlation
@@ -36394,7 +36312,7 @@ server <- function(input, output, session) {
         counts_int <- round(counts_filtered)
         storage.mode(counts_int) <- "integer"
         
-        tryCatch({
+        expr_data <- tryCatch({
           dds <- DESeq2::DESeqDataSetFromMatrix(
             countData = counts_int,
             colData = data.frame(sample = colnames(counts_int)),
@@ -36404,12 +36322,13 @@ server <- function(input, output, session) {
           norm_counts <- DESeq2::counts(dds, normalized = TRUE)
           
           # Log transform
-          expr_data <- log2(norm_counts + 1)
+          log2(norm_counts + 1)
         }, error = function(e) {
           print(paste("⚠️ DESeq2 normalization failed:", e$message))
-          print("📊 Falling back to simple log2 transformation")
-          # Fallback: simple log transformation
-          expr_data <<- log2(counts_filtered + 1)
+          showNotification(paste0("DESeq2 size-factor normalization failed (", conditionMessage(e),
+                                  "); WGCNA uses log2(counts + 1) without size factors."),
+                           type = "warning", duration = 10)
+          log2(counts_filtered + 1)
         })
         
       } else if (max_val > 20) {
@@ -36466,10 +36385,19 @@ server <- function(input, output, session) {
         verbose = 5
       )
       
-      softPower <- softPowerAnalysis$powerEstimate
-      
-      if (is.na(softPower)) {
-        softPower <- 6  # Default fallback
+      # Lowest power with R^2 > 0.8 and negative slope (same criteria as the Advanced path)
+      sft_fit <- softPowerAnalysis$fitIndices
+      sft_ok <- which(sft_fit$SFT.R.sq > 0.8 & sft_fit$slope < 0)
+      if (length(sft_ok) > 0) {
+        softPower <- sft_fit$Power[min(sft_ok)]
+      } else {
+        # WGCNA FAQ defaults for signed networks by sample size
+        n_sft <- nrow(datExpr)
+        softPower <- if (n_sft < 20) 18 else if (n_sft < 30) 16 else if (n_sft < 40) 14 else 12
+        showNotification(paste0("No soft-thresholding power reached a scale-free fit (R² > 0.8, negative slope). ",
+                                "Using the WGCNA FAQ default for a signed network with ", n_sft,
+                                " samples: power = ", softPower, "."),
+                         type = "warning", duration = 12)
       }
       
       print(paste("✅ Soft power selected:", softPower))
@@ -36610,7 +36538,8 @@ server <- function(input, output, session) {
             modules = module_list,
             selected_genes = selected_genes,
             hub_genes = hub_genes_for_enrichment,  # FIX: Pass vector, not data frame
-            organism = input$wgcna_standalone_organism
+            organism = input$wgcna_standalone_organism,
+            background = colnames(datExpr)
           )
           
           print(paste("✅ Enrichment completed for", length(enrichment_results), "modules"))
@@ -36635,8 +36564,9 @@ server <- function(input, output, session) {
         print("🔍 DEBUG: Starting trait correlation analysis...")
         
         tryCatch({
-          metadata <- wgcna_standalone_rv$metadata
-          
+          # Columns confirmed in the metadata dialog; all columns if it was not confirmed
+          metadata <- wgcna_standalone_rv$processed_metadata %||% wgcna_standalone_rv$metadata
+
           # Match samples
           common_samples <- intersect(rownames(datExpr), rownames(metadata))
           print(paste("  - Common samples:", length(common_samples)))
@@ -36676,19 +36606,22 @@ server <- function(input, output, session) {
               
               if (is.numeric(col_data)) {
                 numeric_traits_list[[col_name]] <- col_data
-              } else if (is.factor(col_data) || is.character(col_data)) {
-                # Convert to numeric if binary
-                unique_vals <- unique(col_data)
-                if (length(unique_vals) == 2) {
-                  numeric_traits_list[[col_name]] <- as.numeric(as.factor(col_data)) - 1
-                  print(paste("    Converted binary trait:", col_name))
-                } else if (length(unique_vals) <= 5) {
-                  # Convert categorical with few levels
-                  numeric_traits_list[[col_name]] <- as.numeric(as.factor(col_data))
-                  print(paste("    Converted categorical trait:", col_name))
+              } else if (is.factor(col_data) || is.character(col_data) || is.logical(col_data)) {
+                # Categorical: one 0/1 indicator column per level (no ordinal coding)
+                col_chr <- as.character(col_data)
+                lv <- sort(unique(col_chr[!is.na(col_chr)]))
+                if (length(lv) >= 2 && length(lv) < sum(!is.na(col_chr))) {
+                  for (l in lv) {
+                    numeric_traits_list[[paste0(col_name, "_", l)]] <- ifelse(is.na(col_chr), NA_real_, as.numeric(col_chr == l))
+                  }
+                  print(paste("    One-hot encoded categorical trait:", col_name, "(", length(lv), "levels)"))
+                } else {
+                  print(paste("    Skipped trait (single level or one value per sample):", col_name))
                 }
               }
             }
+            numeric_traits_list <- numeric_traits_list[vapply(numeric_traits_list, function(x)
+              isTRUE(stats::sd(x, na.rm = TRUE) > 0), logical(1))]
             
             print(paste("  - Found", length(numeric_traits_list), "convertible traits"))
             
@@ -36707,9 +36640,13 @@ server <- function(input, output, session) {
                 moduleTraitCor <- cor(MEs_matched, numeric_traits, use = "p")
                 moduleTraitPvalue <- corPvalueStudent(moduleTraitCor, nrow(datExpr_matched))
                 
+                # BH adjustment across the full module x trait matrix
+                moduleTraitPadj <- matrix(p.adjust(moduleTraitPvalue, method = "BH"),
+                                          nrow = nrow(moduleTraitPvalue), dimnames = dimnames(moduleTraitPvalue))
                 trait_cor <- list(
                   correlation = moduleTraitCor,
-                  pvalue = moduleTraitPvalue
+                  pvalue = moduleTraitPvalue,
+                  padj = moduleTraitPadj
                 )
                 
                 print("  ✅ Trait correlations calculated successfully")
@@ -37010,6 +36947,8 @@ server <- function(input, output, session) {
       
       moduleTraitCor <- trait_cor$correlation
       moduleTraitPvalue <- trait_cor$pvalue
+      moduleTraitPadj <- trait_cor$padj %||% matrix(p.adjust(moduleTraitPvalue, method = "BH"),
+                                                    nrow = nrow(moduleTraitPvalue), dimnames = dimnames(moduleTraitPvalue))
       
       # Validate dimensions
       if (!is.matrix(moduleTraitCor) || nrow(moduleTraitCor) == 0 || ncol(moduleTraitCor) == 0) {
@@ -37020,7 +36959,7 @@ server <- function(input, output, session) {
       
       # Text matrix for heatmap (correlation + p-value)
       textMatrix <- paste(signif(moduleTraitCor, 2), "\n(",
-                          signif(moduleTraitPvalue, 1), ")", sep = "")
+                          signif(moduleTraitPadj, 1), ")", sep = "")
       dim(textMatrix) <- dim(moduleTraitCor)
       
       # Plot heatmap using WGCNA's labeledHeatmap
@@ -37042,7 +36981,7 @@ server <- function(input, output, session) {
         setStdMargins = FALSE,
         cex.text = 0.9,
         zlim = c(-1, 1),
-        main = "Module-Trait Relationships"
+        main = "Module-Trait Relationships (BH-adjusted p)"
       )
       
     }, error = function(e) {
@@ -37065,10 +37004,12 @@ server <- function(input, output, session) {
       trait_cor <- wgcna_standalone_rv$wgcna_results$trait_correlation
       moduleTraitCor <- trait_cor$correlation
       moduleTraitPvalue <- trait_cor$pvalue
+      moduleTraitPadj <- trait_cor$padj %||% matrix(p.adjust(moduleTraitPvalue, method = "BH"),
+                                                    nrow = nrow(moduleTraitPvalue), dimnames = dimnames(moduleTraitPvalue))
       
       # Text matrix
       textMatrix <- paste(signif(moduleTraitCor, 2), "\n(",
-                          signif(moduleTraitPvalue, 1), ")", sep = "")
+                          signif(moduleTraitPadj, 1), ")", sep = "")
       dim(textMatrix) <- dim(moduleTraitCor)
       
       # Save to file
@@ -37086,7 +37027,7 @@ server <- function(input, output, session) {
         setStdMargins = FALSE,
         cex.text = 0.9,
         zlim = c(-1, 1),
-        main = "Module-Trait Relationships"
+        main = "Module-Trait Relationships (BH-adjusted p)"
       )
       
       dev.off()
@@ -37102,13 +37043,16 @@ server <- function(input, output, session) {
     trait_cor <- wgcna_standalone_rv$wgcna_results$trait_correlation
     moduleTraitCor <- trait_cor$correlation
     moduleTraitPvalue <- trait_cor$pvalue
-    
+    moduleTraitPadj <- trait_cor$padj %||% matrix(p.adjust(moduleTraitPvalue, method = "BH"),
+                                                  nrow = nrow(moduleTraitPvalue), dimnames = dimnames(moduleTraitPvalue))
+
     # Create a data frame
     trait_df <- data.frame(
       Module = rep(gsub("ME", "", rownames(moduleTraitCor)), ncol(moduleTraitCor)),
       Trait = rep(colnames(moduleTraitCor), each = nrow(moduleTraitCor)),
       Correlation = as.vector(moduleTraitCor),
       Pvalue = as.vector(moduleTraitPvalue),
+      FDR = as.vector(moduleTraitPadj),
       stringsAsFactors = FALSE
     )
     
@@ -37127,6 +37071,7 @@ server <- function(input, output, session) {
       Trait = trait_df$Trait,
       Correlation = trait_df$Correlation_display,
       Pvalue = trait_df$Pvalue_display,
+      FDR = signif(trait_df$FDR, 3),
       stringsAsFactors = FALSE
     )
     
@@ -37172,7 +37117,7 @@ server <- function(input, output, session) {
         )
       ) %>%
       DT::formatStyle(
-        'Pvalue',
+        'FDR',
         backgroundColor = DT::styleInterval(
           c(0.001, 0.01, 0.05),
           c('rgba(76, 175, 80, 0.3)',   # p < 0.001 - green
@@ -39754,10 +39699,10 @@ server <- function(input, output, session) {
     grn_standalone_rv$quick_mode_active <- TRUE
     grn_standalone_rv$filtered_genes <- list(
       all_genes  = example_genes,
-      up_genes   = example_genes,
+      up_genes   = character(0),  # direction unknown without fold changes
       down_genes = character(0),
       n_total    = length(example_genes),
-      n_up       = length(example_genes),
+      n_up       = 0,
       n_down     = 0
     )
     grn_standalone_rv$expression_data <- NULL
@@ -39805,10 +39750,10 @@ server <- function(input, output, session) {
     # Create a fake filtered_genes structure for compatibility
     grn_standalone_rv$filtered_genes <- list(
       all_genes = genes,
-      up_genes = genes,  # Treat all as "up" since we don't know direction
+      up_genes = character(0),  # direction unknown without fold changes
       down_genes = character(0),
       n_total = length(genes),
-      n_up = length(genes),
+      n_up = 0,
       n_down = 0
     )
     
@@ -40832,10 +40777,10 @@ server <- function(input, output, session) {
           grn_standalone_rv$quick_mode_active <- TRUE
           grn_standalone_rv$filtered_genes <- list(
             all_genes  = genes_auto,
-            up_genes   = genes_auto,
+            up_genes   = character(0),  # direction unknown without fold changes
             down_genes = character(0),
             n_total    = length(genes_auto),
-            n_up       = length(genes_auto),
+            n_up       = 0,
             n_down     = 0
           )
           grn_standalone_rv$expression_data <- NULL
@@ -40892,7 +40837,14 @@ server <- function(input, output, session) {
       
       # Step 1: Prepare gene selection
       progress$set(value = 0.1, detail = "Preparing gene list...")
-      
+
+      if (is_quick_mode) {
+        # Gene list only: no fold changes, so no up/down direction
+        qg <- grn_standalone_rv$quick_mode_genes
+        grn_standalone_rv$filtered_genes <- list(all_genes = qg, up_genes = character(0),
+                                                 down_genes = character(0), n_total = length(qg),
+                                                 n_up = 0, n_down = 0)
+      }
       selected_genes <- grn_standalone_rv$filtered_genes
       
       print(paste("📊 Analysis parameters:"))
@@ -41083,7 +41035,8 @@ server <- function(input, output, session) {
         min_tf_edges = input$grn_standalone_min_tf_edges %||% 2,
         calculate_activities = input$grn_standalone_calculate_tf_activity %||% TRUE,
         run_enrichment = input$grn_standalone_run_enrichment %||% TRUE,
-        max_master_regulators = input$grn_standalone_max_master_tfs %||% 50
+        max_master_regulators = input$grn_standalone_max_master_tfs %||% 50,
+        filter_deg_tfs_only = isTRUE(input$grn_standalone_filter_deg_tfs_only)
       )
       
       # Check TF activity results and provide feedback
@@ -41246,52 +41199,8 @@ server <- function(input, output, session) {
   #   }
   # })
   
-  # Observer to recalculate TF activities when filter changes
-  observeEvent(input$grn_filter_deg_tfs_only, {
-    req(grn_standalone_rv$grn_results)
-    req(grn_standalone_rv$expression_data)
-    req(grn_standalone_rv$tf_regulations)
-    
-    print(paste("Recalculating TF activities with filter:", input$grn_filter_deg_tfs_only))
-    
-    # Get the converted genes (with fallback)
-    converted_genes <- if (!is.null(grn_standalone_rv$converted_genes)) {
-      grn_standalone_rv$converted_genes
-    } else {
-      grn_standalone_rv$selected_genes
-    }
-    
-    # Recalculate TF activities with new filter setting
-    new_tf_activities <- calculate_tf_activities_fixed_final(
-      expression_data = grn_standalone_rv$expression_data,
-      tf_regulations = grn_standalone_rv$tf_regulations,
-      selected_genes = converted_genes,
-      filter_to_degs = input$grn_filter_deg_tfs_only,
-      organism = input$grn_standalone_organism,
-      confidence_level = input$grn_standalone_confidence,
-      tf_database = input$grn_standalone_tf_database
-    )
-    
-    # Update the stored TF activities
-    grn_standalone_rv$grn_results$tf_activities <- new_tf_activities
-    
-    if (!is.null(new_tf_activities)) {
-      n_tfs <- length(unique(new_tf_activities$tf))
-      print(paste("TF activities recalculated:", n_tfs, "TFs"))
-      showNotification(
-        paste("Updated TF activities:", n_tfs, "TFs"),
-        type = "message",
-        duration = 3
-      )
-    } else {
-      print("No TF activities after filter")
-      showNotification(
-        "No TF activities match the current filter",
-        type = "warning",
-        duration = 3
-      )
-    }
-  }, ignoreInit = TRUE)
+  # The Advanced "Show only DEG TFs" checkbox is applied at render time
+  # (output$grn_activity_heatmap); it does not touch standalone GRN state.
   
   # TF activity heatmap
   output$grn_standalone_tf_activity_plot <- renderPlot({
@@ -43297,6 +43206,35 @@ server <- function(input, output, session) {
     }
   })
   
+  # Uploaded gene list: first column of a .txt/.csv/.tsv file becomes the list for the next
+  # run (written into the text box, which the run reads first)
+  observeEvent(input$ppi_standalone_gene_list, {
+    f <- input$ppi_standalone_gene_list
+    req(f)
+    genes <- tryCatch({
+      tab <- data.table::fread(f$datapath, header = FALSE, fill = TRUE, colClasses = "character",
+                               sep = if (grepl("\\.csv$", f$name, ignore.case = TRUE)) "," else "auto")
+      g <- trimws(gsub('^"|"$', "", tab[[1]]))
+      g <- g[!is.na(g) & nzchar(g)]
+      # Drop a header row such as "gene", "Gene_Symbol", "ensembl_id"
+      if (length(g) > 0 && grepl("^(genes?|gene[ _.]?(symbol|name|id)s?|symbols?|ids?|names?|proteins?|ensembl([ _.]?(gene)?[ _.]?id)?|entrez([ _.]?id)?)$",
+                                 g[1], ignore.case = TRUE)) g <- g[-1]
+      unique(g)
+    }, error = function(e) {
+      showNotification(paste("Could not read the gene list file:", e$message), type = "error")
+      NULL
+    })
+    req(!is.null(genes))
+    if (length(genes) < 2) {
+      showNotification("The uploaded file has fewer than 2 gene IDs in its first column.", type = "error")
+      return()
+    }
+    rv_ppi_standalone$gene_list <- genes
+    updateTextAreaInput(session, "ppi_standalone_gene_text", value = paste(genes, collapse = "\n"))
+    showNotification(sprintf("Loaded %d genes from %s (first column); they replace the pasted list.",
+                             length(genes), f$name), type = "message")
+  })
+
   # Handle example button
   observeEvent(input$ppi_load_example, {
     example_genes <- c("TP53", "BRCA1", "EGFR", "MYC", "KRAS", 
@@ -43566,7 +43504,6 @@ server <- function(input, output, session) {
               cache_dir <- file.path(tempdir(), "string_cache")
               if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
               aliases_rds <- file.path(cache_dir, paste0(species_id, "_aliases_symbols.rds"))
-              links_rds <- file.path(cache_dir, paste0(species_id, "_links.rds"))
 
               # Load cached data
               if (file.exists(aliases_rds)) {
@@ -43582,13 +43519,9 @@ server <- function(input, output, session) {
                 rm(all_aliases)
               }
 
-              if (file.exists(links_rds)) {
-                all_links <- readRDS(links_rds)
-              } else {
-                links_file <- file.path(string_data_path, paste0(species_id, ".protein.links.v12.0.txt.gz"))
-                all_links <- data.table::fread(cmd = paste("zcat", links_file), header = TRUE)
-                tryCatch(saveRDS(all_links, links_rds), error = function(e) NULL)
-              }
+              # Links of the chosen network type (physical or full)
+              all_links <- tx_string_local_links(species_id, input$ppi_standalone_network_type %||% "full",
+                                                 string_data_path)
 
               # Map current network genes to STRING IDs
               current_genes <- unique(c(ppi_interactions$gene_from, ppi_interactions$gene_to))
@@ -43634,9 +43567,12 @@ server <- function(input, output, session) {
               }
             }, error = function(e) {
               print(paste("First-shell expansion failed:", e$message))
+              showNotification(paste("First-shell interactors were not added:", e$message), type = "warning", duration = 8)
             })
           } else {
             print("First-shell expansion requires local STRING data (human/mouse only)")
+            showNotification("First-shell interactors are available for human and mouse only; network shows input genes only.",
+                             type = "warning", duration = 8)
           }
         }
 
@@ -43654,16 +43590,16 @@ server <- function(input, output, session) {
         }
 
         # --- LIMIT NETWORK SIZE ---
+        # Input genes with interactions are always kept; the limit trims added neighbours by degree
         if (nrow(ppi_interactions) > 0) {
-          all_proteins <- unique(c(ppi_interactions$gene_from, ppi_interactions$gene_to))
-          if (length(all_proteins) > max_nodes) {
-            # Keep top nodes by degree
-            degree_table <- sort(table(c(ppi_interactions$gene_from, ppi_interactions$gene_to)), decreasing = TRUE)
-            keep_nodes <- names(degree_table)[1:max_nodes]
-            ppi_interactions <- ppi_interactions[
-              ppi_interactions$gene_from %in% keep_nodes & ppi_interactions$gene_to %in% keep_nodes,
-            ]
-            print(paste("Trimmed network to top", max_nodes, "nodes,", nrow(ppi_interactions), "edges"))
+          lim <- tx_ppi_limit_nodes(ppi_interactions, final_genes, max_nodes)
+          ppi_interactions <- lim$ppi
+          if (lim$n_removed > 0) {
+            print(paste("Trimmed network to", lim$n_nodes, "nodes,", nrow(ppi_interactions), "edges"))
+          }
+          if (lim$n_nodes > max_nodes) {
+            showNotification(sprintf("All %d input genes with interactions were kept, so the network has %d nodes (display limit %d); only added neighbours were trimmed.",
+                                     lim$n_input_kept, lim$n_nodes, max_nodes), type = "warning", duration = 10)
           }
         }
 
@@ -43687,7 +43623,8 @@ server <- function(input, output, session) {
         module_enrichment <- NULL
         if (detect_modules && nrow(ppi_interactions) >= 5) {
           setProgress(0.55, detail = "Detecting network modules...")
-          network_modules_result <- detect_network_modules(ppi_interactions, method = "louvain")
+          network_modules_result <- detect_network_modules(ppi_interactions,
+                                                           method = input$ppi_standalone_cluster_method %||% "louvain")
 
           # Module-specific enrichment
           if (!is.null(network_modules_result) && !is.null(network_modules_result$modules)) {
@@ -43709,9 +43646,14 @@ server <- function(input, output, session) {
           }
         }
 
-        # Functional enrichment (optional)
+        # Functional enrichment (optional; Enrichr libraries cover mammals only)
         enrichment_results <- NULL
-        if (run_enrichment) {
+        if ((run_enrichment || detect_modules) && !organism_name %in% TX_ENRICHR_MAMMALS) {
+          showNotification(paste0("Pathway enrichment skipped: its Enrichr libraries cover human/mouse gene symbols, not '",
+                                  organism_name, "'. Use the Enrichment Analysis tab for this species."),
+                           type = "warning", duration = 10)
+        }
+        if (run_enrichment && organism_name %in% TX_ENRICHR_MAMMALS) {
           setProgress(0.7, detail = "Running pathway enrichment...")
           network_proteins <- unique(c(ppi_interactions$gene_from, ppi_interactions$gene_to))
           enrichment_raw <- perform_functional_enrichment_safe(network_proteins, temp_degs, organism = organism_name)
@@ -66272,8 +66214,9 @@ document.addEventListener("DOMContentLoaded", function() {
     print(paste("Input genes sample:", paste(head(cleaned_genes, 3), collapse = ", ")))
     
     # Separate ENSEMBL IDs and symbols
-    ensembl_genes <- cleaned_genes[grepl("^ENSG", cleaned_genes)]
-    symbol_genes <- cleaned_genes[!grepl("^ENSG", cleaned_genes)]
+    is_ens <- grepl("^ENS[A-Z]*G[0-9]", cleaned_genes)
+    ensembl_genes <- cleaned_genes[is_ens]
+    symbol_genes <- cleaned_genes[!is_ens]
     
     print(paste("ENSEMBL genes found:", length(ensembl_genes)))
     print(paste("Symbol genes found:", length(symbol_genes)))
@@ -66283,9 +66226,11 @@ document.addEventListener("DOMContentLoaded", function() {
     
     # Strategy 2: Convert ENSEMBL IDs (simplified conversion)
     if (length(ensembl_genes) > 0) {
-      # In a real implementation, you'd use biomaRt or org.Hs.eg.db
-      # For now, create meaningful placeholder symbols
-      converted_symbols <- paste0("GENE_", gsub("ENSG0+", "", ensembl_genes))
+      pkg <- if (organism == "mouse") "org.Mm.eg.db" else "org.Hs.eg.db"
+      m <- tryCatch(AnnotationDbi::mapIds(getExportedValue(pkg, pkg), keys = sub("\\.[0-9]+$", "", ensembl_genes),
+                                          column = "SYMBOL", keytype = "ENSEMBL", multiVals = "first"),
+                    error = function(e) NULL)
+      converted_symbols <- if (is.null(m)) character(0) else as.character(m[!is.na(m)])   # unmapped IDs are left out
       final_symbols <- c(final_symbols, converted_symbols)
       print(paste("Converted", length(ensembl_genes), "ENSEMBL IDs to symbols"))
     }
@@ -67371,14 +67316,9 @@ document.addEventListener("DOMContentLoaded", function() {
     if (is.null(ot_data)) ot_data <- network_rv$current_results$drug_targets
     if (is.null(ot_data)) return("--")
     
-    # Count drugs with safety data or high phase (as proxy for safety)
-    if ("safety_score" %in% colnames(ot_data)) {
-      n_safe <- sum(ot_data$safety_score > 0.7, na.rm = TRUE)
-    } else {
-      # Use approved drugs as proxy for safety-validated
-      n_safe <- sum(ot_data$clinical_phase >= 4, na.rm = TRUE)
-    }
-    as.character(n_safe)
+    # Unique drugs at phase II or later (clinical maturity; no safety data is available)
+    n_mature <- length(unique(ot_data$molecule_name[!is.na(ot_data$clinical_phase) & ot_data$clinical_phase >= 2]))
+    as.character(n_mature)
   })
   
   output$dc_top5_repurposing_cards <- renderUI({
@@ -68809,7 +68749,7 @@ document.addEventListener("DOMContentLoaded", function() {
         # RAW CONFIDENCE FROM DATABASE (from ChEMBL/OpenTargets)
         raw_confidence = round(mean(confidence_score, na.rm = TRUE), 3),
         
-        max_clinical_phase = max(clinical_phase, na.rm = TRUE),
+        max_clinical_phase = if (all(is.na(clinical_phase))) NA_real_ else max(clinical_phase, na.rm = TRUE),
         best_activity = ifelse(any(!is.na(standard_value)),
                                min(standard_value, na.rm = TRUE), NA),
         activity_types = paste(unique(standard_type[!is.na(standard_type)]), collapse = ", "),
@@ -68819,7 +68759,7 @@ document.addEventListener("DOMContentLoaded", function() {
         # CALCULATED PRIORITY SCORE (weighted combination)
         target_score = pmin(1, n_targets / 5),  # Cap at 5 targets
         conf_score = raw_confidence,              # Use raw confidence as-is
-        clin_score = max_clinical_phase / 4,      # Normalize to 0-1
+        clin_score = ifelse(is.na(max_clinical_phase), 0, max_clinical_phase / 4),  # unknown phase: no credit
         act_score = ifelse(is.na(best_activity), 0,
                            pmin(1, 1000 / (best_activity + 1))),  # Better activity = higher score
         
@@ -71928,9 +71868,7 @@ document.addEventListener("DOMContentLoaded", function() {
     req(network_rv$current_results)
     req(network_rv$current_results$analysis_params$analysis_focus == "disease_context")
     
-    # Count drugs with high safety scores
-    high_safety <- 0
-    
+    # Unique drugs at phase II or later (clinical maturity; no safety data is available)
     data_source <- NULL
     if (!is.null(network_rv$current_results$opentargets_data) &&
         nrow(network_rv$current_results$opentargets_data) > 0) {
@@ -71943,17 +71881,10 @@ document.addEventListener("DOMContentLoaded", function() {
       data_source <- network_rv$current_results$raw_data
     }
     
-    if (!is.null(data_source) && "safety_score" %in% colnames(data_source)) {
-      high_safety <- sum(data_source$safety_score > 0.7, na.rm = TRUE)
-    } else {
-      # Fallback: estimate based on total drugs
-      total_drugs <- if (!is.null(data_source)) {
-        length(unique(data_source$molecule_name))
-      } else { 0 }
-      high_safety <- ceiling(total_drugs * 0.3)  # Estimate 30% have high safety
-    }
-    
-    as.character(high_safety)
+    if (is.null(data_source) || !"clinical_phase" %in% colnames(data_source)) return("--")
+
+    as.character(length(unique(data_source$molecule_name[!is.na(data_source$clinical_phase) &
+                                                           data_source$clinical_phase >= 2])))
   })
   
   output$clinical_evidence_count <- renderText({
@@ -72028,9 +71959,9 @@ document.addEventListener("DOMContentLoaded", function() {
             Disease_Areas = ifelse("disease_area" %in% colnames(disease_data),
                                    paste(unique(disease_area[!is.na(disease_area)]), collapse = ", "),
                                    "Multiple"),
-            Avg_Safety = ifelse("safety_score" %in% colnames(disease_data),
-                                round(mean(safety_score, na.rm = TRUE), 2),
-                                0.5),
+            Avg_Maturity = ifelse("clinical_maturity_score" %in% colnames(disease_data),
+                                  round(mean(clinical_maturity_score, na.rm = TRUE), 2),
+                                  NA_real_),
             Avg_Clinical_Evidence = ifelse("clinical_evidence_score" %in% colnames(disease_data),
                                            round(mean(clinical_evidence_score, na.rm = TRUE), 2),
                                            0.5),
@@ -72042,7 +71973,7 @@ document.addEventListener("DOMContentLoaded", function() {
             "Drug Count" = Drug_Count,
             "Avg Clinical Phase" = Avg_Clinical_Phase,
             "Disease Areas" = Disease_Areas,
-            "Safety Score" = Avg_Safety,
+            "Clinical Maturity" = Avg_Maturity,
             "Clinical Evidence" = Avg_Clinical_Evidence
           )
         
@@ -72053,9 +71984,9 @@ document.addEventListener("DOMContentLoaded", function() {
           options = list(pageLength = 10, scrollX = TRUE),
           rownames = FALSE
         ) %>%
-          DT::formatRound(c("Avg Clinical Phase", "Safety Score", "Clinical Evidence"), 2) %>%
+          DT::formatRound(c("Avg Clinical Phase", "Clinical Maturity", "Clinical Evidence"), 2) %>%
           DT::formatStyle(
-            'Safety Score',
+            'Clinical Maturity',
             backgroundColor = DT::styleColorBar(c(0, 1), '#d4edda'),
             backgroundSize = '80% 80%',
             backgroundRepeat = 'no-repeat',
@@ -72543,7 +72474,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                          tf_database = "dorothea", confidence_level = 0.6,
                                          min_tf_edges = 2, calculate_activities = TRUE,
                                          run_enrichment = TRUE, check_druggability = TRUE,
-                                         max_master_regulators = 100) {
+                                         max_master_regulators = 100, filter_deg_tfs_only = FALSE) {
     
     print("=== STARTING GRN ANALYSIS (CORRECTED) ===")
     print(paste("🚀 Organism:", organism))
@@ -72641,8 +72572,11 @@ document.addEventListener("DOMContentLoaded", function() {
       print(paste("✅ Found", length(tfs_in_data), "TFs in your gene list"))
       
       if (length(tfs_in_data) == 0) {
-        print("⚠️ No TFs found in your gene list, using all TFs from regulations")
-        tfs_in_data <- all_tfs[1:min(20, length(all_tfs))]  # Use top 20 TFs
+        print("⚠️ No listed gene is a TF; TFs are ranked by the number of listed genes they regulate")
+        showNotification(
+          "None of your listed genes is itself a transcription factor in the regulation database. Master regulators are TFs ranked by how many of your listed genes they regulate.",
+          type = "warning", duration = 10
+        )
       }
       
       # Step 4: Build network data
@@ -72713,7 +72647,10 @@ document.addEventListener("DOMContentLoaded", function() {
       #   stringsAsFactors = FALSE
       # )
       
-      nodes <- create_grn_nodes_fixed(all_nodes, tfs_in_data, converted_genes)
+      # TF nodes: listed TFs plus any TF that regulates a listed gene in this network
+      tf_node_ids <- union(intersect(tfs_in_data, all_nodes),
+                           unique(edges$from[edges$to %in% converted_genes$all_genes]))
+      nodes <- create_grn_nodes_fixed(all_nodes, tf_node_ids, converted_genes)
       
       
       print(paste("✅ Created", nrow(nodes), "network nodes"))
@@ -72756,7 +72693,7 @@ document.addEventListener("DOMContentLoaded", function() {
       
       # Calculate degree for each node
       degree_in <- table(edges$to)
-      degree_out <- table(edges$from)
+      degree_out <- table(edges$from[edges$to %in% converted_genes$all_genes])  # listed targets only
       nodes$degree_in <- as.numeric(degree_in[nodes$id])
       nodes$degree_out <- as.numeric(degree_out[nodes$id])
       nodes$degree_in[is.na(nodes$degree_in)] <- 0
@@ -72783,6 +72720,7 @@ document.addEventListener("DOMContentLoaded", function() {
             regulation == "Down" & degree_out >= 5 ~ "Major Repressor",
             regulation == "Up" ~ "Activator",
             regulation == "Down" ~ "Repressor",
+            length(converted_genes$up_genes) + length(converted_genes$down_genes) == 0 ~ "Direction unknown (no fold changes)",
             TRUE ~ "Mixed Regulator"
           ),
           clinical_relevance = label %in% c(
@@ -72820,6 +72758,9 @@ document.addEventListener("DOMContentLoaded", function() {
           target_genes <- target_genes[!is.na(target_genes)]
         }
 
+        if (length(converted_genes$up_genes) + length(converted_genes$down_genes) == 0) {
+          target_genes <- nodes$id[nodes$type == "Target" & nodes$id %in% converted_genes$all_genes]
+        }
         print(paste("🎯 Selected", length(target_genes), "target genes for enrichment"))
 
         target_pathway_enrichment <- perform_target_gene_enrichment_fixed(
@@ -72837,13 +72778,11 @@ document.addEventListener("DOMContentLoaded", function() {
       if (calculate_activities && !is.null(expression_data)) {
         print("📊 Expression data available and user requested activities - calculating...")
         
-        filter_deg_tfs_only <- input$grn_filter_deg_tfs_only %||% FALSE
-        
         tf_activities <- calculate_tf_activities_fixed_final(
           expression_data = expression_data,
           tf_regulations = tf_regulations,
           selected_genes = converted_genes,
-          filter_to_degs = filter_deg_tfs_only,
+          filter_to_degs = isTRUE(filter_deg_tfs_only),
           organism = organism,
           confidence_level = confidence_level,
           tf_database = tf_database
@@ -72860,11 +72799,7 @@ document.addEventListener("DOMContentLoaded", function() {
       }
       
       
-      grn_standalone_rv$expression_data <- expression_data
-      grn_standalone_rv$converted_genes <- converted_genes
-      grn_standalone_rv$selected_genes <- selected_genes
-      grn_standalone_rv$tf_regulations <- tf_regulations
-      
+
       druggability_info <- NULL
       if (isTRUE(check_druggability)) {
         druggability_info <- tryCatch({
@@ -72899,7 +72834,7 @@ document.addEventListener("DOMContentLoaded", function() {
           confidence_level = confidence_level,
           n_input_genes = length(selected_genes$all_genes),
           n_converted_genes = length(converted_genes$all_genes),
-          n_tfs = length(tfs_in_data),
+          n_tfs = sum(nodes$type == "TF"),
           n_targets = sum(nodes$type == "Target"),
           n_regulations = nrow(edges),
           conversion_rate = length(converted_genes$all_genes) / length(selected_genes$all_genes)
@@ -73353,7 +73288,7 @@ document.addEventListener("DOMContentLoaded", function() {
       result_ensembl[ensg_indices] <- ensg_ids
       
       # Convert to symbols
-      converted_symbols <- convert_ensembl_to_symbols_robust(ensg_ids, organism)
+      converted_symbols <- convert_ensembl_to_symbols_drug(ensg_ids, organism)
       result_symbols[ensg_indices] <- converted_symbols
     }
     
@@ -73365,7 +73300,7 @@ document.addEventListener("DOMContentLoaded", function() {
       print(paste("Converting", sum(enst_indices), "ENSEMBL transcript IDs..."))
       
       # Convert transcripts to gene IDs and symbols
-      transcript_results <- convert_transcripts_to_genes_robust(enst_ids, organism)
+      transcript_results <- convert_transcripts_to_genes_drug(enst_ids, organism)
       result_ensembl[enst_indices] <- transcript_results$ensembl_ids
       result_symbols[enst_indices] <- transcript_results$symbols
     }
@@ -73377,7 +73312,7 @@ document.addEventListener("DOMContentLoaded", function() {
       
       print(paste("Converting", sum(entrez_indices), "Entrez IDs..."))
       
-      entrez_results <- convert_entrez_to_symbols_and_ensembl_robust(entrez_ids, organism)
+      entrez_results <- convert_entrez_to_symbols_and_ensembl_drug(entrez_ids, organism)
       result_symbols[entrez_indices] <- entrez_results$symbols
       result_ensembl[entrez_indices] <- entrez_results$ensembl_ids
     }
@@ -73443,11 +73378,20 @@ document.addEventListener("DOMContentLoaded", function() {
   # ROBUST CONVERSION FUNCTIONS FOR EACH ID TYPE
   # ============================================================================
   
-  convert_ensembl_to_symbols_robust <- function(ensembl_ids, organism) {
-    
+  convert_ensembl_to_symbols_drug <- function(ensembl_ids, organism) {
     if (length(ensembl_ids) == 0) return(character(0))
-    
     symbols <- character(length(ensembl_ids))
+    # Local annotation first (fast, versioned, works when Ensembl's BioMart is down)
+    tx_local_orgdb <- function() {
+      pkg <- if (organism == "mouse") "org.Mm.eg.db" else "org.Hs.eg.db"
+      if (requireNamespace(pkg, quietly = TRUE)) getExportedValue(pkg, pkg) else NULL
+    }
+    db <- tx_local_orgdb()
+    if (!is.null(db)) {
+      m <- tryCatch(AnnotationDbi::mapIds(db, keys = sub("\\.[0-9]+$", "", ensembl_ids), column = "SYMBOL",
+                                          keytype = "ENSEMBL", multiVals = "first"), error = function(e) NULL)
+      if (!is.null(m) && any(!is.na(m))) return(ifelse(is.na(m), "", as.character(m)))
+    }
     
     # Method 1: Try biomaRt
     tryCatch({
@@ -73509,14 +73453,31 @@ document.addEventListener("DOMContentLoaded", function() {
     
     # Fallback: Create meaningful symbols
     print("Using fallback conversion for ENSEMBL IDs")
-    fallback_symbols <- paste0("GENE_", gsub("ENS[MG]*G0*", "", ensembl_ids))
-    return(fallback_symbols)
+    rep("", length(ensembl_ids))   # unmapped: no symbol (never invent IDs)
   }
   
-  convert_transcripts_to_genes_robust <- function(transcript_ids, organism) {
-    
+  convert_transcripts_to_genes_drug <- function(transcript_ids, organism) {
     symbols <- character(length(transcript_ids))
     ensembl_ids <- character(length(transcript_ids))
+    # Local annotation first (fast, versioned, works when Ensembl's BioMart is down)
+    tx_local_orgdb <- function() {
+      pkg <- if (organism == "mouse") "org.Mm.eg.db" else "org.Hs.eg.db"
+      if (requireNamespace(pkg, quietly = TRUE)) getExportedValue(pkg, pkg) else NULL
+    }
+    db <- tx_local_orgdb()
+    if (!is.null(db)) {
+      keys <- sub("\\.[0-9]+$", "", transcript_ids)
+      sy <- tryCatch(AnnotationDbi::mapIds(db, keys = keys, column = "SYMBOL", keytype = "ENSEMBLTRANS", multiVals = "first"),
+                     error = function(e) NULL)
+      en <- tryCatch(AnnotationDbi::mapIds(db, keys = keys, column = "ENSEMBL", keytype = "ENSEMBLTRANS", multiVals = "first"),
+                     error = function(e) NULL)
+      if (!is.null(sy) && any(!is.na(sy))) {
+        return(list(symbols = ifelse(is.na(sy), "", as.character(sy)),
+                    ensembl_ids = if (is.null(en)) rep(NA_character_, length(keys)) else as.character(en)))
+      }
+      # not in the local annotation: keep the IDs rather than wait on Ensembl's BioMart
+      return(list(symbols = transcript_ids, ensembl_ids = rep(NA_character_, length(transcript_ids))))
+    }
     
     # Try biomaRt for transcript conversion
     tryCatch({
@@ -73561,7 +73522,7 @@ document.addEventListener("DOMContentLoaded", function() {
     return(list(symbols = fallback_symbols, ensembl_ids = fallback_ensembl))
   }
   
-  convert_entrez_to_symbols_and_ensembl_robust <- function(entrez_ids, organism) {
+  convert_entrez_to_symbols_and_ensembl_drug <- function(entrez_ids, organism) {
     
     symbols <- character(length(entrez_ids))
     ensembl_ids <- character(length(entrez_ids))
@@ -73743,38 +73704,7 @@ document.addEventListener("DOMContentLoaded", function() {
     
     ensembl_ids <- character(length(gene_symbols))
     
-    # Method 1: Try biomaRt
-    tryCatch({
-      if (requireNamespace("biomaRt", quietly = TRUE)) {
-        dataset <- if (organism == "mouse") "mmusculus_gene_ensembl" else "hsapiens_gene_ensembl"
-        mart <- biomaRt::useMart("ensembl", dataset = dataset)
-        
-        results <- biomaRt::getBM(
-          attributes = c("external_gene_name", "ensembl_gene_id"),
-          filters = "external_gene_name",
-          values = gene_symbols,
-          mart = mart
-        )
-        
-        # Map back to original order
-        for (i in seq_along(gene_symbols)) {
-          matches <- results$ensembl_gene_id[results$external_gene_name == gene_symbols[i]]
-          if (length(matches) > 0 && !is.na(matches[1]) && matches[1] != "") {
-            ensembl_ids[i] <- matches[1]
-          }
-        }
-        
-        success_count <- sum(ensembl_ids != "")
-        if (success_count > 0) {
-          print(paste("biomaRt: Successfully converted", success_count, "symbols to ENSEMBL"))
-          return(ensembl_ids)
-        }
-      }
-    }, error = function(e) {
-      print(paste("biomaRt failed:", e$message))
-    })
-    
-    # Method 2: Try AnnotationDbi
+    # Method 1: local AnnotationDbi (org.Hs.eg.db / org.Mm.eg.db)
     tryCatch({
       org_db <- if (organism == "mouse") "org.Mm.eg.db" else "org.Hs.eg.db"
       if (requireNamespace(org_db, quietly = TRUE) && requireNamespace("AnnotationDbi", quietly = TRUE)) {
@@ -73799,6 +73729,32 @@ document.addEventListener("DOMContentLoaded", function() {
       }
     }, error = function(e) {
       print(paste("AnnotationDbi failed:", e$message))
+    })
+    
+    # Method 2: remote biomaRt (only when the local annotation package is unavailable)
+    tryCatch({
+      if (requireNamespace("biomaRt", quietly = TRUE)) {
+        dataset <- if (organism == "mouse") "mmusculus_gene_ensembl" else "hsapiens_gene_ensembl"
+        mart <- biomaRt::useMart("ensembl", dataset = dataset)
+        
+        results <- biomaRt::getBM(
+          attributes = c("external_gene_name", "ensembl_gene_id"),
+          filters = "external_gene_name",
+          values = gene_symbols,
+          mart = mart
+        )
+        
+        ensembl_ids <- results$ensembl_gene_id[match(gene_symbols, results$external_gene_name)]
+        ensembl_ids[is.na(ensembl_ids)] <- ""
+        
+        success_count <- sum(ensembl_ids != "")
+        if (success_count > 0) {
+          print(paste("biomaRt: Successfully converted", success_count, "symbols to ENSEMBL"))
+          return(ensembl_ids)
+        }
+      }
+    }, error = function(e) {
+      print(paste("biomaRt failed:", e$message))
     })
     
     # Conversion failed: return unmapped (NA) rather than invented IDs
@@ -74078,7 +74034,7 @@ document.addEventListener("DOMContentLoaded", function() {
         pchembl_value = NA_real_,
         disease_area = "Not specified",
         druggability_score = confidence_score,
-        safety_score = ifelse(is_approved, 0.9, 0.6),
+        clinical_maturity_score = ifelse(is_approved, 0.9, 0.6),
         clinical_evidence_score = confidence_score
       ) %>%
       dplyr::group_by(gene_name) %>%
@@ -74229,17 +74185,7 @@ document.addEventListener("DOMContentLoaded", function() {
         disease_info <- data.frame(id = character(0), name = character(0))
       }
 
-      # --- 8. HELPER: Convert clinical stage string to numeric phase ---
-      stage_to_phase <- function(stage) {
-        if (is.na(stage) || is.null(stage) || stage == "") return(0)
-        stage <- toupper(as.character(stage))
-        if (grepl("APPROVAL|PHASE_4|APPROVED", stage)) return(4)
-        if (grepl("PHASE_3|PHASE3", stage)) return(3)
-        if (grepl("PHASE_2|PHASE2", stage)) return(2)
-        if (grepl("PHASE_1|PHASE1", stage)) return(1)
-        if (grepl("PRECLINICAL|DISCOVERY", stage)) return(0)
-        return(0)
-      }
+      # --- 8. Clinical stage -> numeric phase: ot_stage_to_phase() (exact match) ---
 
       # --- 9. BUILD RESULTS ---
       all_results <- list()
@@ -74261,21 +74207,30 @@ document.addEventListener("DOMContentLoaded", function() {
 
           # Get clinical indications for this drug
           drug_clinical <- clinical_info[clinical_info$drugId == did, ]
+          clinical_phases <- ot_stage_to_phase(drug_clinical$maxClinicalStage)
+
+          # Drug-level max phase and approval from ALL indications, before any truncation
+          drug_max_phase <- suppressWarnings(max(c(clinical_phases, ot_stage_to_phase(drug_max_stage)), na.rm = TRUE))
+          if (!is.finite(drug_max_phase)) drug_max_phase <- NA_real_
+          drug_is_approved <- isTRUE(drug_max_phase >= 4)
 
           if (nrow(drug_clinical) > 0) {
-            # Create one row per disease indication (up to max_drugs_per_gene)
-            drug_clinical <- head(drug_clinical, max_drugs_per_gene)
+            # One row per indication, most advanced first (up to max_drugs_per_gene)
+            ord <- order(clinical_phases, decreasing = TRUE, na.last = TRUE)
+            drug_clinical <- head(drug_clinical[ord, , drop = FALSE], max_drugs_per_gene)
+            clinical_phases <- head(clinical_phases[ord], max_drugs_per_gene)
             for (k in seq_len(nrow(drug_clinical))) {
               dis_name <- disease_info$name[disease_info$id == drug_clinical$diseaseId[k]]
               dis_name <- if (length(dis_name) > 0) dis_name[1] else "Not specified"
-              phase <- stage_to_phase(drug_clinical$maxClinicalStage[k])
 
               all_results[[length(all_results) + 1]] <- data.frame(
                 ensembl_id = eid,
                 gene_name = symbol,
                 molecule_name = drug_name,
                 molecule_id = did,
-                clinical_phase = phase,
+                clinical_phase = clinical_phases[k],
+                drug_max_phase = drug_max_phase,
+                is_approved = drug_is_approved,
                 disease_area = dis_name,
                 drug_type = drug_type,
                 mechanism = gene_moa$mechanism[j],
@@ -74285,13 +74240,14 @@ document.addEventListener("DOMContentLoaded", function() {
             }
           } else {
             # No clinical indications - still include the drug-target link
-            phase <- stage_to_phase(drug_max_stage)
             all_results[[length(all_results) + 1]] <- data.frame(
               ensembl_id = eid,
               gene_name = symbol,
               molecule_name = drug_name,
               molecule_id = did,
-              clinical_phase = phase,
+              clinical_phase = drug_max_phase,
+              drug_max_phase = drug_max_phase,
+              is_approved = drug_is_approved,
               disease_area = "Not specified",
               drug_type = drug_type,
               mechanism = gene_moa$mechanism[j],
@@ -74309,31 +74265,10 @@ document.addEventListener("DOMContentLoaded", function() {
 
       final_results <- dplyr::bind_rows(all_results)
 
-      # --- 10. SCORING (same logic as before) ---
-      final_results <- final_results %>%
-        dplyr::mutate(
-          druggability_score = dplyr::case_when(
-            clinical_phase >= 4 ~ 0.95,
-            clinical_phase == 3 ~ 0.85,
-            clinical_phase == 2 ~ 0.75,
-            clinical_phase == 1 ~ 0.65,
-            TRUE ~ 0.55
-          ),
-          safety_score = dplyr::case_when(
-            clinical_phase >= 4 ~ 0.9,
-            clinical_phase >= 2 ~ 0.7,
-            TRUE ~ 0.5
-          ),
-          clinical_evidence_score = dplyr::case_when(
-            clinical_phase >= 3 ~ 0.85,
-            clinical_phase >= 1 ~ 0.65,
-            TRUE ~ 0.55
-          ),
-          confidence_score = (druggability_score + safety_score + clinical_evidence_score) / 3,
-          safety_risk = ifelse(safety_score >= 0.7, "Low", "High"),
-          database_source = "OpenTargets",
-          analysis_context = "comprehensive"
-        )
+      # --- 10. SCORING: phase tiers (see add_ot_phase_scores) ---
+      final_results <- add_ot_phase_scores(final_results)
+      final_results$database_source <- "OpenTargets"
+      final_results$analysis_context <- "comprehensive"
 
       print(paste("OpenTargets local data results:", nrow(final_results), "associations found"))
       return(final_results)
@@ -74412,23 +74347,13 @@ document.addEventListener("DOMContentLoaded", function() {
           rows <- json_data$data$target$drugAndClinicalCandidates$rows
           symbol <- json_data$data$target$approvedSymbol %||% ensembl_id
 
-          # Helper to convert stage string to numeric
-          stage_to_num <- function(s) {
-            if (is.null(s) || is.na(s) || s == "") return(0)
-            s <- toupper(s)
-            if (grepl("APPROVAL|PHASE_4|APPROVED", s)) return(4)
-            if (grepl("PHASE_3", s)) return(3)
-            if (grepl("PHASE_2", s)) return(2)
-            if (grepl("PHASE_1", s)) return(1)
-            return(0)
-          }
-
           if (is.data.frame(rows) && nrow(rows) > 0) {
-            for (r in seq_len(min(nrow(rows), max_drugs_per_gene))) {
+            row_phase <- if (is.null(rows$maxClinicalStage)) rep(NA_real_, nrow(rows)) else ot_stage_to_phase(rows$maxClinicalStage)
+            # Most advanced indications first, then truncate
+            for (r in head(order(row_phase, decreasing = TRUE, na.last = TRUE), max_drugs_per_gene)) {
               drug_name <- tryCatch(rows$drug$name[r], error = function(e) "Unknown")
               drug_id <- tryCatch(rows$drug$id[r], error = function(e) "Unknown")
-              max_stage <- tryCatch(rows$maxClinicalStage[r], error = function(e) NA)
-              phase <- stage_to_num(max_stage)
+              phase <- row_phase[r]
 
               # Extract disease names
               diseases_list <- tryCatch(rows$diseases[[r]], error = function(e) NULL)
@@ -74456,7 +74381,7 @@ document.addEventListener("DOMContentLoaded", function() {
               if (is.null(row) || is.null(row$drug)) next
               drug_name <- row$drug$name %||% "Unknown"
               drug_id <- row$drug$id %||% "Unknown"
-              phase <- stage_to_num(row$maxClinicalStage)
+              phase <- ot_stage_to_phase(row$maxClinicalStage %||% NA)
 
               disease_name <- "Not specified"
               if (!is.null(row$diseases) && length(row$diseases) > 0) {
@@ -74486,23 +74411,9 @@ document.addEventListener("DOMContentLoaded", function() {
 
     if (length(all_results) > 0) {
       final_results <- dplyr::bind_rows(all_results)
-      final_results <- final_results %>%
-        dplyr::mutate(
-          druggability_score = dplyr::case_when(
-            clinical_phase >= 4 ~ 0.95, clinical_phase == 3 ~ 0.85,
-            clinical_phase == 2 ~ 0.75, clinical_phase == 1 ~ 0.65, TRUE ~ 0.55
-          ),
-          safety_score = dplyr::case_when(
-            clinical_phase >= 4 ~ 0.9, clinical_phase >= 2 ~ 0.7, TRUE ~ 0.5
-          ),
-          clinical_evidence_score = dplyr::case_when(
-            clinical_phase >= 3 ~ 0.85, clinical_phase >= 1 ~ 0.65, TRUE ~ 0.55
-          ),
-          confidence_score = (druggability_score + safety_score + clinical_evidence_score) / 3,
-          safety_risk = ifelse(safety_score >= 0.7, "Low", "High"),
-          database_source = "OpenTargets",
-          analysis_context = "comprehensive"
-        )
+      final_results <- add_ot_phase_scores(final_results)
+      final_results$database_source <- "OpenTargets"
+      final_results$analysis_context <- "comprehensive"
       print(paste("OpenTargets API results:", nrow(final_results), "associations"))
       return(final_results)
     } else {
@@ -74512,6 +74423,7 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   create_enhanced_opentargets_comprehensive_data <- function(ensembl_ids, symbols = NULL, max_per_gene) {
+    stop("OpenTargets drug data could not be loaded. TransXplorer never substitutes simulated data.")
     
     if (length(ensembl_ids) == 0) return(data.frame())
     
@@ -74540,7 +74452,7 @@ document.addEventListener("DOMContentLoaded", function() {
       
       # OpenTargets-specific scores
       druggability_score = stats::runif(n_interactions, 0.3, 1.0),
-      safety_score = stats::runif(n_interactions, 0.2, 0.9),
+      clinical_maturity_score = stats::runif(n_interactions, 0.2, 0.9),
       clinical_evidence_score = stats::runif(n_interactions, 0.4, 0.95),
       target_tractability = sample(c("Small molecule", "Antibody", "Other modalities"),
                                    n_interactions, replace = TRUE),
@@ -74553,13 +74465,13 @@ document.addEventListener("DOMContentLoaded", function() {
     ) %>%
       dplyr::mutate(
         # Derived confidence score
-        confidence_score = (druggability_score + safety_score + clinical_evidence_score) / 3,
+        confidence_score = (druggability_score + clinical_maturity_score + clinical_evidence_score) / 3,
         standard_value = confidence_score,
         
         # Safety assessment
         safety_risk = dplyr::case_when(
-          safety_score >= 0.8 ~ "Low",
-          safety_score >= 0.5 ~ "Medium",
+          clinical_maturity_score >= 0.8 ~ "Low",
+          clinical_maturity_score >= 0.5 ~ "Medium",
           TRUE ~ "High"
         )
       )
@@ -74630,7 +74542,7 @@ document.addEventListener("DOMContentLoaded", function() {
       # Add disease/safety columns with defaults
       if (!"disease_area" %in% colnames(df)) df$disease_area <- "Not specified"
       if (!"druggability_score" %in% colnames(df)) df$druggability_score <- df$confidence_score %||% 0.5
-      if (!"safety_score" %in% colnames(df)) df$safety_score <- ifelse(df$is_approved, 0.9, 0.6)
+      if (!"clinical_maturity_score" %in% colnames(df)) df$clinical_maturity_score <- ifelse(df$is_approved, 0.9, 0.6)
       if (!"clinical_evidence_score" %in% colnames(df)) df$clinical_evidence_score <- df$confidence_score %||% 0.5
       if (!"database_source" %in% colnames(df)) df$database_source <- "DGIdb"
       
@@ -74723,7 +74635,7 @@ document.addEventListener("DOMContentLoaded", function() {
           n_targets = dplyr::n_distinct(gene_name),
           target_genes = paste(unique(gene_name), collapse = ", "),
           avg_confidence = mean(confidence_score, na.rm = TRUE),
-          max_clinical_phase = max(clinical_phase, na.rm = TRUE),
+          max_clinical_phase = if (all(is.na(clinical_phase))) NA_real_ else max(clinical_phase, na.rm = TRUE),
           
           # DGIdb-specific aggregations
           total_publications = sum(n_publications, na.rm = TRUE),
@@ -74752,7 +74664,8 @@ document.addEventListener("DOMContentLoaded", function() {
         dplyr::mutate(
           # Scoring components
           target_score = log2(n_targets + 1),
-          clinical_score = pmax(max_clinical_phase, 0) / 4,
+          # Unknown phase (NA) earns no clinical credit
+          clinical_score = ifelse(is.na(max_clinical_phase), 0, pmax(max_clinical_phase, 0) / 4),
           confidence_score_adj = avg_confidence,
           
           # Publication bonus
@@ -75046,7 +74959,7 @@ document.addEventListener("DOMContentLoaded", function() {
       
       if (!"disease_area" %in% colnames(opentargets_data)) opentargets_data$disease_area <- "Not specified"
       if (!"druggability_score" %in% colnames(opentargets_data)) opentargets_data$druggability_score <- NA_real_
-      if (!"safety_score" %in% colnames(opentargets_data)) opentargets_data$safety_score <- NA_real_
+      if (!"clinical_maturity_score" %in% colnames(opentargets_data)) opentargets_data$clinical_maturity_score <- NA_real_
       if (!"clinical_evidence_score" %in% colnames(opentargets_data)) opentargets_data$clinical_evidence_score <- NA_real_
       
       ot_drugs <- opentargets_data %>%
@@ -75062,7 +74975,7 @@ document.addEventListener("DOMContentLoaded", function() {
             "OpenTargets Drug: ", molecule_name,
             "<br>Disease: ", ifelse(is.na(disease_area), "N/A", disease_area),
             "<br>Druggability: ", ifelse(is.na(druggability_score), "N/A", as.character(round(druggability_score, 2))),
-            "<br>Safety: ", ifelse(is.na(safety_score), "N/A", as.character(round(safety_score, 2)))
+            "<br>Clinical maturity: ", ifelse(is.na(clinical_maturity_score), "N/A", as.character(round(clinical_maturity_score, 2)))
           )
         ) %>%
         dplyr::select(id, label, group, color, size, shape, title)
@@ -75149,7 +75062,7 @@ document.addEventListener("DOMContentLoaded", function() {
           unique_targets = length(unique(opentargets_data$gene_name)),
           druggable_targets = sum(opentargets_data$druggability_score > 0.7, na.rm = TRUE),
           high_clinical_evidence = sum(opentargets_data$clinical_evidence_score > 0.7, na.rm = TRUE),
-          safe_compounds = sum(opentargets_data$safety_score > 0.7, na.rm = TRUE),
+          safe_compounds = sum(opentargets_data$clinical_maturity_score > 0.7, na.rm = TRUE),
           disease_areas = if("disease_area" %in% colnames(opentargets_data)) length(unique(opentargets_data$disease_area)) else 0
         )
       } else {
@@ -75287,9 +75200,8 @@ document.addEventListener("DOMContentLoaded", function() {
       print(paste("Existing conversion function failed:", e$message))
     })
     
-    # Fallback: Create meaningful symbols from ENSEMBL IDs
-    print("Using fallback conversion for ENSEMBL IDs...")
-    fallback_symbols <- paste0("GENE_", gsub("ENSG0+", "", ensembl_ids))
+    # Conversion failed: keep the Ensembl IDs (never invent symbols)
+    fallback_symbols <- ensembl_ids
     
     return(fallback_symbols)
   }
@@ -75913,8 +75825,9 @@ document.addEventListener("DOMContentLoaded", function() {
             TRUE ~ 0.55
           )
         }
-        if (!"safety_score" %in% names(ot_raw)) {
-          ot_raw$safety_score <- dplyr::case_when(
+        if (!"clinical_maturity_score" %in% names(ot_raw)) {
+          ot_raw$clinical_maturity_score <- dplyr::case_when(
+            is.na(ot_raw$clinical_phase) ~ NA_real_,
             ot_raw$clinical_phase >= 4 ~ 0.9,
             ot_raw$clinical_phase >= 2 ~ 0.7,
             TRUE ~ 0.5
@@ -75988,7 +75901,7 @@ document.addEventListener("DOMContentLoaded", function() {
             Disease_Area = disease_area,
             Clinical_Phase = clinical_phase,
             Druggability = druggability_score,
-            Safety = safety_score,
+            Clinical_Maturity = clinical_maturity_score,
             Clinical_Evidence = clinical_evidence_score,
             Hidden_Search = hidden_search_string
           )
@@ -76022,7 +75935,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 gene_data$disease_area[i],
                 gene_data$clinical_phase[i],
                 round(as.numeric(gene_data$druggability_score[i]), 3),
-                round(as.numeric(gene_data$safety_score[i]), 3),
+                round(as.numeric(gene_data$clinical_maturity_score[i]), 3),
                 as.numeric(gene_data$clinical_evidence_score[i]) * 100,
                 as.numeric(gene_data$clinical_evidence_score[i]) * 100,
                 round(as.numeric(gene_data$clinical_evidence_score[i]), 3)
@@ -76039,7 +75952,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     <th style="padding: 8px; text-align: center;">Disease Area</th>
                     <th style="padding: 8px; text-align: center;">Clinical Phase</th>
                     <th style="padding: 8px; text-align: center;">Druggability</th>
-                    <th style="padding: 8px; text-align: center;">Safety</th>
+                    <th style="padding: 8px; text-align: center;">Clinical maturity</th>
                     <th style="padding: 8px; text-align: center;">Clinical Evidence</th>
                   </tr>
                 </thead>
@@ -76103,7 +76016,7 @@ document.addEventListener("DOMContentLoaded", function() {
           $('head').append('<style>table.dataTable tbody tr.shown { background-color: white !important; }</style>');
         ", child_json))
         ) %>%
-          DT::formatRound(columns = c("Druggability", "Safety", "Clinical_Evidence"), digits = 3) %>%
+          DT::formatRound(columns = c("Druggability", "Clinical_Maturity", "Clinical_Evidence"), digits = 3) %>%
           DT::formatStyle(
             'Clinical_Evidence',
             background = DT::styleColorBar(c(0, 1), '#d4edda'),
@@ -76954,7 +76867,7 @@ document.addEventListener("DOMContentLoaded", function() {
         pchembl_value = NA_real_,
         disease_area = "Not specified",
         druggability_score = confidence_score,
-        safety_score = ifelse(is_approved, 0.9, 0.6),
+        clinical_maturity_score = ifelse(is_approved, 0.9, 0.6),
         clinical_evidence_score = confidence_score
       ) %>%
       # Rank by discovery priority
@@ -77932,7 +77845,7 @@ document.addEventListener("DOMContentLoaded", function() {
   outputOptions(output, "has_ppi_results", suspendWhenHidden = FALSE)
   
   
-  observeEvent(input$run_network_analysis_systems, {
+  observeEvent(network_run_trigger(), {
     print("🚀 Run Analysis clicked - preserving existing results")
     
     current_type <- input$network_analysis_type_systems %||% "unknown"
@@ -78667,13 +78580,13 @@ document.addEventListener("DOMContentLoaded", function() {
       dplyr::group_by(molecule_name) %>%
       dplyr::summarise(
         Target_Count = dplyr::n_distinct(gene_name),
-        Max_Clinical_Phase = max(clinical_phase, na.rm = TRUE),
+        Max_Clinical_Phase = if (all(is.na(clinical_phase))) NA_real_ else max(clinical_phase, na.rm = TRUE),
         Disease_Areas = ifelse("disease_area" %in% colnames(disease_data),
                                paste(unique(disease_area[!is.na(disease_area)]), collapse = "; "),
                                "Multiple"),
-        Avg_Safety_Score = ifelse("safety_score" %in% colnames(disease_data),
-                                  round(mean(safety_score, na.rm = TRUE), 3),
-                                  0.5),
+        Avg_Clinical_Maturity = ifelse("clinical_maturity_score" %in% colnames(disease_data),
+                                       round(mean(clinical_maturity_score, na.rm = TRUE), 3),
+                                       NA_real_),
         Avg_Clinical_Evidence = ifelse("clinical_evidence_score" %in% colnames(disease_data),
                                        round(mean(clinical_evidence_score, na.rm = TRUE), 3),
                                        0.5),
@@ -78683,12 +78596,13 @@ document.addEventListener("DOMContentLoaded", function() {
         .groups = 'drop'
       ) %>%
       dplyr::mutate(
-        # Calculate disease-focused priority score
+        # Disease-focused priority score. Every component is derived from clinical phase
+        # (no safety, toxicity or bioactivity data); NA when the phase is unknown.
         Disease_Priority_Score = round(
           (Max_Clinical_Phase * 0.3) +          # 30% clinical phase
-            (Avg_Clinical_Evidence * 0.3) +       # 30% clinical evidence
-            (Avg_Safety_Score * 0.2) +            # 20% safety
-            (Avg_Druggability * 0.2), 3),         # 20% druggability
+            (Avg_Clinical_Evidence * 0.3) +       # 30% phase-based clinical evidence
+            (Avg_Clinical_Maturity * 0.2) +       # 20% phase-based clinical maturity
+            (Avg_Druggability * 0.2), 3),         # 20% phase-based druggability
         
         Clinical_Phase_Desc = dplyr::case_when(
           Max_Clinical_Phase == 4 ~ "Approved",
@@ -78713,7 +78627,7 @@ document.addEventListener("DOMContentLoaded", function() {
         `Target Count` = Target_Count,
         `Clinical Phase` = Clinical_Phase_Desc,
         `Disease Areas` = Disease_Areas,
-        `Safety Score` = Avg_Safety_Score,
+        `Clinical Maturity` = Avg_Clinical_Maturity,
         `Clinical Evidence` = Avg_Clinical_Evidence
       )
     
@@ -78731,9 +78645,9 @@ document.addEventListener("DOMContentLoaded", function() {
           c('#d4edda', '#fff3cd', '#f8d7da')
         )
       ) %>%
-      DT::formatRound(c('Priority Score', 'Safety Score', 'Clinical Evidence'), 3) %>%
+      DT::formatRound(c('Priority Score', 'Clinical Maturity', 'Clinical Evidence'), 3) %>%
       DT::formatStyle(
-        'Safety Score',
+        'Clinical Maturity',
         color = DT::styleInterval(c(0.3, 0.7), c('#dc3545', '#fd7e14', '#28a745'))
       ) %>%
       DT::formatStyle(
@@ -82303,8 +82217,8 @@ document.addEventListener("DOMContentLoaded", function() {
     req(input$network_analysis_type_systems == "deconv") # Corrected to network_analysis_type_systems
     
     if (!is.null(network_rv$current_results$summary_stats$deconv)) {
-      as.character(network_rv$current_results$summary_stats$deconv$confidence_score)
-    } else { "0" }
+      as.character(network_rv$current_results$summary_stats$deconv$method %||% "")
+    } else { "" }
   })
   
   output$marker_genes <- renderText({
@@ -82320,39 +82234,31 @@ document.addEventListener("DOMContentLoaded", function() {
   output$deconv_composition_table <- DT::renderDataTable({
     req(network_rv$current_results)
     req(input$network_analysis_type_systems == "deconv") # Corrected to network_analysis_type_systems
-    
+
     if (!is.null(network_rv$current_results$deconv_data$cell_composition)) {
-      composition_table <- network_rv$current_results$deconv_data$cell_composition %>%
-        dplyr::mutate( # Explicit dplyr::mutate
-          Proportion_Percent = round(proportion * 100, 2),
-          Significance = dplyr::case_when( # Explicit dplyr::case_when
-            p_value < 0.001 ~ "***",
-            p_value < 0.01 ~ "**",
-            p_value < 0.05 ~ "*",
-            TRUE ~ "ns"
-          )
-        ) %>%
-        dplyr::select( # Explicit dplyr::select
-          "Cell Type" = cell_type,
-          "Proportion (%)" = Proportion_Percent,
-          "Confidence Score" = confidence_score,
-          "P-value" = p_value,
-          "Significance" = Significance
-        )
-      
-      DT::datatable(
+      composition_table <- format_deconv_composition_table(network_rv$current_results$deconv_data$cell_composition)
+
+      dt <- DT::datatable(
         composition_table,
-        options = list(pageLength = 10, dom = 'frtip'),
+        options = list(
+          pageLength = 15,
+          dom = 'Bfrtip',
+          buttons = c('copy', 'csv', 'excel')
+        ),
+        extensions = 'Buttons',
         rownames = FALSE
-      ) %>%
-        DT::formatRound(columns = c("Confidence Score", "P-value"), digits = 3) %>%
-        DT::formatStyle(
-          'Proportion (%)',
-          backgroundColor = DT::styleInterval(
-            c(10, 20, 30),
-            c('#ffffff', '#e8f5e8', '#d4edda', '#28a745')
+      )
+      if ("Mean fraction (%)" %in% colnames(composition_table)) {
+        dt <- dt %>%
+          DT::formatStyle(
+            'Mean fraction (%)',
+            background = DT::styleColorBar(composition_table$`Mean fraction (%)`, '#3498db'),
+            backgroundSize = '100% 90%',
+            backgroundRepeat = 'no-repeat',
+            backgroundPosition = 'center'
           )
-        )
+      }
+      dt
     } else {
       DT::datatable(data.frame(Message = "No deconvolution data available"))
     }
@@ -82884,63 +82790,19 @@ document.addEventListener("DOMContentLoaded", function() {
   output$group_comparison_table <- DT::renderDataTable({
     req(input$network_analysis_type_systems == "deconv")
     req(network_rv$current_results$group_comparison)
-    
-    group_comp <- network_rv$current_results$group_comparison
-    pval_threshold <- input$group_comp_pval_threshold %||% 0.05
-    
-    # Format table with CORRECT column names
-    # STEP 1: Calculate mean_diff FIRST
-    table_display <- group_comp %>%
-      mutate(
-        # CALCULATE mean_diff since it doesn't exist in the data
-        mean_diff = mean_group1 - mean_group2
-      ) %>%
-      # STEP 2: Now format everything (mean_diff exists now)
-      mutate(
-        Significance = case_when(
-          p_value < 0.001 ~ "***",
-          p_value < 0.01 ~ "**",
-          p_value < 0.05 ~ "*",
-          TRUE ~ "ns"
-        ),
-        `P-value` = formatC(p_value, format = "e", digits = 2),
-        `Mean Diff` = round(mean_diff, 4),
-        # Use log2FC if available, otherwise show fold_change with warning for Inf
-        `Log2 FC` = if("log2_fold_change" %in% colnames(.)) round(log2_fold_change, 2) else NA,
-        `Fold Change` = ifelse(is.infinite(fold_change), 
-                               ifelse(fold_change > 0, "Inf (↑)", "Inf (↓)"),
-                               round(fold_change, 2)),
-        `Cohen's d` = round(cohens_d, 2)
-      ) %>%
-      # STEP 3: Select and rename columns
-      select(
-        "Cell Type" = cell_type,
-        "Group 1" = group1,
-        "Group 2" = group2,
-        "Mean (G1)" = mean_group1,
-        "Mean (G2)" = mean_group2,
-        "Mean Diff",
-        "Log2 FC",
-        "Fold Change",
-        "Cohen's d",
-        "P-value",
-        "Sig." = Significance
-      )
-    
+
+    table_display <- format_deconv_group_comparison_table(network_rv$current_results$group_comparison)
+
     DT::datatable(
       table_display,
       options = list(
         pageLength = 15,
-        order = list(list(8, 'asc')),  # Sort by p-value (column index 8)
-        columnDefs = list(
-          list(className = 'dt-center', targets = 3:9)
-        ),
-        scrollX = TRUE  # Enable horizontal scrolling for better layout
+        order = list(list(4, 'asc')),  # P-value
+        scrollX = TRUE
       ),
       rownames = FALSE
     ) %>%
-      formatRound(columns = c("Mean (G1)", "Mean (G2)", "Mean Diff"), digits = 4) %>%
-      formatRound(columns = c("Fold Change", "Cohen's d"), digits = 2) %>%
+      formatSignif(columns = c("P-value", "Adj. P (BH)"), digits = 3) %>%
       formatStyle(
         'Sig.',
         backgroundColor = styleEqual(
@@ -82950,14 +82812,6 @@ document.addEventListener("DOMContentLoaded", function() {
         color = styleEqual(
           c('***', '**', '*', 'ns'),
           c('#155724', '#0c5460', '#856404', '#6c757d')
-        ),
-        fontWeight = 'bold'
-      ) %>%
-      formatStyle(
-        'Mean Diff',
-        color = styleInterval(
-          c(0),
-          c('#d32f2f', '#388e3c')  # Red for negative, green for positive
         ),
         fontWeight = 'bold'
       )
@@ -83297,12 +83151,11 @@ document.addEventListener("DOMContentLoaded", function() {
       "- Gene ID conversion validated using HGNC symbols\n",
       "- Cross-database entity matching performed\n",
       "- Activity values log-transformed for analysis (if applicable)\n", # Conditional
-      "- Clinical phase data validated against OpenTargets data (mocked)\n\n", # Indicate mocked nature
-      
+      "- Clinical phase taken from OpenTargets clinical stage data (exact stage match)\n\n",
+
       "## Statistical Methods\n\n",
-      "- Priority scoring: Weighted combination of bioactivity, target count, and clinical phase\n",
-      "- Activity classification: Thresholds at 100nM (very active), 1μM (active), 10μM (moderate)\n",
-      "- Safety risk assessment: Based on OpenTargets liability scores (mocked)\n\n",
+      "- Priority scoring: number of DEG targets, DGIdb interaction confidence, highest clinical phase, publication/source counts and DGIdb-OpenTargets agreement (no bioactivity values)\n",
+      "- Clinical maturity: tiers of the highest clinical phase (not a safety assessment)\n\n",
       
       "---\n",
       "*Technical report generated on ", Sys.Date(), "*"
@@ -84826,9 +84679,10 @@ document.addEventListener("DOMContentLoaded", function() {
         degree_q75 <- quantile(hub_proteins$degree, 0.75, na.rm = TRUE)
         degree_q50 <- quantile(hub_proteins$degree, 0.5, na.rm = TRUE)
         
+        # Quantiles alone call every node a hub in sparse networks (q90 = 1)
         hub_proteins$hub_type <- ifelse(
-          hub_proteins$degree >= degree_q90, "Major Hub",
-          ifelse(hub_proteins$degree >= degree_q75, "Hub",
+          hub_proteins$degree >= degree_q90 & hub_proteins$degree >= 3, "Major Hub",
+          ifelse(hub_proteins$degree >= degree_q75 & hub_proteins$degree >= 3, "Hub",
                  ifelse(hub_proteins$degree >= degree_q50, "Connector", "Peripheral"))
         )
       } else {
@@ -84922,11 +84776,19 @@ document.addEventListener("DOMContentLoaded", function() {
       
       print("🧬 Running functional enrichment analysis...")
       
-      databases <- if (organism_param == "human") {
-        c("GO_Biological_Process_2023", "KEGG_2021_Human", "Reactome_2022")
-      } else {
-        c("GO_Biological_Process_2021", "KEGG_2019")
+      # Enrichr libraries are human/mouse-symbol based: mammals only, verified libraries only
+      if (!tolower(organism_param) %in% TX_ENRICHR_MAMMALS) {
+        showNotification(paste0("PPI pathway enrichment skipped: its Enrichr libraries cover human/mouse gene symbols, not '",
+                                organism_param, "'. Use the Enrichment Analysis tab for this species."),
+                         type = "warning", duration = 10)
+        return(list())
       }
+      databases <- if (identical(tolower(organism_param), "mouse")) {
+        c("GO_Biological_Process_2023", "KEGG_2021_Mouse", "WikiPathways_2024_Mouse")
+      } else {
+        c("GO_Biological_Process_2023", "KEGG_2021_Human", "Reactome_2022")
+      }
+      databases <- databases[databases %in% TX_ENRICHR_VERIFIED]
       
       enrichment_results <- tx_enrichr_local(all_network_proteins, databases)
       
@@ -85869,33 +85731,52 @@ document.addEventListener("DOMContentLoaded", function() {
   })
   
   # UNIFIED NETWORK ANALYSIS OBSERVEEVENT
-  observeEvent(input$run_network_analysis_systems, {
+  observeEvent(network_run_trigger(), {
+
+    # The run observer above sets "running"; any exit before a result is stored resets it
+    on.exit({
+      if (identical(isolate(network_rv$analysis_status), "running")) {
+        network_rv$analysis_status <- "error"
+        network_rv$error_message <- "Analysis stopped before producing results (see notifications)."
+      }
+    }, add = TRUE)
 
     # Validation checks
-    req(rv_deg_main$deg_results)
+    if (is.null(rv_deg_main$deg_results) || nrow(rv_deg_main$deg_results) == 0) {
+      network_rv$analysis_status <- "error"
+      network_rv$error_message <- "No DEG results available. Run the DEG analysis first."
+      showNotification("No DEG results available. Run the DEG analysis first, then start the Advanced Analysis.",
+                       type = "error", duration = 8)
+      return()
+    }
     req(input$network_analysis_type_systems)
 
     # --- PREVENT DUPLICATE SUBMISSIONS ---
-    # Disable button and show running state immediately
-    shinyjs::disable("run_network_analysis_systems")
+    # Disable both run buttons and show running state immediately
+    run_button_ids <- c("run_network_analysis_systems", "run_network_analysis_systems_ppi")
+    for (btn_id in run_button_ids) shinyjs::disable(btn_id)
     shinyjs::runjs("
-      var btn = document.getElementById('run_network_analysis_systems');
-      if (btn) {
-        btn.dataset.originalHtml = btn.innerHTML;
-        btn.innerHTML = '<i class=\"fa fa-spinner fa-spin\" style=\"margin-right: 6px;\"></i> Running Analysis...';
-        btn.classList.add('btn-disabled-running');
-      }
+      ['run_network_analysis_systems', 'run_network_analysis_systems_ppi'].forEach(function(id) {
+        var btn = document.getElementById(id);
+        if (btn) {
+          btn.dataset.originalHtml = btn.innerHTML;
+          btn.innerHTML = '<i class=\"fa fa-spinner fa-spin\" style=\"margin-right: 6px;\"></i> Running Analysis...';
+          btn.classList.add('btn-disabled-running');
+        }
+      });
     ")
 
-    # Ensure button is re-enabled when this handler exits (even on error)
+    # Ensure buttons are re-enabled when this handler exits (even on error)
     on.exit({
-      shinyjs::enable("run_network_analysis_systems")
+      for (btn_id in run_button_ids) shinyjs::enable(btn_id)
       shinyjs::runjs("
-        var btn = document.getElementById('run_network_analysis_systems');
-        if (btn && btn.dataset.originalHtml) {
-          btn.innerHTML = btn.dataset.originalHtml;
-          btn.classList.remove('btn-disabled-running');
-        }
+        ['run_network_analysis_systems', 'run_network_analysis_systems_ppi'].forEach(function(id) {
+          var btn = document.getElementById(id);
+          if (btn && btn.dataset.originalHtml) {
+            btn.innerHTML = btn.dataset.originalHtml;
+            btn.classList.remove('btn-disabled-running');
+          }
+        });
       ")
     }, add = TRUE)
 
@@ -85914,6 +85795,12 @@ document.addEventListener("DOMContentLoaded", function() {
         # Get p-value column based on user selection
         pvalue_type <- input$pvalue_type_main %||% "adjusted"  # Changed from pvalue_type_deg_main
         pval_column <- if (pvalue_type == "adjusted") "adj.P.Val" else "P.Value"
+
+        # Same threshold input as the DE results page (p-value type: pvalue_type_main above)
+        p_threshold_main <- input$p_val_threshold_main %||% 0.05
+        # deg_results stacks all pairwise comparisons; use the one selected on the DE page
+        deg_active <- deg_rows_for_active_comparison(rv_deg_main$deg_results, rv_deg_main$active_deg_comparison)
+        print(paste("DEG comparison:", rv_deg_main$active_deg_comparison %||% "single", "-", nrow(deg_active), "rows"))
         
         print(paste("Using p-value type:", pvalue_type, "- Column:", pval_column))
         
@@ -85924,10 +85811,10 @@ document.addEventListener("DOMContentLoaded", function() {
           p_value_col <- pval_column  # This was already set correctly at the top
           print(paste("Using p-value column:", p_value_col))
           
-          # Safety check for p-value column
-          if (!p_value_col %in% colnames(rv_deg_main$deg_results)) {
-            print(paste("⚠️ Column", p_value_col, "not found. Available columns:", paste(colnames(rv_deg_main$deg_results), collapse = ", ")))
-            p_value_col <- "adj.P.Val"  # Fallback
+          # The selected p-value column must exist
+          if (!p_value_col %in% colnames(deg_active)) {
+            showNotification(paste("P-value column", p_value_col, "not found in the DEG results."), type = "error")
+            return(NULL)
           }
           
           # Get user's actual filter settings
@@ -85941,10 +85828,7 @@ document.addEventListener("DOMContentLoaded", function() {
             input$log2fc_min %||% 
             -1.5
           
-          p_threshold <- input$pvalue_cutoff_deg_main %||% 
-            input$pvalue_cutoff_main %||%
-            input$pvalue_cutoff %||% 
-            0.05
+          p_threshold <- p_threshold_main
           
           print(paste("Filter criteria:"))
           print(paste("  - P-value <", p_threshold))
@@ -85968,7 +85852,7 @@ document.addEventListener("DOMContentLoaded", function() {
           print(paste("Using fold change column:", fc_col))
           
           # Filter for significant DEGs
-          sig_degs <- rv_deg_main$deg_results %>%
+          sig_degs <- deg_active %>%
             filter(!is.na(!!sym(p_value_col))) %>%
             filter(!!sym(p_value_col) < p_threshold) %>%
             filter(!is.na(!!sym(fc_col))) %>%
@@ -85986,28 +85870,14 @@ document.addEventListener("DOMContentLoaded", function() {
             return(NULL)
           }
           
-          # Get gene symbols - handle different column names
-          if ("gene_symbol" %in% colnames(sig_degs)) {
-            all_genes <- sig_degs$gene_symbol
-          } else if ("SYMBOL" %in% colnames(sig_degs)) {
-            all_genes <- sig_degs$SYMBOL
-          } else {
-            all_genes <- rownames(sig_degs)
-          }
-          
-          # Remove NAs and empty strings
-          all_genes <- all_genes[!is.na(all_genes) & all_genes != ""]
-          
-          # Separate up and down using the detected column
-          up_mask <- sig_degs[[fc_col]] > 0
-          down_mask <- sig_degs[[fc_col]] < 0
-          
-          up_genes <- all_genes[up_mask]
-          down_genes <- all_genes[down_mask]
-          
-          # Remove NAs
-          up_genes <- up_genes[!is.na(up_genes) & up_genes != ""]
-          down_genes <- down_genes[!is.na(down_genes) & down_genes != ""]
+          # Gene identifiers aligned with sig_degs rows (gene_id has no comparison suffix)
+          id_col <- intersect(c("gene_symbol", "SYMBOL", "gene_id"), colnames(sig_degs))[1]
+          sig_ids <- if (!is.na(id_col)) as.character(sig_degs[[id_col]]) else rownames(sig_degs)
+          has_id <- !is.na(sig_ids) & sig_ids != ""
+
+          up_genes <- unique(sig_ids[has_id & sig_degs[[fc_col]] > 0])
+          down_genes <- unique(sig_ids[has_id & sig_degs[[fc_col]] < 0])
+          all_genes <- unique(sig_ids[has_id])
           
           print(paste("✓ Up-regulated:", length(up_genes), "| Down-regulated:", length(down_genes)))
           
@@ -86032,7 +85902,7 @@ document.addEventListener("DOMContentLoaded", function() {
         } else if (input$network_analysis_type_systems %in% c("ppi", "wgcna", "deconv")) {
           # For PPI, WGCNA, deconvolution - use top N genes
           selected_genes <- select_enhanced_genes(
-            deg_data = rv_deg_main$deg_results,
+            deg_data = deg_active,
             up_count = input$n_top_genes %||% 10,
             down_count = input$n_bottom_genes %||% 10,
             method = input$gene_priority %||% "combined"
@@ -86207,10 +86077,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                        input$log2fc_min %||% 
                                        -1.5
                                      
-                                     pval_threshold <- input$pvalue_cutoff_deg_main %||% 
-                                       input$pvalue_cutoff_main %||%
-                                       input$pvalue_cutoff %||% 
-                                       0.05
+                                     pval_threshold <- p_threshold_main
                                      
                                      fc_min_threshold <- log2fc_min
                                      fc_max_threshold <- log2fc_max
@@ -86222,7 +86089,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                      
                                      # Apply filtering to get significant DEGs
                                      significant_degs <- tryCatch({
-                                       rv_deg_main$deg_results %>%
+                                       deg_active %>%
                                          filter(
                                            !is.na(!!sym(significance_col)),
                                            !!sym(significance_col) < pval_threshold,
@@ -86451,7 +86318,8 @@ document.addEventListener("DOMContentLoaded", function() {
                                          tf_database = input$tf_database %||% "dorothea",
                                          confidence_level = input$tf_confidence %||% 0.6,
                                          min_tf_edges = input$grn_min_tf_edges %||% 2,
-                                         calculate_activities = input$include_tf_activities %||% TRUE # Pass the checkbox value
+                                         calculate_activities = input$include_tf_activities %||% TRUE, # Pass the checkbox value
+                                         filter_deg_tfs_only = isTRUE(input$grn_filter_deg_tfs_only)
                                        )
                                      }, error = function(e) {
                                        print(paste("❌ GRN analysis error:", e$message))
@@ -86597,7 +86465,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                          down_regulated_data <- rv_deg_main$down_regulated
                                        } else if (!is.null(rv_deg_main$deg_results)) {
                                          
-                                         deg_data <- rv_deg_main$deg_results
+                                         deg_data <- deg_active
                                          
                                          # ✅ Get p-value type from user selection
                                          pvalue_type <- input$pvalue_type_main %||% "adjusted"
@@ -86606,9 +86474,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                          print(paste("PPI filtering using p-value type:", pvalue_type, "- Column:", pval_column))
                                          
                                          # ✅ Get thresholds with correct variable names
-                                         pval_threshold <- rv_deg_main$pvalue_cutoff_deg_main %||% 
-                                           input$pvalue_cutoff_deg_main %||% 
-                                           0.05
+                                         pval_threshold <- p_threshold_main
                                          
                                          log2fc_max <- rv_deg_main$log2fc_max_main %||% 
                                            input$log2fc_max %||% 
@@ -86747,11 +86613,15 @@ document.addEventListener("DOMContentLoaded", function() {
                                        
                                        ppi_results <- tryCatch({
 
-                                         species_map <- list(
-                                           human = 9606, mouse = 10090, rat = 10116,
-                                           fly = 7227, zebrafish = 7955, yeast = 4932
-                                         )
-                                         species_id <- species_map[[tolower(organism_param)]] %||% 9606
+                                         # "Other" uses the STRING/NCBI taxonomy ID from the custom organism settings
+                                         string_organism <- organism_param
+                                         if (identical(organism_param, "other")) {
+                                           string_organism <- isolate(resolve_other_organism(input))$string_taxid
+                                           if (is.null(string_organism)) {
+                                             stop("PPI for 'Other' organism needs its STRING/NCBI taxonomy ID (custom organism settings).")
+                                           }
+                                         }
+                                         species_id <- tx_string_taxid(string_organism)
 
                                          print(paste("Querying STRING for species:", species_id, "(using local data if available)"))
 
@@ -86759,9 +86629,10 @@ document.addEventListener("DOMContentLoaded", function() {
                                          incProgress(0.6, detail = "Querying STRING database...")
                                          ppi_raw <- query_string_database_safe(
                                            genes = all_genes,
-                                           organism = organism_param,
+                                           organism = species_id,
                                            confidence = confidence_threshold,
-                                           max_interactions = max_interactions
+                                           max_interactions = max_interactions,
+                                           network_type = network_type
                                          )
 
                                          # Build a mapped_genes-compatible structure for downstream code
@@ -86825,14 +86696,8 @@ document.addEventListener("DOMContentLoaded", function() {
                                                      rm(all_aliases)
                                                    }
 
-                                                   # Load cached links
-                                                   links_rds <- file.path(cache_dir, paste0(species_id, "_links.rds"))
-                                                   if (file.exists(links_rds)) {
-                                                     all_links <- readRDS(links_rds)
-                                                   } else {
-                                                     all_links <- data.table::fread(cmd = paste("zcat", links_file), header = TRUE)
-                                                     tryCatch(saveRDS(all_links, links_rds), error = function(e) NULL)
-                                                   }
+                                                   # Links of the chosen network type (physical or full)
+                                                   all_links <- tx_string_local_links(species_id, network_type, string_data_path)
 
                                                    # Map current network genes to STRING IDs
                                                    current_genes <- unique(c(interactions$from, interactions$to))
@@ -87607,7 +87472,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                        
                                        # FIRST: Do initial gene selection
                                        top_var_genes <- names(sort(gene_vars, decreasing = TRUE))[1:min(5000, length(gene_vars))]
-                                       initial_selected_genes <- intersect(top_var_genes, clean_gene_ids)
+                                       initial_selected_genes <- top_var_genes  # raw rownames (e.g. ENSG....N), as used to index normalized_for_wgcna
                                        
                                        # THEN: Apply sample size constraints
                                        n_samples <- ncol(expression_data)
@@ -87973,6 +87838,9 @@ document.addEventListener("DOMContentLoaded", function() {
                                          print(paste("   raw_counts dims:", paste(dim(rv_deg_main$raw_counts), collapse = " x ")))
                                        }
                                        
+                                       # Local copy: deconvolution must not modify the shared DE matrix
+                                       deconv_expr <- rv_deg_main$normalized_counts
+
                                        print(paste("   normalized_counts exists:", !is.null(rv_deg_main$normalized_counts)))
                                        if (!is.null(rv_deg_main$normalized_counts)) {
                                          print(paste("   normalized_counts dims:", paste(dim(rv_deg_main$normalized_counts), collapse = " x ")))
@@ -87984,15 +87852,15 @@ document.addEventListener("DOMContentLoaded", function() {
                                          if (!is.null(rv_deg_main$raw_counts)) {
                                            norm_method <- input$normalization_method_main %||% "TMM"
                                            data_for_norm <- as.data.frame(rv_deg_main$raw_counts)
-                                           rv_deg_main$normalized_counts <- normalizeData(data_for_norm, norm_method)
-                                           print("   ✅ Created normalized_counts on-the-fly")
+                                           deconv_expr <- normalizeData(data_for_norm, norm_method)
+                                           print("   ✅ Created a local normalized matrix for deconvolution")
                                          }
                                        }
                                        
                                        print(paste("   deg_results exists:", !is.null(rv_deg_main$deg_results)))
                                        print(paste("   sample_groups exists:", !is.null(rv_deg_main$sample_groups)))
                                        
-                                       if (is.null(rv_deg_main$normalized_counts)) {
+                                       if (is.null(deconv_expr)) {
                                          showNotification(
                                            "❌ Cannot run deconvolution: normalized expression data not available. Please run QC or DEG analysis first.",
                                            type = "error",
@@ -88145,7 +88013,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                      print("🔍 VALIDATING SAMPLE GROUPS BEFORE DECONVOLUTION...")
                                      
                                      # Get samples from normalized counts
-                                     expression_samples <- colnames(rv_deg_main$normalized_counts)
+                                     expression_samples <- colnames(deconv_expr)
                                      print(paste("   Expression matrix samples:", length(expression_samples)))
                                      print(paste("   First 5 samples:", paste(head(expression_samples, 5), collapse = ", ")))
                                      
@@ -88188,24 +88056,24 @@ document.addEventListener("DOMContentLoaded", function() {
                                            rv_deg_main$sample_groups$sample %in% common_samples, 
                                          ]
                                          
-                                         # Also subset the expression matrix to common samples
-                                         rv_deg_main$normalized_counts <- rv_deg_main$normalized_counts[, common_samples, drop = FALSE]
+                                         # Also subset the (local) expression matrix to common samples
+                                         deconv_expr <- deconv_expr[, common_samples, drop = FALSE]
                                          
                                          print(paste("   ✅ Validated:", nrow(validated_sample_groups), "samples with groups"))
                                          print(paste("   Groups:", paste(unique(validated_sample_groups$group), collapse = ", ")))
                                          
                                        } else {
                                          print("   ⚠️ Sample groups not in correct format (need data.frame with 'sample' and 'group' columns)")
-                                         print("   Will try to auto-detect groups from sample names")
+                                         print("   Will run without groups (group comparison skipped)")
                                          validated_sample_groups <- NULL
                                        }
                                        
                                      } else {
-                                       print("   No sample groups provided - will auto-detect from naming")
+                                       print("   No sample groups provided - group comparison will be skipped")
                                      }
                                      
                                      deconv_results <- perform_deconvolution_analysis(
-                                       expression_matrix = rv_deg_main$normalized_counts,
+                                       expression_matrix = deconv_expr,
                                        method = input$deconv_method %||% "xcell",
                                        organism = input$organism_deg_main,
                                        deg_data = deg_data_for_deconv,
@@ -88233,8 +88101,8 @@ document.addEventListener("DOMContentLoaded", function() {
                                          HTML(paste0(
                                            "<strong>✅ Deconvolution Complete!</strong><br>",
                                            "• ", deconv_results$summary_stats$deconv$total_cell_types, " cell types identified<br>",
-                                           "• ", deconv_results$summary_stats$deconv$marker_genes, " DEGs linked to cell types<br>",
-                                           "• Confidence: ", deconv_results$summary_stats$deconv$confidence_score, "%"
+                                           "• Method: ", deconv_results$summary_stats$deconv$method %||% "", "",
+                                           if (!is.null(deconv_results$group_comparison_note)) paste0("<br>• ", deconv_results$group_comparison_note) else ""
                                          )),
                                          type = "message",
                                          duration = 10
@@ -89094,9 +88962,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                                          column(8,
                                                                 div(class = "table-container",
                                                                     div(style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;",
-                                                                        h4("Transcription Factor Pathway Enrichment"),
-                                                                        actionButton("run_tf_only_enrichment", "Refresh Analysis",
-                                                                                     class = "btn btn-primary btn-sm")
+                                                                        h4("Transcription Factor Pathway Enrichment")
                                                                     ),
                                                                     p("Biological processes and pathways where your master TFs are directly involved."),
                                                                     
@@ -94212,18 +94078,13 @@ document.addEventListener("DOMContentLoaded", function() {
     # Create safety assessment table
     tryCatch({
       
-      # Group by drug to get safety profile per drug
+      # Highest clinical phase per drug (clinical maturity; not a safety assessment)
       safety_table <- safety_data %>%
         dplyr::group_by(molecule_name) %>%
         dplyr::summarise(
           `Target Count` = dplyr::n_distinct(gene_name),
           `Target Genes` = paste(unique(gene_name), collapse = ", "),
-          `Max Clinical Phase` = max(clinical_phase, na.rm = TRUE),
-          `Avg Safety Score` = if("safety_score" %in% colnames(safety_data)) {
-            round(mean(safety_score, na.rm = TRUE), 3)
-          } else {
-            round(mean(confidence_score, na.rm = TRUE), 3)
-          },
+          `Max Clinical Phase` = if (all(is.na(clinical_phase))) NA_real_ else max(clinical_phase, na.rm = TRUE),
           `Disease Areas` = if("disease_area" %in% colnames(safety_data)) {
             paste(unique(disease_area[!is.na(disease_area)]), collapse = "; ")
           } else {
@@ -94233,41 +94094,25 @@ document.addEventListener("DOMContentLoaded", function() {
         ) %>%
         dplyr::mutate(
           `Clinical Phase` = dplyr::case_when(
-            `Max Clinical Phase` == -1 ~ "Withdrawn",
             `Max Clinical Phase` == 0 ~ "Preclinical",
             `Max Clinical Phase` == 1 ~ "Phase I",
             `Max Clinical Phase` == 2 ~ "Phase II",
             `Max Clinical Phase` == 3 ~ "Phase III",
             `Max Clinical Phase` == 4 ~ "Approved",
             TRUE ~ "Unknown"
-          ),
-          `Safety Risk` = dplyr::case_when(
-            `Avg Safety Score` >= 0.8 ~ "Low Risk",
-            `Avg Safety Score` >= 0.5 ~ "Medium Risk",
-            `Avg Safety Score` >= 0.3 ~ "High Risk",
-            TRUE ~ "Very High Risk"
-          ),
-          `Safety Category` = dplyr::case_when(
-            `Max Clinical Phase` >= 3 ~ "Clinically Validated",
-            `Max Clinical Phase` >= 1 ~ "Early Clinical",
-            `Max Clinical Phase` == 0 ~ "Preclinical",
-            TRUE ~ "Unknown"
           )
         ) %>%
-        dplyr::arrange(desc(`Avg Safety Score`)) %>%
+        dplyr::arrange(dplyr::desc(`Max Clinical Phase`)) %>%
         dplyr::select(
           Drug = molecule_name,
-          `Safety Risk`,
-          `Avg Safety Score`,
           `Clinical Phase`,
-          `Safety Category`,
           `Target Count`,
           `Target Genes`,
           `Disease Areas`
         )
-      
-      print(paste("Safety assessment table created with", nrow(safety_table), "rows"))
-      
+
+      print(paste("Clinical maturity table created with", nrow(safety_table), "rows"))
+
       DT::datatable(
         safety_table,
         options = list(
@@ -94276,40 +94121,21 @@ document.addEventListener("DOMContentLoaded", function() {
           dom = 'frtip',
           columnDefs = list(
             list(width = '120px', targets = c(0)),  # Drug
-            list(width = '100px', targets = c(1, 3)),  # Safety Risk, Clinical Phase
-            list(width = '80px', targets = c(2, 5)),   # Safety Score, Target Count
-            list(width = '200px', targets = c(6)),     # Target Genes
-            list(width = '150px', targets = c(7))      # Disease Areas
+            list(width = '100px', targets = c(1)),  # Clinical Phase
+            list(width = '80px', targets = c(2)),   # Target Count
+            list(width = '200px', targets = c(3)),  # Target Genes
+            list(width = '150px', targets = c(4))   # Disease Areas
           )
         ),
         rownames = FALSE
       ) %>%
-        DT::formatRound("Avg Safety Score", 3) %>%
-        DT::formatStyle(
-          'Safety Risk',
-          backgroundColor = DT::styleEqual(
-            c("Low Risk", "Medium Risk", "High Risk", "Very High Risk"),
-            c('#d4edda', '#fff3cd', '#f8d7da', '#f5c6cb')
-          ),
-          color = DT::styleEqual(
-            c("Low Risk", "Medium Risk", "High Risk", "Very High Risk"),
-            c('#155724', '#856404', '#721c24', '#491217')
-          )
-        ) %>%
         DT::formatStyle(
           'Clinical Phase',
           backgroundColor = DT::styleEqual(
-            c("Approved", "Phase III", "Phase II", "Phase I", "Preclinical", "Withdrawn"),
-            c('#28a745', '#6f42c1', '#007bff', '#17a2b8', '#ffc107', '#dc3545')
+            c("Approved", "Phase III", "Phase II", "Phase I", "Preclinical", "Unknown"),
+            c('#28a745', '#6f42c1', '#007bff', '#17a2b8', '#ffc107', '#adb5bd')
           ),
           color = "white"
-        ) %>%
-        DT::formatStyle(
-          'Avg Safety Score',
-          backgroundColor = DT::styleColorBar(c(0, 1), '#d4edda'),
-          backgroundSize = '80% 80%',
-          backgroundRepeat = 'no-repeat',
-          backgroundPosition = 'center'
         )
       
     }, error = function(e) {
@@ -94340,37 +94166,31 @@ document.addEventListener("DOMContentLoaded", function() {
     
     if (is.null(plot_data) || nrow(plot_data) == 0) {
       p <- ggplot() +
-        geom_text(aes(x = 1, y = 1, label = "No safety data available"), size = 5) +
+        geom_text(aes(x = 1, y = 1, label = "No clinical phase data available"), size = 5) +
         theme_void() +
-        labs(title = "Safety Score Distribution")
+        labs(title = "Clinical Maturity Distribution")
       return(ggplotly(p))
     }
     
-    # Create safety score distribution
-    if ("safety_score" %in% colnames(plot_data)) {
-      safety_scores <- plot_data$safety_score
-    } else {
-      safety_scores <- plot_data$confidence_score
+    # Clinical maturity tiers (phase-derived; not a safety measure)
+    maturity_scores <- if ("clinical_maturity_score" %in% colnames(plot_data)) plot_data$clinical_maturity_score else NA_real_
+    maturity_scores <- maturity_scores[!is.na(maturity_scores)]
+    if (length(maturity_scores) == 0) {
+      return(ggplotly(ggplot() +
+                        geom_text(aes(x = 1, y = 1, label = "No clinical phase data available"), size = 5) +
+                        theme_void()))
     }
-    
-    # Create histogram of safety scores
-    p <- ggplot(data.frame(Safety_Score = safety_scores), aes(x = Safety_Score)) +
-      geom_histogram(aes(fill = cut(Safety_Score, breaks = c(0, 0.3, 0.5, 0.8, 1.0))),
-                     bins = 20, alpha = 0.8) +
+
+    p <- ggplot(data.frame(Clinical_Maturity = maturity_scores), aes(x = Clinical_Maturity)) +
+      geom_histogram(bins = 20, fill = "#7FB3D5", alpha = 0.8) +
       labs(
-        title = "Safety Score Distribution",
-        x = "Safety Score",
-        y = "Number of Drugs",
-        fill = "Risk Level"
+        title = "Clinical Maturity Distribution (phase-derived)",
+        x = "Clinical maturity (0.5 = preclinical/phase I, 0.7 = phase II-III, 0.9 = approved)",
+        y = "Number of drug-target links"
       ) +
       theme_minimal() +
-      scale_fill_manual(
-        values = c('#f5c6cb', '#f8d7da', '#fff3cd', '#d4edda'),
-        labels = c("Very High Risk", "High Risk", "Medium Risk", "Low Risk"),
-        na.value = "grey"
-      ) +
       theme(plot.title = element_text(hjust = 0.5))
-    
+
     ggplotly(p, height = 300)
   })
   
@@ -94569,8 +94389,8 @@ document.addEventListener("DOMContentLoaded", function() {
                                              clinical_evidence_score, confidence_score),
           `Druggability Score` = ifelse("druggability_score" %in% colnames(evidence_data),
                                         druggability_score, confidence_score),
-          `Safety Score` = ifelse("safety_score" %in% colnames(evidence_data),
-                                  safety_score, confidence_score)
+          `Clinical Maturity` = ifelse("clinical_maturity_score" %in% colnames(evidence_data),
+                                       clinical_maturity_score, NA_real_)
         ) %>%
         # Now convert clinical phase to text
         dplyr::mutate(
@@ -94592,7 +94412,7 @@ document.addEventListener("DOMContentLoaded", function() {
           `Disease Area`,
           `Clinical Evidence Score`,
           `Druggability Score`,
-          `Safety Score`
+          `Clinical Maturity`
         ) %>%
         # Arrange by clinical evidence score
         dplyr::arrange(desc(`Clinical Evidence Score`))
@@ -94612,7 +94432,7 @@ document.addEventListener("DOMContentLoaded", function() {
         ),
         rownames = FALSE
       ) %>%
-        DT::formatRound(c("Clinical Evidence Score", "Druggability Score", "Safety Score"), 3) %>%
+        DT::formatRound(c("Clinical Evidence Score", "Druggability Score", "Clinical Maturity"), 3) %>%
         DT::formatStyle(
           'Clinical Phase',
           backgroundColor = DT::styleEqual(
@@ -94784,9 +94604,10 @@ document.addEventListener("DOMContentLoaded", function() {
           max_clinical_phase >= 3 ~ "Phase III",
           max_clinical_phase >= 2 ~ "Phase II",
           max_clinical_phase >= 1 ~ "Phase I",
-          TRUE ~ "Preclinical"
+          max_clinical_phase == 0 ~ "Preclinical",
+          TRUE ~ "Unknown"
         ),
-        Phase = factor(Phase, levels = c("Approved", "Phase III", "Phase II", "Phase I", "Preclinical")),
+        Phase = factor(Phase, levels = c("Approved", "Phase III", "Phase II", "Phase I", "Preclinical", "Unknown")),
         drug_label = drug_name
       )
 
@@ -94795,7 +94616,8 @@ document.addEventListener("DOMContentLoaded", function() {
       "Phase III"   = "#3498DB",
       "Phase II"    = "#9B59B6",
       "Phase I"     = "#F39C12",
-      "Preclinical" = "#95A5A6"
+      "Preclinical" = "#95A5A6",
+      "Unknown"     = "#D5D8DC"
     )
 
     ggplot(top_drugs, aes(x = reorder(drug_label, .data[[score_col]]),
@@ -99737,7 +99559,7 @@ document.addEventListener("DOMContentLoaded", function() {
           class = "info-card",
           style = "background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);",
           h4(stats$dominant_cell_type),
-          p("Dominant Cell Type")
+          p("Dominant Cell Type (EPIC only)")
         )
       ),
       column(
@@ -99745,8 +99567,8 @@ document.addEventListener("DOMContentLoaded", function() {
         div(
           class = "info-card",
           style = "background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);",
-          h4(paste0(stats$confidence_score, "%")),
-          p("Confidence Score")
+          h4(stats$method %||% ""),
+          p("Method")
         )
       ),
       column(
@@ -99880,13 +99702,13 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     
     # Create individual sample plot with VERTICAL x-axis labels
-    p_drill <- ggplot(group_data, aes(x = sample, y = proportion * 100, fill = cell_type)) +
+    p_drill <- ggplot(group_data, aes(x = sample, y = value, fill = cell_type)) +
       geom_bar(stat = "identity", position = "stack", width = 0.8) +
       labs(
         title = paste("Individual Sample Composition -", clicked_group),
         subtitle = paste(n_samples_in_group, "samples"),
         x = "Sample",
-        y = "Proportion (%)",
+        y = "Fraction of sample (%)",
         fill = "Cell Type"
       ) +
       theme_minimal() +
@@ -100017,83 +99839,35 @@ document.addEventListener("DOMContentLoaded", function() {
   
   output$exploratory_deconv_table <- DT::renderDataTable({
     req(rv_deg_main$exploratory_deconv)
-    
-    comp_table <- rv_deg_main$exploratory_deconv$cell_composition
-    
-    # Select display columns
-    display_cols <- c("cell_type", "mean_score", "proportion", "sd_score", "p_value")
-    comp_table_display <- comp_table[, display_cols[display_cols %in% colnames(comp_table)]]
-    
-    # Format for display
-    comp_table_display$proportion <- round(comp_table_display$proportion * 100, 2)
-    comp_table_display$mean_score <- round(comp_table_display$mean_score, 4)
-    comp_table_display$sd_score <- round(comp_table_display$sd_score, 4)
-    
-    if ("p_value" %in% colnames(comp_table_display)) {
-      comp_table_display$p_value <- formatC(comp_table_display$p_value, format = "e", digits = 2)
-    }
-    
-    # Add significance stars
-    if ("p_value" %in% colnames(comp_table)) {
-      comp_table_display$Significance <- sapply(comp_table$p_value, function(p) {
-        if (is.na(p)) return("ns")
-        if (p < 0.001) return("***")
-        if (p < 0.01) return("**")
-        if (p < 0.05) return("*")
-        return("ns")
-      })
-    }
-    
-    # Rename columns
-    colnames(comp_table_display) <- c("Cell Type", "Mean Score", "Proportion (%)", 
-                                      "Standard Deviation", "P-value", "Significance")
-    
-    # Create enhanced DataTable
-    DT::datatable(
+
+    comp_table_display <- format_deconv_composition_table(rv_deg_main$exploratory_deconv$cell_composition)
+
+    dt <- DT::datatable(
       comp_table_display,
       options = list(
         pageLength = 20,
         lengthMenu = c(10, 20, 50, 100),
         dom = 'frtip',
-        order = list(list(2, 'desc')),  # Sort by proportion
         scrollY = '450px',
-        scrollCollapse = TRUE,
-        columnDefs = list(
-          list(className = 'dt-center', targets = 1:5)
-        )
+        scrollCollapse = TRUE
       ),
       rownames = FALSE,
       class = 'cell-border stripe hover'
-    ) %>%
-      # Color-code proportions
-      DT::formatStyle(
-        'Proportion (%)',
-        background = DT::styleColorBar(
-          range(comp_table_display$`Proportion (%)`, na.rm = TRUE), 
-          '#667eea'
-        ),
-        backgroundSize = '95% 80%',
-        backgroundRepeat = 'no-repeat',
-        backgroundPosition = 'center'
-      ) %>%
-      # Highlight significant results
-      DT::formatStyle(
-        'Significance',
-        target = 'row',
-        backgroundColor = DT::styleEqual(
-          c('***', '**', '*', 'ns'),
-          c('#d4edda', '#d1ecf1', '#fff3cd', '#ffffff')
+    )
+    if ("Mean fraction (%)" %in% colnames(comp_table_display)) {
+      dt <- dt %>%
+        DT::formatStyle(
+          'Mean fraction (%)',
+          background = DT::styleColorBar(
+            range(comp_table_display$`Mean fraction (%)`, na.rm = TRUE),
+            '#667eea'
+          ),
+          backgroundSize = '95% 80%',
+          backgroundRepeat = 'no-repeat',
+          backgroundPosition = 'center'
         )
-      ) %>%
-      # Color-code significance column
-      DT::formatStyle(
-        'Significance',
-        color = DT::styleEqual(
-          c('***', '**', '*', 'ns'),
-          c('#155724', '#0c5460', '#856404', '#6c757d')
-        ),
-        fontWeight = 'bold'
-      )
+    }
+    dt
   })
   
   output$has_exploratory_deconv <- reactive({
@@ -100340,8 +100114,8 @@ document.addEventListener("DOMContentLoaded", function() {
     req(input$network_analysis_type_systems == "deconv")
     
     if (!is.null(network_rv$current_results$summary_stats$deconv)) {
-      paste0(as.character(network_rv$current_results$summary_stats$deconv$confidence_score), "%")
-    } else { "0%" }
+      as.character(network_rv$current_results$summary_stats$deconv$method %||% "")
+    } else { "" }
   })
   
   output$marker_genes <- renderText({
@@ -100357,58 +100131,31 @@ document.addEventListener("DOMContentLoaded", function() {
   output$deconv_composition_table <- DT::renderDataTable({
     req(network_rv$current_results)
     req(input$network_analysis_type_systems == "deconv")
-    
+
     if (!is.null(network_rv$current_results$deconv_data$cell_composition)) {
-      composition_table <- network_rv$current_results$deconv_data$cell_composition %>%
-        dplyr::mutate(
-          Proportion_Percent = round(proportion * 100, 2),
-          Significance = dplyr::case_when(
-            p_value < 0.001 ~ "***",
-            p_value < 0.01 ~ "**",
-            p_value < 0.05 ~ "*",
-            TRUE ~ "ns"
-          )
-        ) %>%
-        dplyr::select(
-          "Cell Type" = cell_type,
-          "Mean Score" = mean_score,
-          "Proportion (%)" = Proportion_Percent,
-          "SD" = sd_score,
-          "P-value" = p_value,
-          "Sig." = Significance
-        ) %>%
-        dplyr::mutate(
-          `Mean Score` = round(`Mean Score`, 3),
-          SD = round(SD, 3),
-          `P-value` = formatC(`P-value`, format = "e", digits = 2)
-        )
-      
-      
-      DT::datatable(
+      composition_table <- format_deconv_composition_table(network_rv$current_results$deconv_data$cell_composition)
+
+      dt <- DT::datatable(
         composition_table,
         options = list(
           pageLength = 15,
           dom = 'Bfrtip',
-          buttons = c('copy', 'csv', 'excel'),
-          order = list(list(2, 'desc'))
+          buttons = c('copy', 'csv', 'excel')
         ),
         extensions = 'Buttons',
         rownames = FALSE
-      ) %>%
-        DT::formatStyle(
-          'Proportion (%)',
-          background = DT::styleColorBar(composition_table$`Proportion (%)`, '#3498db'),
-          backgroundSize = '100% 90%',
-          backgroundRepeat = 'no-repeat',
-          backgroundPosition = 'center'
-        ) %>%
-        DT::formatStyle(
-          'Sig.',
-          color = DT::styleEqual(
-            c("***", "**", "*", "ns"),
-            c('#27ae60', '#f39c12', '#e67e22', '#95a5a6')
+      )
+      if ("Mean fraction (%)" %in% colnames(composition_table)) {
+        dt <- dt %>%
+          DT::formatStyle(
+            'Mean fraction (%)',
+            background = DT::styleColorBar(composition_table$`Mean fraction (%)`, '#3498db'),
+            backgroundSize = '100% 90%',
+            backgroundRepeat = 'no-repeat',
+            backgroundPosition = 'center'
           )
-        )
+      }
+      dt
     } else {
       DT::datatable(data.frame(Message = "No deconvolution data available"))
     }
@@ -100610,57 +100357,24 @@ document.addEventListener("DOMContentLoaded", function() {
   output$deconv_group_table <- DT::renderDataTable({
     req(network_rv$current_results)
     req(input$network_analysis_type_systems == "deconv")
-    
+
     if (!is.null(network_rv$current_results$group_comparison)) {
-      
-      comparison_table <- network_rv$current_results$group_comparison %>%
-        dplyr::mutate(
-          mean_group1 = round(mean_group1, 3),
-          mean_group2 = round(mean_group2, 3),
-          fold_change = round(fold_change, 2),
-          p_value = formatC(p_value, format = "e", digits = 2),
-          p_adjusted = formatC(p_adjusted, format = "e", digits = 2),
-          cohens_d = round(cohens_d, 2)
-        ) %>%
-        dplyr::select(
-          "Cell Type" = cell_type,
-          "Group 1" = group1,
-          "Group 2" = group2,
-          "Mean (G1)" = mean_group1,
-          "Mean (G2)" = mean_group2,
-          "Fold Change" = fold_change,
-          "P-value" = p_value,
-          "Adj. P-value" = p_adjusted,
-          "Effect Size (d)" = cohens_d,
-          "Significance" = significance
-        )
-      
+
+      comparison_table <- format_deconv_group_comparison_table(network_rv$current_results$group_comparison)
+
       DT::datatable(
         comparison_table,
         options = list(
           pageLength = 15,
           dom = 'Bfrtip',
           buttons = c('copy', 'csv', 'excel'),
-          order = list(list(6, 'asc'))  # Sort by p-value
+          order = list(list(4, 'asc'))  # P-value
         ),
         extensions = 'Buttons',
         rownames = FALSE
       ) %>%
-        DT::formatStyle(
-          'Significance',
-          backgroundColor = DT::styleEqual(
-            c("Significant", "Not Significant"),
-            c('#d4edda', '#f8d7da')
-          )
-        ) %>%
-        DT::formatStyle(
-          'Effect Size (d)',
-          color = DT::styleInterval(
-            c(-0.5, 0.5),
-            c('#e74c3c', '#95a5a6', '#27ae60')
-          )
-        )
-      
+        DT::formatSignif(columns = c("P-value", "Adj. P (BH)"), digits = 3)
+
     } else {
       DT::datatable(
         data.frame(Message = "No group comparison data available")
@@ -103543,6 +103257,23 @@ document.addEventListener("DOMContentLoaded", function() {
     }
   )
   
+  # Same CSV for the Data Tables tab button (an output ID can only be bound once)
+  output$download_ppi_interactions_csv_tables <- downloadHandler(
+    filename = function() {
+      paste0("ppi_interactions_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      interactions <- NULL
+      if (!is.null(rv_ppi_standalone$results$ppi_interactions)) {
+        interactions <- rv_ppi_standalone$results$ppi_interactions
+      } else if (!is.null(network_rv$current_results$ppi_interactions)) {
+        interactions <- network_rv$current_results$ppi_interactions
+      }
+      req(interactions)
+      write.csv(interactions, file, row.names = FALSE)
+    }
+  )
+
   # Download PPI interactions as Excel (for standalone PPI)
   output$download_ppi_interactions_xlsx <- downloadHandler(
     filename = function() { 
