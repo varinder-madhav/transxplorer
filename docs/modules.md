@@ -56,9 +56,7 @@ score = 0.4 × PVCA + 0.4 × kBET + 0.2 × Silhouette
 
 PVCA and kBET receive equal higher weight because they probe complementary aspects of confounding (global variance structure vs local sample mixing); Silhouette is down-weighted because clustering geometry is sensitive to unbalanced group sizes.
 
-When the composite exceeds **0.25**, `limma::removeBatchEffect` is automatically applied and the variable is incorporated as a covariate in subsequent DEG models. PCA and UMAP projections are generated before and after correction for visual confirmation.
-
-The 0.25 threshold was empirically calibrated on benchmark datasets with known batch structure (GSE49712, GSE115736).
+A variable is flagged as a batch when at least two of the three criteria are met: PVCA ≥ 0.15, kBET rejection rate ≥ 0.25, silhouette ≥ 0.05 (each set at the 95th percentile of batch-free simulations); the composite score only ranks candidates. A flagged batch is included as a covariate in the DEG model (`~ batch + condition`), never regressed out of the counts; `limma::removeBatchEffect` is used only to draw the before/after PCA and UMAP plots.
 
 ---
 

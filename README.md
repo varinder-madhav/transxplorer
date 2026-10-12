@@ -28,7 +28,7 @@ These five gaps, which existing tools (iDEP, NetworkAnalyst, GEPIA2, DEBrowser) 
 
 - **End-to-end in one environment.** FASTQ → QC → DEG → enrichment → PPI → WGCNA → GRN → drug-target → TCGA validation. No data export, no format conversion between tools.
 - **Quantitative batch-effect scoring.** PVCA (variance-attribution), kBET (local-mixing), Silhouette (cluster-geometry) combined into a single composite metric with empirically calibrated 0.25 threshold. No other tool flags batch confounders this rigorously.
-- **Real-time drug-target query engine.** DGIdb (40+ source databases) cross-validated against OpenTargets clinical evidence; ranked by a priority score that combines bioactivity, clinical phase, and target-coverage. Surfaces FDA-approved cardiac drugs (e.g., Mavacamten) directly from a CMEC-vs-PMEC differential expression run.
+- **Real-time drug-target query engine.** DGIdb (40+ source databases) cross-validated against OpenTargets clinical evidence; ranked by a priority score that combines the number of DEG targets, database evidence and clinical phase.
 - **Hybrid regulatory network inference across 11 organisms.** DoRothEA confidence-graded TF-target relationships for human/mouse, TFLink-derived networks for rat, zebrafish, *Drosophila*, *C. elegans*, *S. cerevisiae*, *Arabidopsis*, chicken, pig, bovine. Master regulators identified by composite influence score (target count × evidence × ChEMBL druggability).
 - **CytoHubba-style consensus PPI hubs.** 11 algorithms (MCC, MNC, DMNC, EPC, BottleNeck, EcCentricity, Closeness, Radiality, Betweenness, Stress, Degree) for robust hub detection, replacing single-metric ranking.
 - **Auto-optimized WGCNA.** Soft-power selection follows the Langfelder–Horvath sample-size table; module-trait correlations and evidence-based functional categorization are automated.
@@ -42,9 +42,9 @@ These five gaps, which existing tools (iDEP, NetworkAnalyst, GEPIA2, DEBrowser) 
 
 The accompanying manuscript validates TransXplorer on:
 
-1. **Cardiac vs paraxial-mesoderm-derived endothelial differentiation** (GSE151427, n = 22). Demonstrates the full functional + regulatory + translational stack: composite batch-score detection of the differentiation-day confounder, 212 DEGs at |log₂FC| > 2, PPI hub identification (CCND1, GATA4), 7-module WGCNA with cardiac-mesoderm-anchored magenta module (PLN, TECRL, MYOM1), hybrid GRN identifying MYC, E2F1, EGR1, ETS2, SMAD3 as master regulators, and translational mapping recovering Mavacamten (FDA-approved cardiac myosin inhibitor) from the CMEC-vs-PMEC contrast.
+1. **Cardiac vs paraxial-mesoderm-derived endothelial differentiation** (GSE151427, n = 22). Bundled as raw read counts produced by TransXplorer's FASTQ pipeline from the 22 public runs. Demonstrates the full workflow: batch detection flags the differentiation timepoint, which is modelled as a covariate; 1,970 DEGs at |log₂FC| > 2 (GATA4, HAND2, MYL7 up in CMEC; ALDH1A2, FZD10 up in PMEC); enrichment for trunk patterning (HOX genes) and heart development. See [`examples/README.md`](examples/README.md).
 
-2. **TCGA-KIRP (kidney renal papillary cell carcinoma)** (584 samples, 41,553 genes). Demonstrates the clinical-validation arm: 2,447 DEGs, immune-infiltration and ECM-remodelling enrichment, with CCL18 surfaced as the most over-expressed gene (Wilcoxon *P* = 6.57 × 10⁻³⁶) and validated as a prognostic survival marker (HR = 1.86, log-rank *P* = 0.03) — recapitulating CCL18's published role as a tumour-associated-macrophage marker.
+2. **TCGA-KIRP (kidney renal papillary cell carcinoma)** (584 samples, 41,553 genes). Demonstrates the clinical-validation arm: primary tumour vs normal differential expression, expression box plots and survival analysis. Higher CCL18 expression is associated with better overall survival (HR 0.48, 95% CI 0.26–0.88, log-rank *P* = 0.015; versions before October 2026 reported this hazard ratio inverted).
 
 ---
 

@@ -1,0 +1,23 @@
+Sample,Assay Type,BioSample,group,Organism,batch,time
+GSM4577968_CMEC,RNA-Seq,SAMN15053704,CMEC,Homo sapiens,1,differentiation day6
+GSM4577969_PMEC,RNA-Seq,SAMN15053703,PMEC,Homo sapiens,1,differentiation day6
+GSM4577970_CMEC,RNA-Seq,SAMN15053702,CMEC,Homo sapiens,2,differentiation day8
+GSM4577971_CMEC,RNA-Seq,SAMN15053701,CMEC,Homo sapiens,2,differentiation day6
+GSM4577972_PMEC,RNA-Seq,SAMN15053700,PMEC,Homo sapiens,2,differentiation day8
+GSM4577973_PMEC,RNA-Seq,SAMN15053699,PMEC,Homo sapiens,2,differentiation day6
+GSM4577974_CMEC,RNA-Seq,SAMN15053698,CMEC,Homo sapiens,3,differentiation day8
+GSM4577975_CMEC,RNA-Seq,SAMN15053697,CMEC,Homo sapiens,3,differentiation day6
+GSM4577976_PMEC,RNA-Seq,SAMN15053696,PMEC,Homo sapiens,3,differentiation day8
+GSM4577977_PMEC,RNA-Seq,SAMN15053695,PMEC,Homo sapiens,3,differentiation day6
+GSM4577978_CMEC,RNA-Seq,SAMN15053694,CMEC,Homo sapiens,4,differentiation day8
+GSM4577979_CMEC,RNA-Seq,SAMN15053693,CMEC,Homo sapiens,4,differentiation day6
+GSM4577980_PMEC,RNA-Seq,SAMN15053692,PMEC,Homo sapiens,4,differentiation day8
+GSM4577981_PMEC,RNA-Seq,SAMN15053738,PMEC,Homo sapiens,4,differentiation day6
+GSM4577982_CMEC,RNA-Seq,SAMN15053737,CMEC,Homo sapiens,5,differentiation day8
+GSM4577983_CMEC,RNA-Seq,SAMN15053736,CMEC,Homo sapiens,5,differentiation day6
+GSM4577984_PMEC,RNA-Seq,SAMN15053735,PMEC,Homo sapiens,5,differentiation day8
+GSM4577985_PMEC,RNA-Seq,SAMN15053734,PMEC,Homo sapiens,5,differentiation day6
+GSM4577986_CMEC,RNA-Seq,SAMN15053733,CMEC,Homo sapiens,6,differentiation day8
+GSM4577987_CMEC,RNA-Seq,SAMN15053732,CMEC,Homo sapiens,6,differentiation day6
+GSM4577988_PMEC,RNA-Seq,SAMN15053731,PMEC,Homo sapiens,6,differentiation day8
+GSM4577989_PMEC,RNA-Seq,SAMN15053730,PMEC,Homo sapiens,6,differentiation day6

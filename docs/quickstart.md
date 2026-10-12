@@ -6,8 +6,8 @@ This guide reproduces the first use case from the manuscript using the live serv
 
 In the next 5 minutes, you will:
 
-1. Import a public RNA-seq dataset directly from GEO
-2. Run automated batch-effect detection and correction
+1. Load a public RNA-seq dataset (bundled as raw counts)
+2. Run automated batch-effect detection
 3. Identify differentially expressed genes
 4. Generate a master regulator network
 5. Surface a ranked list of FDA-approved drug candidates
@@ -20,62 +20,53 @@ The dataset is **GSE151427** — cardiac (CMEC) vs paraxial-mesoderm-derived (PM
 
 Visit [https://transxplorer.org](https://transxplorer.org) and click **Begin Your Analysis** (or **Differential Expression** in the navbar).
 
-## Step 2 — Import the GEO dataset (1 minute)
+## Step 2 — Load the example dataset (1 minute)
 
 In the **Input data** panel:
 
-- Select **"Import from GEO"**
-- Enter accession: `GSE151427`
-- Click **Fetch**
+- Click **Load Example Counts** — raw read counts for the 22 samples, produced by TransXplorer's own FASTQ pipeline from the public runs (see [`examples/README.md`](../examples/README.md))
+- Accept the auto-detected groups (11 CMEC, 11 PMEC)
+- Click **Load Example Metadata** and confirm — this adds the differentiation and timepoint columns used for batch detection
 
-The platform retrieves the count matrix and parses sample metadata from GEO's structured fields. You'll see a clean experimental-variable table appear; select **"condition"** as the primary grouping variable (CMEC vs PMEC).
+(**Import from GEO** with `GSE151427` also works, but GEO holds the authors' RPKM table rather than counts; TransXplorer then analyses it with limma on log₂ expression.)
 
 ## Step 3 — Run automated batch detection (30 seconds)
 
-The platform automatically:
+Click **Run Exploratory QC**. The platform:
 
-- Computes PVCA, kBET, Silhouette for every metadata column
-- Combines into a composite score (0.4 × PVCA + 0.4 × kBET + 0.2 × Silhouette)
-- Flags **"Time"** (differentiation day 6 vs 8) as a confounder (composite = 0.559, threshold = 0.25)
-- Applies `limma::removeBatchEffect` automatically and re-runs PCA / UMAP
-
-You'll see PCA before/after panels; post-correction, samples cluster by biological condition along PC1.
+- Computes PVCA, kBET and silhouette for every metadata column, and flags a variable when at least two criteria are met
+- Flags the differentiation **timepoint** (day 6 vs 8): PVCA 32.7%, silhouette 0.188
+- Adds the timepoint as a covariate in the differential-expression model; `limma::removeBatchEffect` is used only for the before/after PCA and UMAP plots
 
 ## Step 4 — Differential expression (30 seconds)
 
 In the **DEG analysis** panel, defaults work:
 
 - Method: **edgeR** (TMM normalization)
-- Contrast: CMEC vs PMEC
+- Contrast: PMEC vs CMEC (CMEC as reference)
 - Thresholds: |log₂FC| > 2, adjusted *P* < 0.05
 
-Click **Run DEG**. You should obtain ~212 DEGs.
+Click **Run DEG Analysis**. You should obtain about 1,970 DEGs (1,301 higher in CMEC, 669 higher in PMEC), with GATA4, GATA5, HAND2 and MYL7 up in CMEC and ALDH1A2, FZD10 and CTHRC1 up in PMEC.
 
 ## Step 5 — Pathway enrichment (30 seconds)
 
-Switch to **Functional → Pathway Enrichment**. Click **Run**.
+Switch to **Pathway Enrichment** and click **Run**.
 
-Top enriched terms include **Heart Development (GO:0007507)**, ECM organization, focal adhesion — consistent with cardiac mesoderm-derived endothelial specification.
+Top GO Biological Process terms include **Anterior/Posterior Pattern Specification** (HOX genes, higher in PMEC) and **Heart Development** (higher in CMEC) — the paraxial and cardiac identities of the two cell types.
 
 ## Step 6 — Master regulator inference (1 minute)
 
-Switch to **Regulatory → GRN Analysis**.
+Switch to **Advanced Analysis → Gene Regulatory Network** (or the standalone GRN tab with **Use my DEGs**).
 
-- Organism: **Human**
-- Database: **Hybrid** (DoRothEA + TFLink)
-- Confidence threshold: **0.6**
-- Click **Run GRN Analysis**
-
-The platform identifies master regulators: **MYC, E2F1, EGR1, ETS2, SMAD3** lead the 10-TF master-regulator set. The network plot supports click-to-focus on any TF; edges are colour-coded by activation (green) vs repression (red).
+TransXplorer builds a TF–target network from DoRothEA for your DEGs, ranks master regulators by how many of the listed genes they regulate, and scores TF activity with VIPER on full DoRothEA regulons. The network plot supports click-to-focus on any TF; edges are colour-coded by activation (green) vs repression (red).
 
 ## Step 7 — Drug-target prioritization (1 minute)
 
-Switch to **Translational → Drug Discovery**.
+Switch to **Advanced Analysis → Drug Targets** and click **Run**.
 
-- Mode: **Comprehensive (DGIdb + OpenTargets)**
-- Click **Run**
+TransXplorer matches the DEGs to drugs in OpenTargets (local release) and DGIdb and ranks them by number of DEG targets, database evidence and clinical phase.
 
-The priority-ranked table includes **Mavacamten** (FDA-approved cardiac myosin inhibitor for hypertrophic cardiomyopathy), recovered directly from the CMEC vs PMEC contrast. This is the translational anchor of the use case — a known cardiac therapeutic surfaced from an unbiased differential expression analysis.
+Expected master regulators and drug candidates for this dataset are being regenerated with the current version.
 
 ---
 
@@ -83,7 +74,7 @@ The priority-ranked table includes **Mavacamten** (FDA-approved cardiac myosin i
 
 You have run the end-to-end TransXplorer workflow:
 
-> **GEO accession → automated batch-corrected DEGs → enriched pathways → master regulators → drug candidates** — without leaving the browser, without writing code, in under 5 minutes.
+> **Raw counts → batch-aware DEGs → enriched pathways → master regulators → drug candidates** — without leaving the browser, without writing code, in under 5 minutes.
 
 This is the workflow that, in conventional pipelines, requires assembling 6-8 separate command-line tools, each with its own input format, dependencies, and output schema.
 

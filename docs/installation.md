@@ -123,8 +123,8 @@ curl -fsS http://localhost:3838/ -o /dev/null && echo "OK"
 For full verification, run the included example dataset:
 
 1. Open the app in a browser
-2. **Differential Expression** tab → upload `examples/cmec_pmec/example_counts.csv` (if included) or use **GEO Import** with accession `GSE151427`
-3. The CMEC vs PMEC contrast should produce 212 DEGs at |log₂FC| > 2
+2. **Differential Expression** tab → click **Load Example Counts** and **Load Example Metadata** (bundled GSE151427 raw counts)
+3. The PMEC vs CMEC contrast should produce about 1,970 DEGs at |log₂FC| > 2, adjusted *P* < 0.05 (edgeR defaults)
 4. Continue through the **Functional**, **Network**, and **Translational** tabs to verify each module
 
 ---
