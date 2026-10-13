@@ -5241,18 +5241,8 @@ prepare_expression_for_deconv <- function(expression_matrix, organism = "human",
     print(paste("   Unique gene symbols:", n_unique))
     print("📊 Aggregating duplicates by taking mean expression...")
     
-    # Create data frame with gene symbols as a COLUMN (not rownames!)
-    expr_df <- as.data.frame(expr_with_symbols)
-    expr_df$gene_symbol <- gene_symbols_valid
-    
-    # Aggregate duplicates by mean
-    expr_aggregated <- aggregate(. ~ gene_symbol, data = expr_df, FUN = mean)
-    
-    # NOW it's safe to set rownames (all unique now)
-    rownames(expr_aggregated) <- expr_aggregated$gene_symbol
-    expr_aggregated$gene_symbol <- NULL
-    
-    expr_final_prep <- as.matrix(expr_aggregated)
+    # Average duplicates per sample over the values present
+    expr_final_prep <- tx_collapse_duplicates(expr_with_symbols, gene_symbols_valid)
     
     print(paste("✅ After aggregation:", nrow(expr_final_prep), "unique genes"))
     
@@ -20455,7 +20445,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-09", tag = "Improved", text = "Faster FASTQ processing: public runs are downloaded while the previous run is being processed, quality control runs alongside trimming, and trimming uses all of the job's processor threads."),
+  list(date = "2026-10-13", tag = "Fixed", text = "Uploaded tables with repeated gene names and a text column (for example a gene description) no longer lose their values: text columns are set aside, and repeated genes are averaged per sample without dropping genes that have a missing value."),
+list(date = "2026-10-09", tag = "Improved", text = "Faster FASTQ processing: public runs are downloaded while the previous run is being processed, quality control runs alongside trimming, and trimming uses all of the job's processor threads."),
 list(date = "2026-10-09", tag = "Fixed",    text = "Enrichment: only gene-set libraries that exist are offered, and non-mammal species are sent to the multi-species GO/KEGG enrichment; ORA accepts a background gene list, filled with all tested genes when DEGs are sent from Transcriptome Analysis; Hallmark ORA works; a names-only GSEA list runs as classic (unweighted) GSEA."),
 list(date = "2026-10-09", tag = "Fixed",    text = "Differential expression: normalised or log-scale data (microarray, TPM, FPKM, RPKM) is now analysed with limma on log2 expression instead of being rounded into counts; a detected batch variable is matched to samples by name and kept in the model whenever it can be estimated; pairwise comparisons work again."),
 list(date = "2026-10-09", tag = "Fixed",    text = "TCGA: re-sequenced duplicate tumour samples (e.g. 89 in GBM) are counted once in differential expression and box plots; cohorts with fewer than 3 normal samples are no longer tested against normals, and cohorts without normals say what is compared; MA plots show the tested comparison."),
@@ -30297,6 +30288,20 @@ later::later(tx_queue_tick, 5)
 # (log-scale expression, e.g. microarray) or "linear" (normalised: TPM, FPKM, RPKM, CPM).
 # Expected counts (RSEM, Salmon) are non-integer but rarely between 0 and 1; normalised
 # values of lowly expressed genes very often are.
+# Average rows that share a gene name, per sample, over the values present (NA only where a gene has
+# no value at all in that sample). Rows keep the order in which each name first appears.
+tx_collapse_duplicates <- function(m, ids) {
+  m <- as.matrix(m)
+  storage.mode(m) <- "double"
+  ok <- !is.na(m)
+  m[!ok] <- 0
+  sums <- rowsum(m, ids, reorder = FALSE)
+  n <- rowsum(ok * 1, ids, reorder = FALSE)
+  out <- sums / n
+  out[n == 0] <- NA
+  out
+}
+
 tx_expression_scale <- function(m) {
   v <- as.numeric(as.matrix(m))
   v <- v[is.finite(v)]
@@ -51293,31 +51298,8 @@ document.addEventListener("DOMContentLoaded", function() {
         expr_data <- expr_data[valid_rows, , drop = FALSE]
       }
       
-      # Handle duplicate gene names
-      if (any(duplicated(gene_ids))) {
-        message(paste("Found", sum(duplicated(gene_ids)), "duplicate gene IDs. Aggregating by mean expression..."))
-        
-        # Combine gene IDs and expression data for aggregation
-        temp_df <- cbind(gene_id = gene_ids, as.data.frame(expr_data))
-        
-        # Use aggregate to calculate the mean for each gene.
-        # The formula . ~ gene_id means "calculate for all other columns, grouping by gene_id"
-        aggregated_data <- aggregate(. ~ gene_id, data = temp_df, FUN = mean)
-        
-        # Set the unique gene IDs as rownames and remove the now-redundant 'gene_id' column
-        rownames(aggregated_data) <- aggregated_data$gene_id
-        aggregated_data$gene_id <- NULL
-        
-        # Update the main expr_data object with the aggregated data
-        expr_data <- aggregated_data
-        # Update gene_ids to the new unique rownames
-        gene_ids <- rownames(expr_data)
-        
-        message(paste("Data aggregated. New dimensions:", nrow(expr_data), "unique genes x", ncol(expr_data), "samples"))
-      }
-      
       # Convert expression data to numeric where possible
-      for (i in 1:ncol(expr_data)) {
+      for (i in seq_len(ncol(expr_data))) {
         if (!is.numeric(expr_data[, i])) {
           # Try to convert to numeric
           numeric_version <- suppressWarnings(as.numeric(as.character(expr_data[, i])))
@@ -51326,7 +51308,21 @@ document.addEventListener("DOMContentLoaded", function() {
           }
         }
       }
-      
+      # Text columns (gene descriptions, biotypes...) are not samples: set them aside
+      text_cols <- colnames(expr_data)[!vapply(expr_data, is.numeric, logical(1))]
+      if (length(text_cols) > 0 && length(text_cols) < ncol(expr_data)) {
+        message(paste("Ignoring non-numeric column(s):", paste(text_cols, collapse = ", ")))
+        expr_data <- expr_data[, !colnames(expr_data) %in% text_cols, drop = FALSE]
+      }
+
+      # Handle duplicate gene names: average them, per sample, over the values present
+      if (any(duplicated(gene_ids)) && all(vapply(expr_data, is.numeric, logical(1)))) {
+        message(paste("Found", sum(duplicated(gene_ids)), "duplicate gene IDs. Aggregating by mean expression..."))
+        expr_data <- as.data.frame(tx_collapse_duplicates(expr_data, gene_ids), check.names = FALSE)
+        gene_ids <- rownames(expr_data)
+        message(paste("Data aggregated. New dimensions:", nrow(expr_data), "unique genes x", ncol(expr_data), "samples"))
+      }
+
       # Set row names to gene IDs
       rownames(expr_data) <- gene_ids
       
