@@ -831,7 +831,7 @@ create_complete_compact_network_ui <- function() {
                               HTML("&#x1f52c; <strong>Other tissues / General</strong><br/><small>Organs, general tissues, not sure what to pick</small>")
                             ),
                             choiceValues = list("immune", "tumor", "general"),
-                            selected = "immune"
+                            selected = "general"
                           ),
                           
                           # Dynamic description
@@ -3991,7 +3991,7 @@ create_complete_compact_network_ui <- function() {
                               class = "summary-card",
                               style = "background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;",
                               h3(textOutput("marker_genes"), style = "margin: 10px 0; font-size: 36px;"),
-                              p("DEG Markers Identified", style = "margin: 0; font-size: 14px; opacity: 0.9;")
+                              p("DEGs Linked to a Cell Type", style = "margin: 0; font-size: 14px; opacity: 0.9;")
                             )
                           )
                         ),
@@ -4095,20 +4095,20 @@ create_complete_compact_network_ui <- function() {
                           
                           # Tab 3: DEG Markers
                           tabPanel(
-                            "🧬 DEG Markers",
+                            "🧬 DEG–Cell Type Links",
                             br(),
                             div(
                               class = "panel panel-warning",
                               div(
                                 class = "panel-heading",
-                                h4(icon("dna"), " Cell-Type-Specific DEG Markers"),
+                                h4(icon("dna"), " DE Genes That Co-vary With a Cell-Type Score"),
                                 downloadButton("download_marker_genes", "Download CSV", class = "btn-sm btn-default pull-right")
                               ),
                               div(
                                 class = "panel-body",
                                 p(
                                   icon("info-circle"),
-                                  " This table shows which of your differentially expressed genes are markers for specific cell types.",
+                                  " Each DE gene is linked to the cell type whose score it follows most closely across samples, within sample groups (Spearman correlation after adjusting for group; P corrected for the number of cell types tested, then Benjamini-Hochberg across genes). Shown: adjusted P < 0.05 with a positive correlation. Co-variation does not show which cells express the gene, and cell-type scores are less informative for pure cell cultures than for tissues.",
                                   style = "color: #666; margin-bottom: 15px;"
                                 ),
                                 DT::dataTableOutput("deconv_marker_table")
@@ -5930,7 +5930,9 @@ perform_deconvolution_analysis <- function(expression_matrix,
         deconv_results = deconv_results,
         cell_composition = cell_composition,
         deg_data = deg_data,
-        method = method
+        method = method,
+        expr_matrix = prepared_data$expr_matrix,
+        sample_groups = sample_groups
       )
     }, error = function(e) {
       print(paste(" Could not link DEGs to cell types:", e$message))
@@ -5985,7 +5987,7 @@ perform_deconvolution_analysis <- function(expression_matrix,
   
   # Count marker genes with meaningful specificity only
   n_marker_genes <- if (!is.null(marker_gene_analysis)) {
-    sum(marker_gene_analysis$specificity_score >= 0.5, na.rm = TRUE)
+    sum(marker_gene_analysis$adj_p < 0.05 & marker_gene_analysis$spearman_rho > 0, na.rm = TRUE)
   } else {
     0
   }
@@ -6062,230 +6064,78 @@ perform_deconvolution_analysis <- function(expression_matrix,
 
 # HELPER FUNCTIONS FOR DEG CONTEXTUALIZATION
 
+# Link each DEG to the cell type whose score it tracks most closely across samples (Spearman).
+# When sample groups are known, ranks are first adjusted for group, so a link means the gene follows
+# the cell-type score within groups (otherwise every DEG would track any score that differs between
+# groups). The P value of the best of K cell types is Bonferroni-corrected for K, then BH-adjusted
+# across genes. Co-variation is reported as such: it does not show which cells express the gene.
 identify_cell_type_markers_for_degs <- function(deconv_results,
                                                 cell_composition,
                                                 deg_data,
-                                                method) {
-  # Disabled: the previous implementation assigned DEGs to cell types by list position with a
-  # random specificity score, which is not biologically meaningful. Returns no table.
-  return(NULL)
-  
-  print("🔬 Linking significant DEGs to cell type markers...")
-  
-  tryCatch({
-    
-    if (is.null(deg_data) || nrow(deg_data) == 0) {
-      print("❌ No DEG data provided")
-      return(NULL)
-    }
-    
-    print(paste("📊 Input DEG data:", nrow(deg_data), "genes"))
-    print(paste("   Available columns:", paste(colnames(deg_data), collapse = ", ")))
-    
-    # ========================================================================
-    # CRITICAL FIX: Extract gene symbols, not ENSEMBL IDs
-    # ========================================================================
-    
-    # Priority 1: Use gene_symbol column if it exists
-    if ("gene_symbol" %in% colnames(deg_data)) {
-      deg_genes <- deg_data$gene_symbol
-      print("✅ Using gene_symbol column")
-      
-      # Priority 2: Use gene column
-    } else if ("gene" %in% colnames(deg_data)) {
-      deg_genes <- deg_data$gene
-      print("✅ Using gene column")
-      
-      # Priority 3: Convert gene_id (ENSEMBL) to symbols
-    } else if ("gene_id" %in% colnames(deg_data)) {
-      print("⚠️ Only gene_id (ENSEMBL) available - need to convert to symbols")
-      
-      # Need to convert ENSEMBL IDs to gene symbols
-      # This is the MISSING STEP!
-      gene_ids <- deg_data$gene_id
-      
-      # Try to find if conversion was already done
-      if (exists("convert_gene_ids_to_symbols_deg")) {
-        print("   Converting ENSEMBL IDs to gene symbols...")
-        
-        # Determine organism from deconv_results context
-        organism <- "human"  # Default, adjust if needed
-        
-        conversion_result <- convert_gene_ids_to_symbols_deg(
-          gene_ids = gene_ids,
-          organism = organism
-        )
-        
-        # Extract symbols from the data.frame returned
-        if (is.data.frame(conversion_result)) {
-          deg_genes <- conversion_result$gene_symbol
-        } else {
-          deg_genes <- conversion_result
-        }
-        
-        print(paste("   Converted", sum(!is.na(deg_genes) & deg_genes != ""), "IDs to symbols"))
-        
-      } else {
-        # Fallback: Use the IDs as-is (will likely fail matching)
-        print("   ⚠️ WARNING: Conversion function not available, using ENSEMBL IDs")
-        deg_genes <- gsub("\\..*$", "", gene_ids)  # Remove version numbers at least
-      }
-      
-    } else {
-      # Last resort: use rownames
-      deg_genes <- rownames(deg_data)
-      print("⚠️ Using rownames as gene identifiers")
-    }
-    
-    # ========================================================================
-    # Clean and validate gene symbols
-    # ========================================================================
-    
-    # Remove NA, empty strings, and ENSEMBL IDs that weren't converted
-    valid_mask <- !is.na(deg_genes) & 
-      deg_genes != "" & 
-      deg_genes != "-" &
-      !grepl("^ENSG", deg_genes) &
-      !grepl("^ENST", deg_genes)
-    
-    deg_genes_clean <- deg_genes[valid_mask]
-    deg_data_clean <- deg_data[valid_mask, ]
-    
-    print(paste("✅ Extracted", length(deg_genes_clean), "valid gene symbols from DEGs"))
-    print(paste("   Example genes:", paste(head(deg_genes_clean, 5), collapse = ", ")))
-    
-    if (length(deg_genes_clean) == 0) {
-      print("❌ No valid gene symbols after filtering")
-      return(NULL)
-    }
-    
-    # ========================================================================
-    # Get fold changes and regulation direction
-    # ========================================================================
-    
-    fc_col <- if ("log2FC" %in% colnames(deg_data_clean)) "log2FC"
-    else if ("log2FoldChange" %in% colnames(deg_data_clean)) "log2FoldChange"
-    else if ("logFC" %in% colnames(deg_data_clean)) "logFC"
-    else NULL
-    
-    if (!is.null(fc_col)) {
-      deg_fc <- as.numeric(deg_data_clean[[fc_col]])
-      names(deg_fc) <- deg_genes_clean
-      
-      deg_regulation <- ifelse(deg_fc > 0, "Upregulated", "Downregulated")
-      names(deg_regulation) <- deg_genes_clean
-      
-      n_up <- sum(deg_fc > 0, na.rm = TRUE)
-      n_down <- sum(deg_fc < 0, na.rm = TRUE)
-      
-      print(paste("   Upregulated:", n_up))
-      print(paste("   Downregulated:", n_down))
-    } else {
-      print("⚠️ No fold change column found")
-      deg_fc <- rep(0, length(deg_genes_clean))
-      names(deg_fc) <- deg_genes_clean
-      deg_regulation <- rep("Unknown", length(deg_genes_clean))
-      names(deg_regulation) <- deg_genes_clean
-    }
-    
-    # ========================================================================
-    # Match DEGs to cell types using enrichment scores
-    # ========================================================================
-    
-    if (method %in% c("xcell", "mcp_counter")) {
-      # Results: rows = cell types, cols = samples
-      cell_type_matrix <- as.matrix(deconv_results)
-      cell_type_names <- rownames(cell_type_matrix)
-      
-      # Calculate mean enrichment per cell type
-      cell_type_scores <- rowMeans(cell_type_matrix, na.rm = TRUE)
-      names(cell_type_scores) <- cell_type_names
-      
-    } else if (method == "epic") {
-      # Results: rows = samples, cols = cell types
-      cell_type_matrix <- as.matrix(deconv_results)
-      cell_type_names <- colnames(cell_type_matrix)
-      
-      cell_type_scores <- colMeans(cell_type_matrix, na.rm = TRUE)
-      names(cell_type_scores) <- cell_type_names
-    }
-    
-    # Sort cell types by enrichment score
-    cell_type_scores_sorted <- sort(cell_type_scores, decreasing = TRUE)
-    
-    print(paste("📊 Cell type scores (top 5):"))
-    print(paste("   ", names(head(cell_type_scores_sorted, 5)), ":", 
-                round(head(cell_type_scores_sorted, 5), 3)))
-    
-    # ========================================================================
-    # IMPROVED: Distribute DEGs across cell types based on expression patterns
-    # ========================================================================
-    
-    # For each DEG, assign to top 1-3 cell types
-    # This is still a heuristic - proper implementation needs signature databases
-    
-    marker_table_list <- lapply(seq_along(deg_genes_clean), function(i) {
-      gene <- deg_genes_clean[i]
-      
-      # Assign to top 1 cell type (could be enhanced to use gene-specific logic)
-      # For now, use a round-robin + regulation-based distribution
-      
-      if (deg_regulation[gene] == "Upregulated") {
-        # Upregulated genes -> assign to most enriched cell types
-        top_cells <- names(head(cell_type_scores_sorted, 10))
-        # Rotate through top 10
-        cell_idx <- ((i - 1) %% 10) + 1
-        assigned_cell <- top_cells[cell_idx]
-      } else {
-        # Downregulated genes -> assign to moderately enriched cell types
-        mid_cells <- names(cell_type_scores_sorted[11:min(30, length(cell_type_scores_sorted))])
-        if (length(mid_cells) > 0) {
-          cell_idx <- ((i - 1) %% length(mid_cells)) + 1
-          assigned_cell <- mid_cells[cell_idx]
-        } else {
-          assigned_cell <- names(cell_type_scores_sorted)[1]
-        }
-      }
-      
-      data.frame(
-        gene = gene,
-        cell_type = assigned_cell,
-        log2FoldChange = deg_fc[gene],
-        regulation = deg_regulation[gene],
-        cell_type_score = cell_type_scores[assigned_cell],
-        specificity_score = runif(1, 0.3, 0.9),  # Placeholder
-        stringsAsFactors = FALSE
-      )
-    })
-    
-    # Combine all entries
-    marker_table <- do.call(rbind, marker_table_list)
-    
-    # Add expression level category
-    marker_table$expression_level <- cut(
-      abs(marker_table$log2FoldChange),
-      breaks = c(0, 1, 2, Inf),
-      labels = c("Low", "Medium", "High"),
-      include.lowest = TRUE
-    )
-    
-    # Summary
-    n_unique_genes <- length(unique(marker_table$gene))
-    n_cell_types <- length(unique(marker_table$cell_type))
-    
-    print(paste("✅ Created marker gene table with", nrow(marker_table), "DEG-cell type associations"))
-    print(paste("   Unique DEGs:", n_unique_genes))
-    print(paste("   Cell types involved:", n_cell_types))
-    print(paste("   Top cell types:", paste(head(names(table(marker_table$cell_type)), 5), collapse = ", ")))
-    
-    return(marker_table)
-    
-  }, error = function(e) {
-    print(paste("❌ Error creating marker gene table:", e$message))
-    print("Stack trace:")
-    print(traceback())
+                                                method,
+                                                expr_matrix = NULL,
+                                                sample_groups = NULL,
+                                                min_samples = 6) {
+  if (is.null(deg_data) || nrow(deg_data) == 0 || is.null(expr_matrix)) return(NULL)
+  score_mat <- if (method == "epic") t(as.matrix(deconv_results)) else as.matrix(deconv_results)
+  score_mat <- drop_xcell_aggregate_scores(score_mat, method)
+  common <- intersect(colnames(score_mat), colnames(expr_matrix))
+  if (length(common) < min_samples) {
+    print(paste("DEG-cell type links need at least", min_samples, "samples; skipped"))
     return(NULL)
-  })
+  }
+  score_mat <- score_mat[, common, drop = FALSE]
+  informative <- apply(score_mat, 1, function(v) sum(is.finite(v) & v != 0) >= 3 && stats::sd(v, na.rm = TRUE) > 0)
+  score_mat <- score_mat[informative, , drop = FALSE]
+  if (nrow(score_mat) == 0) return(NULL)
+
+  id_col <- intersect(c("gene_symbol", "gene", "symbol", "gene_id"), colnames(deg_data))[1]
+  sym <- if (!is.na(id_col)) as.character(deg_data[[id_col]]) else rownames(deg_data)
+  fc_col <- intersect(c("log2FC", "log2FoldChange", "logFC"), colnames(deg_data))[1]
+  fc <- if (!is.na(fc_col)) as.numeric(deg_data[[fc_col]]) else rep(NA_real_, nrow(deg_data))
+  keep <- !is.na(sym) & sym != "" & sym %in% rownames(expr_matrix) & !duplicated(sym)
+  if (!any(keep)) return(NULL)
+  sym <- as.character(sym[keep]); fc <- fc[keep]
+  expr <- as.matrix(expr_matrix[sym, common, drop = FALSE])
+  varying <- apply(expr, 1, function(v) stats::sd(v, na.rm = TRUE) > 0)
+  expr <- expr[varying, , drop = FALSE]; fc <- fc[varying]
+  if (nrow(expr) == 0) return(NULL)
+
+  # within-group adjustment (ranks residualised on group) when groups are available
+  grp <- if (!is.null(sample_groups) && all(c("sample", "group") %in% colnames(sample_groups)))
+    as.character(sample_groups$group[match(common, sample_groups$sample)]) else rep(NA_character_, length(common))
+  use_groups <- !anyNA(grp) && length(unique(grp)) >= 2 && all(table(grp) >= 2)
+  rank_resid <- function(m) {
+    r <- t(apply(m, 1, rank))
+    if (use_groups) r <- t(apply(r, 1, function(v) stats::resid(stats::lm(v ~ grp))))
+    r
+  }
+  rho_all <- suppressWarnings(stats::cor(t(rank_resid(expr)), t(rank_resid(score_mat))))
+  rho_all[is.na(rho_all)] <- 0
+  best <- max.col(rho_all, ties.method = "first")
+  rho <- rho_all[cbind(seq_len(nrow(rho_all)), best)]
+  n <- length(common); k <- ncol(rho_all)
+  df <- n - 2 - if (use_groups) length(unique(grp)) - 1 else 0
+  tstat <- rho * sqrt(df / pmax(1 - rho^2, 1e-12))
+  p <- pmin(1, 2 * stats::pt(-abs(tstat), df = df) * k)
+  out <- data.frame(
+    gene = rownames(expr),
+    cell_type = colnames(rho_all)[best],
+    spearman_rho = round(rho, 3),
+    p_value = signif(p, 3),
+    adj_p = signif(stats::p.adjust(p, "BH"), 3),
+    log2FoldChange = fc,
+    regulation = ifelse(fc > 0, "Up", ifelse(fc < 0, "Down", NA)),
+    n_samples = n,
+    n_cell_types_tested = k,
+    adjusted_for_group = use_groups,
+    stringsAsFactors = FALSE
+  )
+  out <- out[order(out$adj_p, -out$spearman_rho), , drop = FALSE]
+  rownames(out) <- NULL
+  print(paste("DEG-cell type links:", sum(out$adj_p < 0.05 & out$spearman_rho > 0), "of", nrow(out),
+              "DEGs (adj. P < 0.05, positive correlation;", k, "cell types,", n, "samples)"))
+  out
 }
 
 
@@ -10326,8 +10176,8 @@ check_druggability_fallback <- function(gene_symbols) {
   results <- data.frame(
     gene = gene_symbols,
     is_druggable = gene_symbols %in% known_druggable_tfs,
-    has_approved_drug = FALSE,  # Can't determine without API
-    has_clinical_candidate = FALSE,
+    has_approved_drug = NA,       # unknown: ChEMBL could not be queried
+    has_clinical_candidate = NA,
     n_bioactivities = NA_integer_,
     max_phase = NA_integer_,
     chembl_target_id = NA_character_,
@@ -11865,7 +11715,7 @@ calculate_wgcna_metrics_enhanced <- function(expression_data, network_results,
       # Intramodule connectivity - SAMPLE if module is large
       if (length(module_genes) > 200) {
         # Sample subset for large modules
-        sample_genes <- sample(module_genes, min(200, length(module_genes)))
+        sample_genes <- tx_seeded_sample(module_genes, min(200, length(module_genes)))
         module_adj <- network_results$adjacency[sample_genes, sample_genes]
       } else {
         module_adj <- network_results$adjacency[module_genes, module_genes]
@@ -11877,7 +11727,7 @@ calculate_wgcna_metrics_enhanced <- function(expression_data, network_results,
       if (ME_col %in% colnames(module_analysis$module_eigengenes)) {
         # Sample genes for large modules
         if (length(module_genes) > 200) {
-          sample_genes <- sample(module_genes, min(200, length(module_genes)))
+          sample_genes <- tx_seeded_sample(module_genes, min(200, length(module_genes)))
           module_expr <- expression_data[, sample_genes, drop = FALSE]
         } else {
           module_expr <- expression_data[, module_genes, drop = FALSE]
@@ -11917,14 +11767,14 @@ calculate_wgcna_metrics_enhanced <- function(expression_data, network_results,
   if (!is.null(network_results$adjacency) && ncol(network_results$adjacency) <= 2000) {
     # Only calculate for small networks
     sample_size <- min(500, ncol(network_results$adjacency))
-    sample_idx <- sample(1:ncol(network_results$adjacency), sample_size)
+    sample_idx <- tx_seeded_sample(1:ncol(network_results$adjacency), sample_size)
     
     clustering_sample <- sapply(sample_idx, function(i) {
       row <- network_results$adjacency[i, ]
       neighbors <- which(row > 0.1)  # Threshold for adjacency
       if (length(neighbors) < 2) return(0)
       # Sample neighbors if too many
-      if (length(neighbors) > 50) neighbors <- sample(neighbors, 50)
+      if (length(neighbors) > 50) neighbors <- tx_seeded_sample(neighbors, 50)
       neighbor_adj <- network_results$adjacency[neighbors, neighbors]
       sum(neighbor_adj > 0.1) / (length(neighbors) * (length(neighbors) - 1))
     })
@@ -18584,41 +18434,6 @@ create_ultra_safe_summary <- function(ppi_interactions, hub_proteins, network_me
 
 # Helper functions for the debug version
 
-create_simple_network_metrics <- function(ppi_interactions, converted_genes) {
-  
-  all_nodes <- unique(c(ppi_interactions$gene_from, ppi_interactions$gene_to))
-  n_nodes <- length(all_nodes)
-  n_edges <- nrow(ppi_interactions)
-  
-  # Calculate basic network metrics
-  max_possible_edges <- n_nodes * (n_nodes - 1) / 2
-  density <- if (max_possible_edges > 0) n_edges / max_possible_edges else 0
-  avg_degree <- if (n_nodes > 0) (2 * n_edges) / n_nodes else 0
-  
-  global_metrics <- list(
-    n_nodes = n_nodes,
-    n_edges = n_edges,
-    density = density,
-    avg_degree = avg_degree,
-    clustering_coefficient = 0.3,  # Mock value
-    diameter = 3,  # Mock value
-    avg_path_length = 2.5  # Mock value
-  )
-  
-  # Node-level metrics (simplified)
-  node_metrics <- data.frame(
-    gene = all_nodes,
-    degree = sapply(all_nodes, function(g) {
-      sum(ppi_interactions$gene_from == g) + sum(ppi_interactions$gene_to == g)
-    }),
-    stringsAsFactors = FALSE
-  )
-  
-  return(list(
-    global_metrics = global_metrics,
-    node_metrics = node_metrics
-  ))
-}
 
 identify_simple_hubs <- function(ppi_interactions, converted_genes) {
   
@@ -18756,60 +18571,7 @@ generate_simple_ppi_summary <- function(ppi_interactions, hub_proteins, network_
   return(summary)
 }
 
-create_simple_ppi_visualization <- function(ppi_interactions, converted_genes) {
-  all_genes <- unique(c(ppi_interactions$gene_from, ppi_interactions$gene_to))
-  
-  nodes <- data.frame(
-    id = all_genes,
-    label = all_genes,
-    color = sample(c("#E74C3C", "#3498DB", "#95A5A6"), length(all_genes), replace = TRUE),
-    size = sample(15:30, length(all_genes), replace = TRUE),
-    shape = "dot",
-    group = sample(c("Up-regulated", "Down-regulated", "Network neighbor"), length(all_genes), replace = TRUE),
-    title = paste0("<b>", all_genes, "</b><br>Mock protein for testing"),
-    stringsAsFactors = FALSE
-  )
-  
-  edges <- ppi_interactions %>%
-    select(from = gene_from, to = gene_to, combined_score) %>%
-    mutate(
-      width = combined_score * 3,
-      color = "#7F8C8D",
-      title = paste0("Interaction: ", from, " — ", to, "<br>Confidence: ", round(combined_score, 3))
-    )
-  
-  list(nodes = nodes, edges = edges)
-}
 
-create_simple_summary_stats <- function(ppi_interactions, converted_genes) {
-  n_proteins <- length(unique(c(ppi_interactions$gene_from, ppi_interactions$gene_to)))
-  
-  list(
-    basic_stats = list(
-      total_proteins = n_proteins,
-      total_interactions = nrow(ppi_interactions),
-      input_genes_in_network = n_proteins,
-      network_coverage = 100
-    ),
-    hub_stats = list(
-      total_hubs = min(3, n_proteins),
-      input_gene_hubs = min(2, n_proteins),
-      hub_percentage = min(30, (3/n_proteins)*100)
-    ),
-    topology_stats = list(
-      density = min(1, nrow(ppi_interactions) / (n_proteins * (n_proteins - 1) / 2)),
-      avg_degree = 2 * nrow(ppi_interactions) / n_proteins,
-      clustering_coefficient = 0.3
-    ),
-    confidence_stats = list(
-      avg_confidence = mean(ppi_interactions$combined_score),
-      median_confidence = median(ppi_interactions$combined_score),
-      high_confidence_count = sum(ppi_interactions$combined_score >= 0.8),
-      medium_confidence_count = sum(ppi_interactions$combined_score >= 0.6 & ppi_interactions$combined_score < 0.8),
-      low_confidence_count = sum(ppi_interactions$combined_score < 0.6)
-    )
-  )  # <- This closing parenthesis and brace were missing!
-}
 
 
 
@@ -19706,7 +19468,8 @@ create_ppi_summary_stats_safe <- function(ppi_interactions, network_data, select
       network_metrics = list(
         density = round(density, 4),
         avg_degree = round(avg_degree, 2),
-        clustering_coefficient = 0.3  # Placeholder
+        clustering_coefficient = if (n_edges > 0) round(igraph::transitivity(igraph::graph_from_data_frame(
+          ppi_interactions[, c("gene_from", "gene_to")], directed = FALSE), type = "global"), 3) else NA
       ),
       
       hub_stats = list(
@@ -20445,7 +20208,12 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-13", tag = "Fixed", text = "Uploaded tables with repeated gene names and a text column (for example a gene description) no longer lose their values: text columns are set aside, and repeated genes are averaged per sample without dropping genes that have a missing value."),
+  list(date = "2026-10-14", tag = "Fixed", text = "Cell-type deconvolution defaults to \"Other tissues / General\" (xCell), so the method used no longer depends on whether the method menu was opened."),
+  list(date = "2026-10-14", tag = "Fixed", text = "Some figure downloads (e.g. PPI network metrics) no longer fail with a server error."),
+  list(date = "2026-10-14", tag = "Improved", text = "Drug-target tables (overview, priorities, clinical evidence, clinical maturity) can be exported as CSV or Excel."),
+  list(date = "2026-10-14", tag = "Improved", text = "Cell-type deconvolution links each DE gene to the cell type whose score it follows most closely across samples within groups (Spearman correlation adjusted for group, with multiple-testing correction), replacing the earlier marker table."),
+  list(date = "2026-10-14", tag = "Fixed", text = "PPI network diameter and path length are computed within connected parts of the network; the Advanced GRN results can be downloaded again; the TCGA custom pathway network shows raw P values; unchecking the GRN druggability check now skips it; subsampling steps are reproducible."),
+list(date = "2026-10-13", tag = "Fixed", text = "Uploaded tables with repeated gene names and a text column (for example a gene description) no longer lose their values: text columns are set aside, and repeated genes are averaged per sample without dropping genes that have a missing value."),
 list(date = "2026-10-09", tag = "Improved", text = "Faster FASTQ processing: public runs are downloaded while the previous run is being processed, quality control runs alongside trimming, and trimming uses all of the job's processor threads."),
 list(date = "2026-10-09", tag = "Fixed",    text = "Enrichment: only gene-set libraries that exist are offered, and non-mammal species are sent to the multi-species GO/KEGG enrichment; ORA accepts a background gene list, filled with all tested genes when DEGs are sent from Transcriptome Analysis; Hallmark ORA works; a names-only GSEA list runs as classic (unweighted) GSEA."),
 list(date = "2026-10-09", tag = "Fixed",    text = "Differential expression: normalised or log-scale data (microarray, TPM, FPKM, RPKM) is now analysed with limma on log2 expression instead of being rounded into counts; a detected batch variable is matched to samples by name and kept in the model whenever it can be estimated; pairwise comparisons work again."),
@@ -23480,7 +23248,7 @@ tags$script(HTML("
                             HTML("&#x1f52c; <strong>Other tissues</strong> (organs, general tissues, not sure)")
                           ),
                           choiceValues = list("immune", "tumor", "general"),
-                          selected = "immune"
+                          selected = "general"
                         ),
                         
                         # Static recommendations based on selection
@@ -30302,6 +30070,18 @@ tx_collapse_duplicates <- function(m, ids) {
   out
 }
 
+# Reproducible subsample that leaves the session's random-number state untouched
+tx_seeded_sample <- function(x, size, seed = 1L) {
+  had <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  if (had) old <- get(".Random.seed", envir = globalenv())
+  on.exit(if (had) assign(".Random.seed", old, envir = globalenv())
+          else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) rm(".Random.seed", envir = globalenv()))
+  set.seed(seed)
+  sample(x, size)
+}
+
+options(device = function(...) grDevices::pdf(file = NULL, ...))
+
 tx_expression_scale <- function(m) {
   v <- as.numeric(as.matrix(m))
   v <- v[is.finite(v)]
@@ -35059,7 +34839,7 @@ server <- function(input, output, session) {
       metrics_comparison <- sprintf(
         "<div style='display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 15px 0;'>
         <div style='background: white; padding: 12px; border-radius: 5px; border-left: 3px solid #ff5722;'>
-          <div style='font-size: 0.75em; color: #666; margin-bottom: 3px;'>Before Correction</div>
+          <div style='font-size: 0.75em; color: #666; margin-bottom: 3px;'>Before correction (plots)</div>
           <div style='font-size: 1.1em; font-weight: bold; color: #ff5722;'>Silhouette: %.3f</div>
           <div style='font-size: 0.8em; color: #999;'>Samples cluster by batch</div>
         </div>
@@ -35067,9 +34847,9 @@ server <- function(input, output, session) {
           <div style='font-size: 2em; color: #4caf50;'>→</div>
         </div>
         <div style='background: white; padding: 12px; border-radius: 5px; border-left: 3px solid #4caf50;'>
-          <div style='font-size: 0.75em; color: #666; margin-bottom: 3px;'>After Correction</div>
+          <div style='font-size: 0.75em; color: #666; margin-bottom: 3px;'>After correction (plots)</div>
           <div style='font-size: 1.1em; font-weight: bold; color: #4caf50;'>Silhouette: %.3f</div>
-          <div style='font-size: 0.8em; color: #999;'>Batch effect removed</div>
+          <div style='font-size: 0.8em; color: #999;'>Corrected data are used for plots only; DE includes batch as a covariate</div>
         </div>
       </div>",
         correction_assessment$sil_before,
@@ -35094,7 +34874,7 @@ server <- function(input, output, session) {
     
     div(
       style = "background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #ff9800; margin: 15px 0;",
-      h5(icon("exclamation-triangle"), " Batch Effect Detected & Corrected", 
+      h5(icon("exclamation-triangle"), " Batch Effect Detected",
          style = "color: #e65100; margin-top: 0;"),
       
       p(strong("Primary batch source identified:"), tags$code(recommended, style = "background: #fff; padding: 2px 6px; border-radius: 3px;"),
@@ -42714,7 +42494,7 @@ server <- function(input, output, session) {
     
     # Sample 1000 random values for efficiency
     sample_size <- min(1000, length(expr_mat))
-    sample_vals <- sample(as.numeric(expr_mat), sample_size)
+    sample_vals <- tx_seeded_sample(as.numeric(expr_mat), sample_size)
     sample_vals <- sample_vals[!is.na(sample_vals) & is.finite(sample_vals)]
     
     # Check 1: If values are negative, it's normalized (log-transformed)
@@ -55997,7 +55777,7 @@ document.addEventListener("DOMContentLoaded", function() {
             
             print(paste(" Deconvolution complete:", 
                         deconv_results$summary_stats$deconv$total_cell_types, 
-                        "cell types identified"))
+                        "cell types scored"))
             
           }, error = function(e) {
             print(paste("Deconvolution failed:", e$message))
@@ -56037,7 +55817,7 @@ document.addEventListener("DOMContentLoaded", function() {
           if (rv_deg_main$batch_detection_results$has_batch) {
             success_message <- paste0(
               success_message, 
-              "Batch effects detected and corrected! Check the report above."
+              "Batch effect detected: it will be included as a covariate in DE (corrected data are used for plots only). See the report above."
             )
           } else {
             success_message <- paste0(success_message, " No batch effects detected.")
@@ -62873,6 +62653,7 @@ document.addEventListener("DOMContentLoaded", function() {
       pathway_table$Original_Database <- combined_data$Database
       pathway_table$Original_Genes <- combined_data$Genes
       pathway_table$Original_Adjusted_P_value <- combined_data$Adjusted.P.value
+      pathway_table$Original_P_value <- if ("P.value" %in% names(combined_data)) combined_data$P.value else NA_real_
       pathway_table$Original_Combined_Score <- combined_data$Combined.Score
       pathway_table$Original_Overlap <- combined_data$Overlap
       
@@ -63113,7 +62894,7 @@ document.addEventListener("DOMContentLoaded", function() {
         db_df <- data.frame(
           Term = pathways$Original_Term,
           Overlap = pathways$Original_Overlap,
-          P.value = pathways$Original_Adjusted_P_value, # Using adjusted p-value as a placeholder
+          P.value = pathways$Original_P_value,
           Adjusted.P.value = pathways$Original_Adjusted_P_value,
           Combined.Score = pathways$Original_Combined_Score,
           Genes = pathways$Original_Genes,
@@ -68478,119 +68259,6 @@ document.addEventListener("DOMContentLoaded", function() {
   # 3. MAIN ENHANCED DRUG-TARGET ANALYSIS FUNCTION
   # ============================================================================
   
-  debug_drug_target_analysis <- function(selected_genes, analysis_focus = "drug_discovery") {
-    print("=== DEBUGGING DRUG TARGET ANALYSIS ===")
-    
-    # Step 1: Test data creation
-    print("STEP 1: Testing data creation...")
-    tryCatch({
-      print("Creating mock data...")
-      mock_data <- data.frame(
-        gene_name = c("GENE1", "GENE2", "GENE3"),
-        molecule_name = c("DRUG1", "DRUG2", "DRUG3"),
-        confidence_score = c(0.8, 0.9, 0.7),
-        standard_type = c("IC50", "Ki", "IC50"),
-        standard_value = c(100, 200, 150),
-        standard_units = c("nM", "nM", "nM"),
-        database_source = c("ChEMBL", "ChEMBL", "ChEMBL"),
-        clinical_phase = c(1, 2, 1),
-        stringsAsFactors = FALSE
-      )
-      print("✓ Mock data created successfully")
-      print("Data structure:")
-      print(str(mock_data))
-    }, error = function(e) {
-      print(paste("[FAIL] ERROR in data creation:", e$message))
-      return(list(error = "Data creation failed"))
-    })
-    
-    # Step 2: Test network creation
-    print("STEP 2: Testing network creation...")
-    tryCatch({
-      network_result <- create_ultra_simple_network(mock_data, selected_genes)
-      print("✓ Network creation successful")
-    }, error = function(e) {
-      print(paste("[FAIL] ERROR in network creation:", e$message))
-      print("This is where the quote error might be!")
-      return(list(error = "Network creation failed"))
-    })
-    
-    # Step 3: Test prioritization
-    print("STEP 3: Testing prioritization...")
-    tryCatch({
-      priority_result <- create_ultra_simple_prioritization(mock_data, analysis_focus)
-      print("✓ Prioritization successful")
-    }, error = function(e) {
-      print(paste("[FAIL] ERROR in prioritization:", e$message))
-      print("Quote error might be here!")
-      return(list(error = "Prioritization failed"))
-    })
-    
-    # Step 4: Test data manipulation operations
-    print("STEP 4: Testing data manipulation...")
-    tryCatch({
-      print("Testing dplyr operations...")
-      library(dplyr)
-      
-      # Test each operation separately
-      print("- Testing select...")
-      test1 <- mock_data %>% select(gene_name, molecule_name)
-      print("✓ select works")
-      
-      print("- Testing mutate...")
-      test2 <- mock_data %>% mutate(test_col = "test")
-      print("✓ mutate works")
-      
-      print("- Testing filter...")
-      test3 <- mock_data %>% filter(confidence_score > 0.5)
-      print("✓ filter works")
-      
-      print("- Testing group_by and summarise...")
-      test4 <- mock_data %>%
-        group_by(gene_name) %>%
-        summarise(count = n(), .groups = 'drop')
-      print("✓ group_by/summarise works")
-      
-    }, error = function(e) {
-      print(paste("[FAIL] ERROR in data manipulation:", e$message))
-      print("Quote error is in dplyr operations!")
-      return(list(error = "Data manipulation failed"))
-    })
-    
-    # Step 5: Test string operations
-    print("STEP 5: Testing string operations...")
-    tryCatch({
-      print("Testing paste operations...")
-      test_string1 <- paste("Drug:", mock_data$molecule_name[1])
-      print("✓ Basic paste works")
-      
-      print("Testing paste0 operations...")
-      test_string2 <- paste0("Drug: ", mock_data$molecule_name[1], " | Gene: ", mock_data$gene_name[1])
-      print("✓ paste0 works")
-      
-      print("Testing ifelse operations...")
-      test_ifelse <- ifelse(is.na(mock_data$confidence_score), "N/A", mock_data$confidence_score)
-      print("✓ ifelse works")
-      
-    }, error = function(e) {
-      print(paste("[FAIL] ERROR in string operations:", e$message))
-      print("Quote error is in string handling!")
-      return(list(error = "String operations failed"))
-    })
-    
-    print("=== DEBUGGING COMPLETE ===")
-    print("If you see this message, the error is NOT in basic operations")
-    print("The error must be in your actual ChEMBL query or data processing")
-    
-    # Return minimal successful result
-    return(list(
-      network_data = network_result,
-      drug_prioritization = priority_result,
-      summary = list(total_drugs = 3, total_targets = 3),
-      drug_targets = mock_data,
-      analysis_params = list(analysis_focus = analysis_focus)
-    ))
-  }
   
   
   
@@ -68660,59 +68328,6 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   
-  calculate_enhanced_summary_stats <- function(drug_data, network_data, analysis_focus) {
-    
-    if (is.null(drug_data) || nrow(drug_data) == 0) {
-      return(list(
-        total_nodes = 0, total_edges = 0, total_drugs = 0, total_targets = 0,
-        analysis_focus = analysis_focus,
-        chembl = list(total_interactions = 0, unique_drugs = 0, druggable_targets = 0, high_confidence_interactions = 0),
-        opentargets = list(targets_with_data = 0, total_clinical_drugs = 0, approved_drugs = 0, targets_with_safety_data = 0, clinical_phase_distribution = c())
-      ))
-    }
-    
-    # Basic network stats
-    basic_stats <- list(
-      total_nodes = nrow(network_data$nodes),
-      total_edges = nrow(network_data$edges),
-      total_drugs = length(unique(drug_data$molecule_name)),
-      total_targets = length(unique(drug_data$gene_name)),
-      network_density = ifelse(nrow(network_data$nodes) > 1,
-                               nrow(network_data$edges) / (nrow(network_data$nodes) * (nrow(network_data$nodes) - 1) / 2),
-                               0),
-      analysis_focus = analysis_focus
-    )
-    
-    # Database-specific stats
-    chembl_data <- drug_data %>% dplyr::filter(grepl("ChEMBL", database_source)) # Explicit dplyr::filter
-    opentargets_data <- drug_data %>% dplyr::filter(grepl("OpenTargets", database_source)) # Explicit dplyr::filter
-    
-    chembl_stats <- list(
-      total_interactions = nrow(chembl_data),
-      unique_drugs = length(unique(chembl_data$molecule_name)),
-      druggable_targets = length(unique(chembl_data$gene_name)),
-      high_confidence_interactions = nrow(chembl_data %>% dplyr::filter(confidence_score >= 0.7)) # Explicit dplyr::filter
-    )
-    
-    # Recalculate approved_drugs based on the filtered data
-    approved_drugs_count <- if(nrow(opentargets_data) > 0) sum(opentargets_data$clinical_phase == 4, na.rm = TRUE) else 0
-    
-    opentargets_stats <- list(
-      targets_with_data = length(unique(opentargets_data$gene_name)),
-      total_clinical_drugs = length(unique(opentargets_data$molecule_name)),
-      approved_drugs = approved_drugs_count, # Recalculated
-      targets_with_safety_data = max(1, round(length(unique(opentargets_data$gene_name)) * 0.3)), # Mocked
-      clinical_phase_distribution = if(nrow(opentargets_data) > 0) table(opentargets_data$clinical_phase) else c() # Use actual data
-    )
-    
-    # Combine all stats
-    enhanced_stats <- c(basic_stats, list(
-      chembl = chembl_stats,
-      opentargets = opentargets_stats
-    ))
-    
-    return(enhanced_stats)
-  }
   
   create_drug_prioritization_data_fixed <- function(drug_data, analysis_focus) {
     
@@ -70094,357 +69709,13 @@ document.addEventListener("DOMContentLoaded", function() {
   # 5. MAIN WRAPPER FUNCTION FOR YOUR SHINY APP
   # ============================================================================
   
-  run_enhanced_drug_target_analysis_complete_final <- function(selected_genes,
-                                                               analysis_focus = "drug_discovery",
-                                                               max_drugs_per_gene = 10,
-                                                               organism = "human",
-                                                               min_confidence = 0.5,
-                                                               databases = c("chembl")) {
-    
-    print("=== STARTING COMPLETE ENHANCED DRUG-TARGET ANALYSIS (FINAL) ===")
-    print(paste("Analysis focus:", analysis_focus))
-    print(paste("Max drugs per gene:", max_drugs_per_gene))
-    print(paste("Min confidence:", min_confidence))
-    
-    tryCatch({
-      
-      # Step 1: Gene conversion
-      if (is.null(selected_genes$all_genes) || length(selected_genes$all_genes) == 0) {
-        stop("No genes provided for analysis")
-      }
-      
-      conversion_result <- enhanced_gene_id_conversion_no_mock_fixed(selected_genes$all_genes, organism)
-      
-      if (length(conversion_result$symbols) == 0) {
-        print("WARNING: No genes could be converted to symbols")
-        return(create_empty_drug_results_complete_fixed(selected_genes, analysis_focus, conversion_result))
-      }
-      
-      # Step 2: ChEMBL query
-      chembl_results <- query_chembl_optimized(conversion_result$symbols, max_drugs_per_gene)
-      
-      if (nrow(chembl_results) == 0) {
-        print("WARNING: No ChEMBL results found")
-        return(create_empty_drug_results_complete_fixed(selected_genes, analysis_focus, conversion_result))
-      }
-      
-      # Step 3: Safe enhancement (this is where the error was occurring)
-      chembl_enhanced <- enhance_chembl_with_molecule_data_fixed_safe(chembl_results)
-      
-      if (nrow(chembl_enhanced) == 0) {
-        print("WARNING: Data enhancement failed")
-        return(create_empty_drug_results_complete_fixed(selected_genes, analysis_focus, conversion_result))
-      }
-      
-      # Step 4: Create network and prioritization
-      network_data <- create_drug_target_network_complete(chembl_enhanced, selected_genes)
-      drug_prioritization <- create_drug_prioritization_data_fixed(chembl_enhanced, analysis_focus)
-      summary_stats <- create_comprehensive_summary_complete_fixed(chembl_enhanced, network_data, analysis_focus)
-      
-      print("=== ANALYSIS COMPLETE (FINAL) ===")
-      print(paste("Found:", nrow(chembl_enhanced), "drug-target interactions"))
-      print(paste("Prioritization entries:", nrow(drug_prioritization)))
-      
-      # Return results with proper parameter storage
-      results <- list(
-        network_data = network_data,
-        summary = summary_stats,
-        drug_targets = chembl_enhanced,
-        drug_prioritization = drug_prioritization,
-        chembl_data = chembl_enhanced,
-        raw_data = chembl_results,
-        analysis_params = list(
-          analysis_focus = analysis_focus,
-          max_drugs_per_gene = max_drugs_per_gene,
-          min_confidence = min_confidence,
-          databases = databases,
-          organism = as.character(input$organism_deg_main %||% "human"),
-          n_input_genes = length(selected_genes$all_genes),
-          n_converted_genes = conversion_result$conversion_stats$successful_conversions,
-          conversion_rate = conversion_result$conversion_stats$conversion_rate
-        )
-      )
-      
-      print("Results structure created successfully")
-      return(results)
-      
-    }, error = function(e) {
-      print(paste("Error in main analysis function:", e$message))
-      print("Creating empty results due to error...")
-      
-      # Return safe empty results
-      empty_conversion <- list(
-        symbols = character(0),
-        ensembl_ids = character(0),
-        conversion_stats = list(total_input = length(selected_genes$all_genes), successful_conversions = 0, conversion_rate = 0)
-      )
-      
-      return(create_empty_drug_results_complete_fixed(selected_genes, analysis_focus, empty_conversion))
-    })
-  }
   
   
-  create_drug_prioritization_data_complete <- function(drug_data, analysis_focus) {
-    
-    print("=== CREATING COMPLETE DRUG PRIORITIZATION DATA ===")
-    print(paste("Input data rows:", nrow(drug_data)))
-    
-    if (is.null(drug_data) || nrow(drug_data) == 0) {
-      print("No drug data available - creating empty prioritization")
-      return(data.frame(
-        Drug = character(0),
-        `Priority Level` = character(0),
-        `Priority Score` = numeric(0),
-        `Target Count` = integer(0),
-        `Target Genes` = character(0),
-        `Confidence` = numeric(0),
-        `Clinical Phase` = character(0),
-        `Best Activity` = character(0),
-        `Activity Types` = character(0)
-      ))
-    }
-    
-    # Ensure all required columns exist with sensible defaults
-    if (!"clinical_phase" %in% colnames(drug_data)) {
-      drug_data$clinical_phase <- sample(0:4, nrow(drug_data), replace = TRUE, prob = c(0.4, 0.2, 0.2, 0.1, 0.1))
-    }
-    
-    if (!"confidence_score" %in% colnames(drug_data)) {
-      drug_data$confidence_score <- runif(nrow(drug_data), 0.3, 0.95)
-    }
-    
-    if (!"molecule_name" %in% colnames(drug_data)) {
-      if ("compound_chembl_id" %in% colnames(drug_data)) {
-        drug_data$molecule_name <- drug_data$compound_chembl_id
-      } else if ("molecule_chembl_id" %in% colnames(drug_data)) {
-        drug_data$molecule_name <- paste0("CHEMBL_", drug_data$molecule_chembl_id)
-      } else {
-        drug_data$molecule_name <- paste0("Drug_", seq_len(nrow(drug_data)))
-      }
-    }
-    
-    if (!"gene_name" %in% colnames(drug_data)) {
-      drug_data$gene_name <- "Unknown"
-    }
-    
-    if (!"standard_value" %in% colnames(drug_data)) {
-      drug_data$standard_value <- runif(nrow(drug_data), 10, 10000)
-    }
-    
-    if (!"standard_type" %in% colnames(drug_data)) {
-      drug_data$standard_type <- sample(c("IC50", "Ki", "EC50", "Inhibition"), nrow(drug_data), replace = TRUE)
-    }
-    
-    # Create comprehensive prioritization with proper error handling
-    prioritization <- drug_data %>%
-      dplyr::group_by(molecule_name) %>%
-      dplyr::summarise(
-        n_targets = dplyr::n(),
-        target_genes = paste(unique(gene_name[!is.na(gene_name)]), collapse = ", "),
-        avg_confidence = round(mean(confidence_score, na.rm = TRUE), 3),
-        max_clinical_phase = max(clinical_phase, na.rm = TRUE),
-        best_activity = ifelse(any(!is.na(standard_value)),
-                               round(min(standard_value, na.rm = TRUE), 1), NA),
-        activity_types = paste(unique(standard_type[!is.na(standard_type) & standard_type != ""]), collapse = ", "),
-        .groups = 'drop'
-      ) %>%
-      dplyr::mutate(
-        # Calculate priority score with weights based on analysis focus
-        priority_weights = case_when(
-          analysis_focus == "drug_discovery" ~ list(c(target=0.2, conf=0.4, clin=0.3, act=0.1)),
-          analysis_focus == "disease_context" ~ list(c(target=0.3, conf=0.2, clin=0.4, act=0.1)),
-          TRUE ~ list(c(target=0.25, conf=0.25, clin=0.25, act=0.25))
-        ),
-        
-        # Normalize components for scoring
-        target_score = pmin(1, n_targets / 5),  # Cap at 5 targets
-        conf_score = avg_confidence,
-        clin_score = max_clinical_phase / 4,    # Normalize to 0-1
-        act_score = ifelse(is.na(best_activity), 0,
-                           pmin(1, 10000 / (best_activity + 1))),  # Better activity = higher score
-        
-        # Calculate final priority score
-        priority_score = round(
-          (target_score * 0.2) +
-            (conf_score * 0.4) +
-            (clin_score * 0.3) +
-            (act_score * 0.1), 3),
-        
-        # Assign priority levels based on percentiles
-        priority_level = case_when(
-          priority_score >= quantile(priority_score, 0.75, na.rm = TRUE) ~ "High",
-          priority_score >= quantile(priority_score, 0.25, na.rm = TRUE) ~ "Medium",
-          TRUE ~ "Low"
-        ),
-        
-        # Create readable clinical phase description
-        clinical_phase_desc = case_when(
-          max_clinical_phase == 0 ~ "Preclinical",
-          max_clinical_phase == 1 ~ "Phase I",
-          max_clinical_phase == 2 ~ "Phase II",
-          max_clinical_phase == 3 ~ "Phase III",
-          max_clinical_phase == 4 ~ "Approved",
-          is.na(max_clinical_phase) ~ "Unknown",
-          TRUE ~ paste("Phase", max_clinical_phase)
-        ),
-        
-        # Format activity display
-        activity_display = case_when(
-          is.na(best_activity) ~ "Not Available",
-          best_activity < 100 ~ paste0(best_activity, " nM (Very Active)"),
-          best_activity < 1000 ~ paste0(best_activity, " nM (Active)"),
-          best_activity < 10000 ~ paste0(best_activity, " nM (Moderate)"),
-          TRUE ~ paste0(best_activity, " nM (Weak)")
-        ),
-        
-        # Clean up activity types
-        activity_types = ifelse(activity_types == "" | is.na(activity_types), "Various", activity_types)
-      ) %>%
-      # Remove intermediate columns and select final columns
-      dplyr::select(
-        Drug = molecule_name,
-        `Priority Level` = priority_level,
-        `Priority Score` = priority_score,
-        `Target Count` = n_targets,
-        `Target Genes` = target_genes,
-        `Confidence` = avg_confidence,
-        `Clinical Phase` = clinical_phase_desc,
-        `Best Activity` = activity_display,
-        `Activity Types` = activity_types
-      ) %>%
-      dplyr::arrange(dplyr::desc(`Priority Score`))
-    
-    print(paste("Successfully created prioritization for", nrow(prioritization), "unique drugs"))
-    print(paste("Priority level distribution:"))
-    if (nrow(prioritization) > 0) {
-      print(table(prioritization$`Priority Level`))
-    }
-    
-    return(prioritization)
-  }
   
   # ============================================================================
   # 6. HELPER FUNCTIONS
   # ============================================================================
   
-  enhance_chembl_with_molecule_data_fixed_safe <- function(chembl_results) {
-    
-    if (nrow(chembl_results) == 0) return(chembl_results)
-    
-    print("=== ENHANCING CHEMBL DATA (SAFE VERSION) ===")
-    print(paste("Input rows:", nrow(chembl_results)))
-    
-    # Safely print column names
-    tryCatch({
-      col_names <- colnames(chembl_results)
-      if (length(col_names) > 0) {
-        # Handle potential NA or problematic values in column names
-        col_names <- as.character(col_names)
-        col_names[is.na(col_names)] <- "NA_COLUMN"
-        print("Input columns:")
-        print(col_names)
-      } else {
-        print("No columns found in input data")
-      }
-    }, error = function(e) {
-      print(paste("Error printing column names:", e$message))
-      print("Proceeding without column name display...")
-    })
-    
-    # Ensure required columns exist with safe operations
-    required_columns <- c("molecule_name", "clinical_phase", "standard_units", "database_source")
-    
-    for (col in required_columns) {
-      tryCatch({
-        if (!col %in% colnames(chembl_results)) {
-          
-          # Create default values based on column type
-          n_rows <- nrow(chembl_results)
-          
-          default_val <- switch(col,
-                                "molecule_name" = {
-                                  if ("compound_chembl_id" %in% colnames(chembl_results)) {
-                                    chembl_results$compound_chembl_id
-                                  } else if ("molecule_chembl_id" %in% colnames(chembl_results)) {
-                                    paste0("CHEMBL_", chembl_results$molecule_chembl_id)
-                                  } else {
-                                    paste0("Drug_", seq_len(n_rows))
-                                  }
-                                },
-                                "clinical_phase" = sample(0:4, n_rows, replace = TRUE, prob = c(0.4, 0.2, 0.2, 0.1, 0.1)),
-                                "standard_units" = rep("nM", n_rows),
-                                "database_source" = rep("ChEMBL", n_rows),
-                                rep(NA, n_rows)  # fallback
-          )
-          
-          chembl_results[[col]] <- default_val
-          print(paste("Added missing column:", col, "with", length(default_val), "values"))
-        }
-      }, error = function(e) {
-        print(paste("Error adding column", col, ":", e$message))
-        # Add safe fallback
-        chembl_results[[col]] <- rep(NA, nrow(chembl_results))
-      })
-    }
-    
-    # Safely ensure molecule_name is properly set
-    tryCatch({
-      if (!"molecule_name" %in% colnames(chembl_results) ||
-          all(is.na(chembl_results$molecule_name)) ||
-          all(chembl_results$molecule_name == "")) {
-        
-        if ("compound_chembl_id" %in% colnames(chembl_results)) {
-          chembl_results$molecule_name <- as.character(chembl_results$compound_chembl_id)
-        } else if ("molecule_chembl_id" %in% colnames(chembl_results)) {
-          chembl_results$molecule_name <- paste0("CHEMBL_", chembl_results$molecule_chembl_id)
-        } else {
-          chembl_results$molecule_name <- paste0("Drug_", seq_len(nrow(chembl_results)))
-        }
-        print("Fixed molecule_name column")
-      }
-    }, error = function(e) {
-      print(paste("Error fixing molecule_name:", e$message))
-      chembl_results$molecule_name <- paste0("Drug_", seq_len(nrow(chembl_results)))
-    })
-    
-    # Safely add drug priority classification
-    tryCatch({
-      if (!"drug_priority" %in% colnames(chembl_results)) {
-        
-        # Safe priority calculation
-        priority_values <- rep("Low", nrow(chembl_results))
-        
-        if ("pchembl_value" %in% colnames(chembl_results)) {
-          pchembl_vals <- as.numeric(chembl_results$pchembl_value)
-          priority_values[!is.na(pchembl_vals) & pchembl_vals >= 7] <- "High"
-          priority_values[!is.na(pchembl_vals) & pchembl_vals >= 6 & pchembl_vals < 7] <- "Medium"
-        }
-        
-        if ("standard_value" %in% colnames(chembl_results)) {
-          std_vals <- as.numeric(chembl_results$standard_value)
-          priority_values[!is.na(std_vals) & std_vals <= 1000 & priority_values == "Low"] <- "Medium"
-        }
-        
-        chembl_results$drug_priority <- priority_values
-        print("Added drug_priority column")
-      }
-    }, error = function(e) {
-      print(paste("Error adding drug_priority:", e$message))
-      chembl_results$drug_priority <- rep("Low", nrow(chembl_results))
-    })
-    
-    print(paste("Enhanced data completed with", nrow(chembl_results), "rows"))
-    
-    # Safely print final status
-    tryCatch({
-      final_cols <- colnames(chembl_results)
-      print(paste("Final column count:", length(final_cols)))
-    }, error = function(e) {
-      print("Enhanced data ready (column display error occurred)")
-    })
-    
-    return(chembl_results)
-  }
   
   create_drug_target_network <- function(drug_data, selected_genes) {
     
@@ -71102,9 +70373,6 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   
-  create_mock_opentargets_data <- function(gene_symbols, analysis_focus) {
-    stop("Drug-target databases could not be queried, so no drug results are shown. TransXplorer never substitutes simulated data.")
-  }
   
   
   
@@ -71182,106 +70450,8 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   # Multi-database drug-target query function (keep as is)
-  get_multi_database_drug_targets <- function(genes, databases, min_confidence, organism) {
-    
-    print("Querying multiple drug databases...")
-    
-    all_drug_targets <- data.frame()
-    
-    for (db in databases) {
-      print(paste("Querying", db, "database..."))
-      
-      db_results <- switch(db,
-                           "chembl" = query_chembl_enhanced(genes, min_confidence),
-                           "opentargets" = query_opentargets_enhanced(genes, min_confidence),
-                           "drugbank" = query_drugbank_enhanced(genes, min_confidence),
-                           data.frame()
-      )
-      
-      if (nrow(db_results) > 0) {
-        db_results$database_source <- db
-        all_drug_targets <- rbind(all_drug_targets, db_results)
-      }
-    }
-    
-    # Remove duplicates and standardize
-    drug_targets_clean <- all_drug_targets %>%
-      dplyr::distinct(gene_name, drug_name, .keep_all = TRUE) %>% # Explicit dplyr::distinct
-      dplyr::arrange(desc(confidence_score)) # Explicit dplyr::arrange
-    
-    print(paste("Found", nrow(drug_targets_clean), "unique drug-target interactions"))
-    return(drug_targets_clean)
-  }
   
   # Enhanced ChEMBL query with better filtering (keep as is, add explicit httr::, jsonlite::, dplyr::)
-  query_chembl_enhanced <- function(genes, min_confidence) {
-    
-    tryCatch({
-      # Use httr to query ChEMBL API
-      library(httr)
-      library(jsonlite)
-      
-      all_results <- data.frame()
-      
-      for (gene in genes[1:min(50, length(genes))]) {  # Limit to prevent timeout
-        
-        # Query ChEMBL for target information
-        target_url <- paste0("https://www.ebi.ac.uk/chembl/api/data/target.json?target_synonym=", gene)
-        target_response <- httr::GET(target_url) # Explicit httr::
-        
-        if (httr::status_code(target_response) == 200) { # Explicit httr::
-          target_data <- jsonlite::fromJSON(httr::content(target_response, "text")) # Explicit jsonlite::, httr::
-          
-          if (length(target_data$targets) > 0) {
-            target_id <- target_data$targets$target_chembl_id[1]
-            
-            # Query for activities
-            activity_url <- paste0("https://www.ebi.ac.uk/chembl/api/data/activity.json?target_chembl_id=",
-                                   target_id, "&limit=100")
-            activity_response <- httr::GET(activity_url) # Explicit httr::
-            
-            if (httr::status_code(activity_response) == 200) { # Explicit httr::
-              activity_data <- jsonlite::fromJSON(httr::content(activity_response, "text")) # Explicit jsonlite::, httr::
-              
-              if (length(activity_data$activities) > 0) {
-                activities <- activity_data$activities
-                
-                # Process activities
-                gene_results <- data.frame(
-                  gene_name = gene,
-                  target_chembl_id = target_id,
-                  drug_name = activities$molecule_chembl_id,
-                  drug_chembl_id = activities$molecule_chembl_id,
-                  activity_type = activities$standard_type,
-                  activity_value = as.numeric(activities$standard_value),
-                  activity_units = activities$standard_units,
-                  confidence_score = calculate_chembl_confidence(activities),
-                  clinical_phase = get_clinical_phase_chembl(activities$molecule_chembl_id),
-                  stringsAsFactors = FALSE
-                )
-                
-                # Filter by confidence
-                gene_results <- gene_results %>%
-                  dplyr::filter(confidence_score >= min_confidence) %>% # Explicit dplyr::filter
-                  dplyr::slice_head(n = 10)  # Explicit dplyr::slice_head
-                
-                all_results <- rbind(all_results, gene_results)
-              }
-            }
-          }
-        }
-        
-        # Add small delay to be respectful to API
-        Sys.sleep(0.1)
-      }
-      
-      return(all_results)
-      
-    }, error = function(e) {
-      print(paste("Error querying ChEMBL:", e$message))
-      return(data.frame())
-    })
-  }
   
   # Enhanced OpenTargets query (keep as is, add explicit httr::, jsonlite::, dplyr::)
   query_opentargets_enhanced <- function(genes, min_confidence) {
@@ -71977,7 +71147,8 @@ document.addEventListener("DOMContentLoaded", function() {
         
         DT::datatable(
           overview_summary,
-          options = list(pageLength = 10, scrollX = TRUE),
+          extensions = 'Buttons',
+          options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip', buttons = c('csv', 'excel')),
           rownames = FALSE
         ) %>%
           DT::formatRound(c("Avg Clinical Phase", "Clinical Maturity", "Clinical Evidence"), 2) %>%
@@ -72004,7 +71175,7 @@ document.addEventListener("DOMContentLoaded", function() {
         ))
       })
     }
-  })
+  }, server = FALSE)
   
   get_target_genes_for_enrichment <- function(nodes, selected_genes) {
     # Method 1: Get targets based on regulation column (current approach)
@@ -72085,10 +71256,6 @@ document.addEventListener("DOMContentLoaded", function() {
     return(pmin(1, phase_score * type_score))
   }
   
-  get_clinical_phase_chembl <- function(molecule_ids) {
-    # Simplified - in practice you'd query ChEMBL for clinical trial data
-    return(sample(0:4, length(molecule_ids), replace = TRUE, prob = c(0.4, 0.2, 0.2, 0.1, 0.1)))
-  }
   
   get_grn_regulations_hybrid <- function(selected_genes, organism, min_confidence = 0.6) {
     
@@ -72809,10 +71976,7 @@ document.addEventListener("DOMContentLoaded", function() {
           check_druggability_fallback(master_regulators$label)
         })
       } else {
-        print("⏭️ ChEMBL druggability check skipped")
-        if (nrow(master_regulators) > 0) {
-          druggability_info <- check_druggability_fallback(master_regulators$label)
-        }
+        print("ChEMBL druggability check switched off: no druggability data")
       }
       
       # Store both in results
@@ -74418,62 +73582,6 @@ document.addEventListener("DOMContentLoaded", function() {
     }
   }
   
-  create_enhanced_opentargets_comprehensive_data <- function(ensembl_ids, symbols = NULL, max_per_gene) {
-    stop("OpenTargets drug data could not be loaded. TransXplorer never substitutes simulated data.")
-    
-    if (length(ensembl_ids) == 0) return(data.frame())
-    
-    # Create more realistic OpenTargets-style comprehensive data
-    n_interactions <- min(60, length(ensembl_ids) * max_per_gene)
-    
-    # Map ENSEMBL IDs to gene names (use symbols if provided, otherwise create meaningful names)
-    if (!is.null(symbols) && length(symbols) >= length(ensembl_ids)) {
-      gene_names <- symbols[1:length(ensembl_ids)]
-    } else {
-      gene_names <- paste0("GENE_", gsub("ENSG0+", "", ensembl_ids))
-    }
-    
-    # Create comprehensive OpenTargets data
-    mock_data <- data.frame(
-      ensembl_id = sample(ensembl_ids, n_interactions, replace = TRUE),
-      gene_name = sample(gene_names, n_interactions, replace = TRUE),
-      molecule_name = paste0("OT_DRUG_", sample(1000:9999, n_interactions)),
-      molecule_id = paste0("CHEMBL", sample(1000000:9999999, n_interactions)),
-      
-      # Clinical and disease context (OpenTargets focus)
-      clinical_phase = sample(c(-1, 0, 1, 2, 3, 4), n_interactions, replace = TRUE,
-                              prob = c(0.05, 0.25, 0.25, 0.25, 0.15, 0.05)),
-      disease_area = sample(c("Oncology", "Immunology", "Neurology", "Metabolism",
-                              "Cardiovascular", "Respiratory"), n_interactions, replace = TRUE),
-      
-      # OpenTargets-specific scores
-      druggability_score = stats::runif(n_interactions, 0.3, 1.0),
-      clinical_maturity_score = stats::runif(n_interactions, 0.2, 0.9),
-      clinical_evidence_score = stats::runif(n_interactions, 0.4, 0.95),
-      target_tractability = sample(c("Small molecule", "Antibody", "Other modalities"),
-                                   n_interactions, replace = TRUE),
-      
-      # Standardized columns for integration
-      database_source = "OpenTargets",
-      analysis_context = "comprehensive",
-      standard_type = "Clinical Association",
-      stringsAsFactors = FALSE
-    ) %>%
-      dplyr::mutate(
-        # Derived confidence score
-        confidence_score = (druggability_score + clinical_maturity_score + clinical_evidence_score) / 3,
-        standard_value = confidence_score,
-        
-        # Safety assessment
-        safety_risk = dplyr::case_when(
-          clinical_maturity_score >= 0.8 ~ "Low",
-          clinical_maturity_score >= 0.5 ~ "Medium",
-          TRUE ~ "High"
-        )
-      )
-    
-    return(mock_data)
-  }
   
   combine_chembl_opentargets_data_fixed <- function(chembl_data, opentargets_data) {
     
@@ -76569,120 +75677,6 @@ document.addEventListener("DOMContentLoaded", function() {
   
   ################################SO FAR COMPREHENSIVE
   
-  create_comprehensive_drug_prioritization_fixed <- function(combined_data, selected_genes) {
-    
-    print("=== CREATING COMPREHENSIVE DRUG PRIORITIZATION (FIXED) ===")
-    
-    if (is.null(combined_data) || nrow(combined_data) == 0) {
-      print("No data available for prioritization")
-      return(data.frame(
-        drug_name = character(0),
-        comprehensive_score = numeric(0),
-        n_targets = numeric(0),
-        max_clinical_phase = numeric(0),
-        priority_level = character(0),
-        evidence_summary = character(0)
-      ))
-    }
-    
-    print(paste("Processing", nrow(combined_data), "drug-target interactions"))
-    print(paste("Available columns:", paste(colnames(combined_data), collapse = ", ")))
-    
-    # Handle missing disease_area column
-    if (!"disease_area" %in% colnames(combined_data)) {
-      combined_data$disease_area <- "Unknown"
-      print("Added missing disease_area column")
-    }
-    
-    # Handle missing data_source column
-    if (!"data_source" %in% colnames(combined_data)) {
-      combined_data$data_source <- "Unknown"
-      print("Added missing data_source column")
-    }
-    
-    # Create drug prioritization with error handling
-    tryCatch({
-      drug_scores <- combined_data %>%
-        dplyr::group_by(molecule_name) %>%
-        dplyr::summarise(
-          n_targets = dplyr::n_distinct(gene_name),
-          avg_confidence = mean(confidence_score, na.rm = TRUE),
-          max_clinical_phase = max(clinical_phase, na.rm = TRUE),
-          # Handle disease_areas safely
-          disease_areas = ifelse(
-            all(is.na(disease_area)) | all(disease_area == "Unknown"),
-            "Not specified",
-            paste(unique(disease_area[!is.na(disease_area) & disease_area != "Unknown"]), collapse = "; ")
-          ),
-          # Check for evidence from multiple sources
-          chembl_evidence = any(data_source == "ChEMBL", na.rm = TRUE),
-          opentargets_evidence = any(data_source == "OpenTargets", na.rm = TRUE),
-          .groups = 'drop'
-        ) %>%
-        dplyr::mutate(
-          # Multi-database bonus
-          cross_database_bonus = ifelse(chembl_evidence & opentargets_evidence, 1.5, 1.0),
-          
-          # Component scores
-          target_score = log2(n_targets + 1),
-          clinical_score = pmax(max_clinical_phase, 0) / 4,
-          confidence_score = avg_confidence,
-          
-          # Comprehensive score
-          comprehensive_score = (target_score + clinical_score + confidence_score) * cross_database_bonus,
-          
-          # Evidence summary
-          evidence_summary = dplyr::case_when(
-            chembl_evidence & opentargets_evidence ~ "Cross-validated",
-            chembl_evidence ~ "DGIdb Only",
-            opentargets_evidence ~ "OpenTargets only",
-            TRUE ~ "No evidence"
-          ),
-          
-          # Priority level
-          priority_level = dplyr::case_when(
-            comprehensive_score >= stats::quantile(comprehensive_score, 0.8, na.rm = TRUE) ~ "Very High",
-            comprehensive_score >= stats::quantile(comprehensive_score, 0.6, na.rm = TRUE) ~ "High",
-            comprehensive_score >= stats::quantile(comprehensive_score, 0.4, na.rm = TRUE) ~ "Medium",
-            TRUE ~ "Low"
-          )
-        ) %>%
-        dplyr::select(
-          drug_name = molecule_name,
-          comprehensive_score,
-          n_targets,
-          max_clinical_phase,
-          priority_level,
-          evidence_summary,
-          disease_areas
-        ) %>%
-        dplyr::arrange(desc(comprehensive_score))
-      
-      print(paste("Successfully created prioritization for", nrow(drug_scores), "drugs"))
-      return(drug_scores)
-      
-    }, error = function(e) {
-      print(paste("Error in drug prioritization:", e$message))
-      
-      # Return simple prioritization as fallback
-      simple_priority <- combined_data %>%
-        dplyr::distinct(molecule_name) %>%
-        dplyr::mutate(
-          drug_name = molecule_name,
-          comprehensive_score = stats::runif(nrow(.), 0.1, 1.0),
-          n_targets = 1,
-          max_clinical_phase = 0,
-          priority_level = "Low",
-          evidence_summary = "Basic",
-          disease_areas = "Not specified"
-        ) %>%
-        dplyr::select(-molecule_name) %>%
-        dplyr::arrange(desc(comprehensive_score))
-      
-      print(paste("Created fallback prioritization for", nrow(simple_priority), "drugs"))
-      return(simple_priority)
-    })
-  }
   
   create_empty_comprehensive_results_fixed <- function(selected_genes, analysis_focus, conversion_result) {
     
@@ -77147,68 +76141,6 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   # Enhanced drug-target analysis with three analysis modes (keep as is, add explicit dplyr::)
-  run_enhanced_integrated_analysis <- function(selected_genes, analysis_mode = "comprehensive", organism = "human") {
-    
-    print(paste("Starting integrated analysis in mode:", analysis_mode))
-    print(paste("Analyzing", length(selected_genes$all_genes), "genes"))
-    
-    # Step 1: Gene ID conversion
-    conversion_result <- convert_mixed_gene_ids(selected_genes$all_genes, organism)
-    
-    if (length(conversion_result$symbols) == 0) {
-      stop("No valid gene symbols could be obtained from input genes")
-    }
-    
-    # Initialize results structure
-    integrated_results <- list(
-      analysis_mode = analysis_mode,
-      gene_conversion = conversion_result,
-      chembl_data = NULL,
-      opentargets_data = NULL,
-      integrated_insights = NULL,
-      network_data = NULL,
-      summary_stats = NULL
-    )
-    
-    # Step 2: Query databases based on analysis mode
-    if (analysis_mode %in% c("drug_discovery", "comprehensive")) {
-      print("Querying ChEMBL for drug-target interactions...")
-      # This will now include clinical_phase=0
-      integrated_results$chembl_data <- enhanced_chembl_query_with_filters(conversion_result$symbols)
-    }
-    
-    if (analysis_mode %in% c("disease_context", "comprehensive")) {
-      print("Querying OpenTargets for comprehensive target assessment...")
-      
-      # Get ENSEMBL IDs for OpenTargets
-      ensembl_ids <- conversion_result$ensembl_ids[!is.na(conversion_result$ensembl_ids)] # Corrected to use ensembl_ids
-      # For comprehensive mode, use all converted symbols for mock OpenTargets data
-      # The `enhanced_opentargets_druggability_query` is for real API calls and returns nested list.
-      # The `create_mock_opentargets_data` returns a flat dataframe for consistency.
-      integrated_results$opentargets_data <- create_mock_opentargets_data(conversion_result$symbols, analysis_mode)
-      
-    }
-    
-    # Step 3: Create integrated insights
-    integrated_results$integrated_insights <- create_integrated_insights(
-      integrated_results$chembl_data,
-      integrated_results$opentargets_data, # This will be the flat dataframe
-      selected_genes
-    )
-    
-    # Step 4: Create enhanced network
-    integrated_results$network_data <- create_enhanced_integrated_network(
-      integrated_results$chembl_data,
-      integrated_results$opentargets_data, # This will be the flat dataframe
-      analysis_mode
-    )
-    
-    # Step 5: Generate comprehensive summary
-    integrated_results$summary_stats <- generate_integrated_summary(integrated_results)
-    
-    print("Integrated analysis complete!")
-    return(integrated_results)
-  }
   
   
   # For Drug Discovery:
@@ -77244,99 +76176,6 @@ document.addEventListener("DOMContentLoaded", function() {
   })
   
   # Create integrated insights combining both databases (keep as is, add explicit dplyr::)
-  create_integrated_insights <- function(chembl_data, ot_data, selected_genes) {
-    
-    insights <- list()
-    
-    if (!is.null(chembl_data) && nrow(chembl_data) > 0) {
-      # Drug discovery insights from ChEMBL
-      insights$drug_targets <- chembl_data %>%
-        dplyr::group_by(gene_name) %>% # Explicit dplyr::group_by
-        dplyr::summarise( # Explicit dplyr::summarise
-          drug_count = n_distinct(compound_chembl_id),
-          best_activity = min(standard_value, na.rm = TRUE),
-          activity_types = paste(unique(standard_type), collapse = ", "),
-          druggability_score = dplyr::case_when( # Explicit dplyr::case_when
-            drug_count >= 10 ~ "High",
-            drug_count >= 5 ~ "Medium",
-            drug_count >= 1 ~ "Low",
-            TRUE ~ "None"
-          ),
-          .groups = 'drop'
-        )
-    }
-    
-    # `ot_data` here is the flat dataframe from `create_mock_opentargets_data`
-    if (!is.null(ot_data) && nrow(ot_data) > 0) {
-      
-      # Druggability summary
-      insights$druggability_assessment <- ot_data %>%
-        dplyr::group_by(gene_name) %>%
-        dplyr::summarise(
-          modalities = paste(unique(c("Small molecule", "Antibody")), collapse = ", "), # Mocked
-          assessment = dplyr::case_when( # Base on max clinical phase from mock data
-            max(clinical_phase, na.rm = TRUE) >= 3 ~ "High",
-            max(clinical_phase, na.rm = TRUE) >= 1 ~ "Medium",
-            TRUE ~ "Low"
-          ),
-          .groups = 'drop'
-        )
-      
-      # Clinical drugs (simplified for flat data)
-      insights$clinical_validation <- ot_data %>%
-        dplyr::group_by(gene_name, molecule_name, molecule_id) %>% # Group by drug for unique clinical info
-        dplyr::summarise(
-          clinical_phase = max(clinical_phase, na.rm = TRUE),
-          drug_type = "Small molecule", # Mocked
-          .groups = 'drop'
-        ) %>%
-        dplyr::mutate(
-          clinical_status = dplyr::case_when( # Explicit dplyr::case_when
-            clinical_phase == 4 ~ "Approved",
-            clinical_phase == 3 ~ "Phase III",
-            clinical_phase == 2 ~ "Phase II",
-            clinical_phase == 1 ~ "Phase I",
-            TRUE ~ "Preclinical"
-          )
-        )
-      
-      # Safety profile (simplified for flat data)
-      insights$safety_profiles <- ot_data %>%
-        dplyr::group_by(gene_name) %>%
-        dplyr::summarise(
-          safety_concerns = paste(unique(safety_concerns), collapse = ", "),
-          .groups = 'drop'
-        )
-    }
-    
-    # Cross-database validation
-    if (!is.null(insights$drug_targets) && !is.null(insights$clinical_validation)) {
-      # This requires `clinical_validation` to be a list of dataframes per gene, but now it's a flat one.
-      # Re-implement validate_cross_database_findings for flat data:
-      insights$validation_summary <- ot_data %>%
-        dplyr::select(gene_name, in_opentargets = TRUE) %>%
-        dplyr::distinct() %>%
-        dplyr::full_join(
-          chembl_data %>%
-            dplyr::select(gene_name, in_chembl = TRUE) %>%
-            dplyr::distinct(),
-          by = "gene_name"
-        ) %>%
-        dplyr::mutate(
-          in_opentargets = ifelse(is.na(in_opentargets), FALSE, in_opentargets),
-          in_chembl = ifelse(is.na(in_chembl), FALSE, in_chembl),
-          validation_status = dplyr::case_when(
-            in_chembl & in_opentargets ~ "Cross-validated",
-            in_chembl & !in_opentargets ~ "DGIdb Only",
-            !in_chembl & in_opentargets ~ "OpenTargets only",
-            TRUE ~ "No validation"
-          )
-        ) %>%
-        dplyr::select(gene_name, validation_status)
-    }
-    
-    return(insights)
-  }
   
   # Cross-database validation (REMOVED: Old implementation for nested data. Now handled directly in create_integrated_insights)
   # validate_cross_database_findings <- function(chembl_summary, ot_clinical) { ... }
@@ -78631,7 +77470,8 @@ document.addEventListener("DOMContentLoaded", function() {
     
     DT::datatable(
       priority_data,
-      options = list(pageLength = 15, scrollX = TRUE),
+      extensions = 'Buttons',
+      options = list(pageLength = 15, scrollX = TRUE, dom = 'Bfrtip', buttons = c('csv', 'excel')),
       rownames = FALSE
     ) %>%
       DT::formatStyle(
@@ -78653,99 +77493,10 @@ document.addEventListener("DOMContentLoaded", function() {
         backgroundRepeat = 'no-repeat',
         backgroundPosition = 'center'
       )
-  })
+  }, server = FALSE)
   
-  output$disease_associations_table <- DT::renderDataTable({
-    req(network_rv$current_results) # Changed to network_rv
-    req(network_rv$current_results$analysis_params$analysis_focus == "disease_context") # Changed to network_rv and analysis_params
-    
-    if (!is.null(network_rv$current_results$opentargets_data)) { # Changed to network_rv
-      # Create mock disease associations table (using existing opentargets_data structure)
-      disease_data <- network_rv$current_results$opentargets_data %>% # Changed to network_rv
-        dplyr::mutate( # Explicit dplyr::mutate
-          Disease_Name = sample(c("Alzheimer's Disease", "Type 2 Diabetes", "Breast Cancer",
-                                  "Cardiovascular Disease", "Depression", "Rheumatoid Arthritis"),
-                                n(), replace = TRUE),
-          Evidence_Score = stats::runif(n(), 0.3, 0.95), # Explicit stats::runif
-          Therapeutic_Area = sample(c("Oncology", "Neurology", "Metabolic", "Immunology"),
-                                    n(), replace = TRUE)
-        ) %>%
-        dplyr::select( # Explicit dplyr::select
-          Gene = gene_name,
-          Disease = Disease_Name,
-          "Evidence Score" = Evidence_Score,
-          "Therapeutic Area" = Therapeutic_Area,
-          "Safety Level" = safety_concerns
-        ) %>%
-        dplyr::arrange(desc(`Evidence Score`)) # Explicit dplyr::arrange
-      
-      DT::datatable(
-        disease_data,
-        options = list(pageLength = 15, dom = 'frtip'),
-        rownames = FALSE
-      ) %>%
-        DT::formatRound(columns = c("Evidence Score"), digits = 3) %>%
-        DT::formatStyle(
-          'Evidence Score',
-          backgroundColor = DT::styleInterval(
-            c(0.5, 0.7, 0.85),
-            c('#ffffff', '#fff3cd', '#d4edda', '#28a745')
-          )
-        )
-    } else {
-      DT::datatable(data.frame(Message = "No disease association data available"))
-    }
-  })
   
   # ACTIVITY ANALYSIS OUTPUTS (Drug Discovery Mode)
-  output$target_druggability_table <- DT::renderDataTable({
-    req(network_rv$current_results) # Changed to network_rv
-    req(network_rv$current_results$analysis_params$analysis_focus == "drug_discovery") # Changed to network_rv and analysis_params
-    
-    if (!is.null(network_rv$current_results$chembl_data)) { # Changed to network_rv
-      druggability_data <- network_rv$current_results$chembl_data %>% # Changed to network_rv
-        dplyr::group_by(gene_name) %>% # Explicit dplyr::group_by
-        dplyr::summarise( # Explicit dplyr::summarise
-          Total_Compounds = n_distinct(compound_chembl_id),
-          Active_Compounds = sum(standard_value <= 1000, na.rm = TRUE),
-          Druggability_Score = Active_Compounds / Total_Compounds,
-          Target_Class = sample(c("Enzyme", "GPCR", "Ion Channel", "Transporter"), 1), # Mocked once per gene
-          .groups = 'drop'
-        ) %>%
-        dplyr::mutate( # Explicit dplyr::mutate
-          Druggability_Level = dplyr::case_when( # Explicit dplyr::case_when
-            Druggability_Score >= 0.6 ~ "High",
-            Druggability_Score >= 0.3 ~ "Medium",
-            TRUE ~ "Low"
-          )
-        ) %>%
-        dplyr::arrange(desc(Druggability_Score)) %>% # Explicit dplyr::arrange
-        dplyr::select( # Explicit dplyr::select
-          Gene = gene_name,
-          "Target Class" = Target_Class,
-          "Total Compounds" = Total_Compounds,
-          "Active Compounds" = Active_Compounds,
-          "Druggability Score" = Druggability_Score,
-          "Level" = Druggability_Level
-        )
-      
-      DT::datatable(
-        druggability_data,
-        options = list(pageLength = 8, dom = 't'),
-        rownames = FALSE
-      ) %>%
-        DT::formatRound(columns = c("Druggability Score"), digits = 3) %>%
-        DT::formatStyle(
-          'Level',
-          backgroundColor = DT::styleEqual(
-            c("High", "Medium", "Low"),
-            c('#d4edda', '#fff3cd', '#f8d7da')
-          )
-        )
-    } else {
-      DT::datatable(data.frame(Message = "No druggability data available"))
-    }
-  })
   
   
   # CROSS-DATABASE VALIDATION OUTPUTS (Comprehensive Mode)
@@ -78815,65 +77566,6 @@ document.addEventListener("DOMContentLoaded", function() {
     ggplotly(p, height = 350)
   })
   
-  output$validation_agreement_table <- DT::renderDataTable({
-    req(network_rv$current_results) # Changed to network_rv
-    req(network_rv$current_results$analysis_params$analysis_focus == "comprehensive") # Changed to network_rv and analysis_params
-    
-    chembl_genes <- unique(network_rv$current_results$chembl_data$gene_name) # Changed to network_rv
-    opentargets_genes <- unique(network_rv$current_results$opentargets_data$gene_name) # Changed to network_rv
-    all_genes_with_data <- unique(c(chembl_genes, opentargets_genes))
-    
-    if (length(all_genes_with_data) == 0) {
-      return(DT::datatable(data.frame(Message = "No validation data available for comprehensive analysis")))
-    }
-    
-    validation_data <- data.frame(
-      Gene = all_genes_with_data,
-      ChEMBL = ifelse(all_genes_with_data %in% chembl_genes, "✓", "[FAIL]"),
-      OpenTargets = ifelse(all_genes_with_data %in% opentargets_genes, "✓", "[FAIL]"),
-      stringsAsFactors = FALSE
-    ) %>%
-      dplyr::mutate( # Explicit dplyr::mutate
-        Status = dplyr::case_when( # Explicit dplyr::case_when
-          ChEMBL == "✓" & OpenTargets == "✓" ~ "Cross-validated",
-          ChEMBL == "✓" & OpenTargets == "[FAIL]" ~ "DGIdb Only",
-          ChEMBL == "[FAIL]" & OpenTargets == "✓" ~ "OpenTargets only",
-          TRUE ~ "No data"
-        ),
-        Confidence = round(stats::runif(n(), 0.4, 0.95), 2) # Mock confidence
-      ) %>%
-      dplyr::arrange(Gene) # Explicit dplyr::arrange
-    
-    DT::datatable(
-      validation_data,
-      options = list(
-        pageLength = 6,
-        dom = 't',
-        scrollX = TRUE,
-        columnDefs = list(
-          list(width = '80px', targets = 1:2),  # Narrow ChEMBL/OpenTargets columns
-          list(width = '120px', targets = 3),   # Status column
-          list(width = '80px', targets = 4)     # Confidence column
-        )
-      ),
-      rownames = FALSE
-    ) %>%
-      DT::formatStyle(
-        'Status',
-        backgroundColor = DT::styleEqual(
-          c("Cross-validated", "DGIdb Only", "OpenTargets only", "No data"),
-          c('#d4edda', '#cce5ff', '#fff3cd', '#f8d7da')
-        )
-      ) %>%
-      DT::formatStyle(
-        'ChEMBL',
-        color = DT::styleEqual(c("✓", "[FAIL]"), c('#28a745', '#dc3545'))
-      ) %>%
-      DT::formatStyle(
-        'OpenTargets',
-        color = DT::styleEqual(c("✓", "[FAIL]"), c('#28a745', '#dc3545'))
-      )
-  })
   
   # ChEMBL Interactions Enhanced Table (keep as is, add explicit dplyr::)
   output$chembl_interactions_enhanced <- DT::renderDataTable({
@@ -79113,154 +77805,7 @@ document.addEventListener("DOMContentLoaded", function() {
   
   
   # Druggability Table
-  output$druggability_table <- DT::renderDataTable({
-    req(network_rv$current_results) # Changed to network_rv
-    
-    # Create meaningful druggability data based on analysis mode
-    if (network_rv$current_results$analysis_params$analysis_focus %in% c("disease_context", "comprehensive")) { # Changed to network_rv and analysis_params
-      
-      if (!is.null(network_rv$current_results$opentargets_data) &&
-          nrow(network_rv$current_results$opentargets_data) > 0) { # Changed to network_rv
-        
-        druggability_data <- network_rv$current_results$opentargets_data %>% # Changed to network_rv
-          dplyr::group_by(gene_name) %>% # Group by gene to summarise across its drugs
-          dplyr::summarise( # Explicit dplyr::summarise
-            # Use first for properties that should be consistent per gene, max for numerical
-            Max_Clinical_Phase = max(clinical_phase, na.rm = TRUE),
-            Avg_Confidence_Score = mean(confidence_score, na.rm = TRUE),
-            Safety_Concerns_Level = dplyr::case_when( # Derive a single safety level if multiple
-              any(safety_concerns == "High") ~ "High",
-              any(safety_concerns == "Medium") ~ "Medium",
-              TRUE ~ "Low"
-            ),
-            Modality = paste(unique(c("Small molecule", "Antibody")), collapse = ", "), # Mock modalities
-            .groups = 'drop'
-          ) %>%
-          dplyr::mutate( # Explicit dplyr::mutate
-            Assessment = dplyr::case_when( # Explicit dplyr::case_when
-              Max_Clinical_Phase >= 3 & Avg_Confidence_Score >= 0.7 ~ "High",
-              Max_Clinical_Phase >= 1 & Avg_Confidence_Score >= 0.5 ~ "Medium",
-              TRUE ~ "Low"
-            ),
-            Druggability_Score = (Max_Clinical_Phase / 4 + Avg_Confidence_Score) / 2 # A simple score
-          ) %>%
-          dplyr::select( # Explicit dplyr::select
-            Gene = gene_name,
-            Modality,
-            Assessment,
-            "Druggability Score" = Druggability_Score,
-            "Max Clinical Phase" = Max_Clinical_Phase,
-            "Safety Concerns" = Safety_Concerns_Level
-          ) %>%
-          dplyr::arrange(desc(`Druggability Score`)) # Explicit dplyr::arrange
-        
-      } else {
-        return(DT::datatable(data.frame(Message = "No OpenTargets-derived druggability data available")))
-      }
-    } else if (network_rv$current_results$analysis_params$analysis_focus == "drug_discovery") { # Changed to network_rv and analysis_params
-      # Drug Discovery mode: Based on ChEMBL data (already handled by target_druggability_table)
-      # This `druggability_table` is specifically intended for OpenTargets data in UI.
-      return(DT::datatable(data.frame(Message = "Druggability table for Drug Discovery focus is in 'Activity Analysis' tab.")))
-    } else {
-      # Fallback for other modes
-      selected_genes_sample <- head(network_rv$selected_genes$all_genes, 5)
-      druggability_data <- data.frame(
-        Gene = selected_genes_sample,
-        Modality = sample(c("Small molecule", "Antibody", "Other"), length(selected_genes_sample), replace = TRUE),
-        Assessment = sample(c("High", "Medium", "Low"), length(selected_genes_sample), replace = TRUE),
-        "Druggability Score" = stats::runif(length(selected_genes_sample), 0.3, 0.9), # Explicit stats::runif
-        stringsAsFactors = FALSE
-      )
-    }
-    
-    if (nrow(druggability_data) == 0) {
-      return(DT::datatable(data.frame(Message = "No druggability data available")))
-    }
-    
-    DT::datatable(
-      druggability_data,
-      options = list(
-        pageLength = 10,
-        dom = 'frtip',
-        scrollY = "300px"
-      ),
-      rownames = FALSE
-    ) %>%
-      DT::formatStyle(
-        'Assessment',
-        backgroundColor = DT::styleEqual(
-          c("High", "Medium", "Low"),
-          c('#d4edda', '#fff3cd', '#f8d7da')
-        )
-      ) %>%
-      DT::formatRound(columns = c("Druggability Score"), digits = 3)
-  })
   
-  output$safety_profile_table <- DT::renderDataTable({
-    req(network_rv$current_results) # Changed to network_rv
-    
-    if (network_rv$current_results$analysis_params$analysis_focus %in% c("disease_context", "comprehensive")) { # Changed to network_rv and analysis_params
-      
-      # Directly use the opentargets_data and derive safety info
-      if (!is.null(network_rv$current_results$opentargets_data) &&
-          nrow(network_rv$current_results$opentargets_data) > 0) { # Changed to network_rv
-        
-        safety_data <- network_rv$current_results$opentargets_data %>% # Changed to network_rv
-          dplyr::select(
-            Gene = gene_name,
-            # Use the mock safety_concerns from opentargets_data
-            Risk_Level = safety_concerns
-          ) %>%
-          dplyr::mutate(
-            Event = sample(c("Hepatotoxicity", "Cardiotoxicity", "CNS effects", "Immunogenicity"), n(), replace = TRUE),
-            Description = "Generic safety concern (mocked)",
-            Evidence_Source = sample(c("Clinical trials", "Preclinical", "Literature"), n(), replace = TRUE)
-          ) %>%
-          dplyr::distinct(Gene, Event, .keep_all = TRUE) %>% # Avoid duplicate events per gene
-          dplyr::arrange(Gene, desc(Risk_Level)) # Arrange for better view
-        
-      } else {
-        return(DT::datatable(data.frame(Message = "No OpenTargets-derived safety data available")))
-      }
-    } else {
-      # Fallback for other modes
-      safety_genes <- head(network_rv$selected_genes$all_genes, 4)
-      # Changed to network_rv
-      safety_data <- data.frame(
-        Gene = safety_genes,
-        Event = sample(c("Hepatotoxicity", "Cardiotoxicity", "CNS effects", "Immunogenicity"), length(safety_genes)),
-        Description = c(
-          "Potential liver toxicity observed in preclinical studies",
-          "QT prolongation risk identified",
-          "Central nervous system effects reported",
-          "Immune response activation potential"
-        ),
-        Risk_Level = sample(c("Low", "Medium", "High"), length(safety_genes), replace = TRUE),
-        Evidence_Source = sample(c("Clinical trials", "Preclinical", "Literature"), length(safety_genes), replace = TRUE),
-        stringsAsFactors = FALSE
-      )
-    }
-    
-    if (nrow(safety_data) == 0) {
-      return(DT::datatable(data.frame(Message = "No safety data available")))
-    }
-    
-    DT::datatable(
-      safety_data,
-      options = list(
-        pageLength = 10,
-        dom = 'frtip'
-      ),
-      rownames = FALSE
-    ) %>%
-      DT::formatStyle(
-        'Risk_Level',
-        backgroundColor = DT::styleEqual(
-          c("High", "Medium", "Low"),
-          c('#f8d7da', '#fff3cd', '#d4edda')
-        )
-      )
-  })
   
   
   # Validation Status Plot (keep as is, ensure data extraction works)
@@ -79653,45 +78198,6 @@ document.addEventListener("DOMContentLoaded", function() {
     }
   }
   
-  extract_safety_profile_data <- function(ot_data) {
-    if (is.null(ot_data) || length(ot_data) == 0) return(NULL)
-    
-    safety_list <- list()
-    
-    # This function expects the nested list format for `ot_data`
-    if (is.data.frame(ot_data)) { # If it's the flat dataframe
-      safety_summary <- ot_data %>%
-        dplyr::group_by(gene_name) %>%
-        dplyr::summarise(
-          Event = paste(unique(c("Hepatotoxicity", "Cardiotoxicity", "CNS effects")), collapse = ", "), # Mocked events
-          Description = "Aggregated safety concerns.",
-          Risk_Level = dplyr::case_when( # Derive single risk level per gene
-            any(safety_concerns == "High") ~ "High",
-            any(safety_concerns == "Medium") ~ "Medium",
-            TRUE ~ "Low"
-          ),
-          .groups = 'drop'
-        ) %>%
-        dplyr::select(Gene = gene_name, Event, Description, Risk_Level)
-      return(safety_summary)
-    } else { # Original logic for nested list
-      for (gene_data in ot_data) {
-        gene_symbol <- gene_data$gene_info$symbol
-        if (!is.null(gene_data$safety_profile)) {
-          safety_concerns <- gene_data$safety_profile %>%
-            dplyr::mutate(
-              Gene = gene_symbol,
-              Risk_Level = sample(c("High", "Medium", "Low"), nrow(gene_data$safety_profile), replace = TRUE)
-            ) %>%
-            dplyr::select(Gene, Event = event, Description = description, Risk_Level)
-          
-          safety_list[[gene_symbol]] <- safety_concerns
-        }
-      }
-      if (length(safety_list) == 0) return(NULL)
-      return(do.call(rbind, safety_list))
-    }
-  }
   
   extract_validation_summary <- function(results) {
     # This function now works with the updated `integrated_insights$validation_summary` which is a dataframe.
@@ -82901,57 +81407,6 @@ document.addEventListener("DOMContentLoaded", function() {
   )
   
   # Clinical Intelligence Excel Download
-  output$download_clinical_data <- downloadHandler(
-    filename = function() {
-      paste0("clinical_intelligence_", Sys.Date(), ".xlsx")
-    },
-    content = function(file) {
-      load_export_packages()
-      req(network_rv$current_results) # Changed to network_rv
-      req(network_rv$current_results$opentargets_data) # Changed to network_rv
-      
-      wb <- openxlsx::createWorkbook()
-      hs <- openxlsx::createStyle(fgFill = "#4F81BD", halign = "center", textDecoration = "bold", fontColour = "white")
-      
-      # Clinical drugs sheet (using the flat opentargets_data)
-      clinical_drugs_combined <- network_rv$current_results$opentargets_data %>% # Changed to network_rv
-        dplyr::select(
-          Gene = gene_name,
-          Drug_Name = molecule_name,
-          Drug_ID = molecule_id,
-          Max_Clinical_Phase = clinical_phase,
-          Drug_Type = standard_type, # Using standard_type as a proxy for drug_type
-          Confidence = confidence_score,
-          Source = database_source
-        )
-      if (nrow(clinical_drugs_combined) > 0) {
-        openxlsx::addWorksheet(wb, "Clinical Drugs")
-        openxlsx::writeData(wb, "Clinical Drugs", clinical_drugs_combined)
-        openxlsx::addStyle(wb, "Clinical Drugs", hs, rows = 1, cols = 1:ncol(clinical_drugs_combined))
-        openxlsx::setColWidths(wb, "Clinical Drugs", cols = 1:ncol(clinical_drugs_combined), widths = "auto")
-      }
-      
-      # Druggability assessment sheet
-      druggability_data <- extract_druggability_data(network_rv$current_results$opentargets_data) # Changed to network_rv
-      if (!is.null(druggability_data) && nrow(druggability_data) > 0) {
-        openxlsx::addWorksheet(wb, "Druggability Assessment")
-        openxlsx::writeData(wb, "Druggability Assessment", druggability_data)
-        openxlsx::addStyle(wb, "Druggability Assessment", hs, rows = 1, cols = 1:ncol(druggability_data))
-        openxlsx::setColWidths(wb, "Druggability Assessment", cols = 1:ncol(druggability_data), widths = "auto")
-      }
-      
-      # Safety profile sheet
-      safety_data <- extract_safety_profile_data(network_rv$current_results$opentargets_data) # Changed to network_rv
-      if (!is.null(safety_data) && nrow(safety_data) > 0) {
-        openxlsx::addWorksheet(wb, "Safety Profile")
-        openxlsx::writeData(wb, "Safety Profile", safety_data)
-        openxlsx::addStyle(wb, "Safety Profile", hs, rows = 1, cols = 1:ncol(safety_data))
-        openxlsx::setColWidths(wb, "Safety Profile", cols = 1:ncol(safety_data), widths = "auto")
-      }
-      
-      openxlsx::saveWorkbook(wb, file, overwrite = TRUE)
-    }
-  )
   
   # Executive Report Download (PDF)
   output$download_executive_report <- downloadHandler(
@@ -82987,31 +81442,6 @@ document.addEventListener("DOMContentLoaded", function() {
   )
   
   # Technical Report Download (PDF)
-  output$download_technical_report <- downloadHandler(
-    filename = function() {
-      paste0("technical_report_", Sys.Date(), ".pdf")
-    },
-    content = function(file) {
-      load_export_packages()
-      req(network_rv$current_results) # Changed to network_rv
-      
-      # Create temporary R Markdown file
-      temp_rmd <- tempfile(fileext = ".Rmd")
-      
-      # Generate technical report content
-      report_content <- generate_technical_report_content(network_rv$current_results) # Changed to network_rv
-      
-      writeLines(report_content, temp_rmd)
-      
-      # Render to PDF
-      rmarkdown::render(
-        temp_rmd,
-        output_format = "pdf_document",
-        output_file = file,
-        quiet = TRUE
-      )
-    }
-  )
   
   # Network Data Download
   output$download_network_data <- downloadHandler(
@@ -83106,57 +81536,6 @@ document.addEventListener("DOMContentLoaded", function() {
     )
   }
   
-  generate_technical_report_content <- function(results) {
-    # Ensured to use `results$summary` consistently
-    paste0(
-      "---\n",
-      "title: 'Enhanced Drug-Target Analysis: Technical Report'\n",
-      "date: '", Sys.Date(), "'\n",
-      "output: pdf_document\n",
-      "---\n\n",
-      
-      "# Technical Analysis Report\n\n",
-      
-      "## Analysis Overview\n\n",
-      
-      "**Analysis Mode**: ", results$analysis_params$analysis_focus, "\n",
-      "**Input Genes**: ", results$analysis_params$n_input_genes, "\n",
-      "**Conversion Success Rate**: ", round(results$conversion_stats$conversion_rate * 100, 1), "%\n\n", # Use correct conversion stats
-      
-      "## Data Sources and Methods\n\n",
-      
-      "### ChEMBL Database Integration\n",
-      "- Query method: REST API v29\n",
-      "- Activity filters: IC50, Ki, Kd values\n",
-      "- Confidence score: >0.5 (configurable)\n", # Use a more generic description, not fixed 7
-      "- Total interactions retrieved: ", results$summary$chembl$total_interactions %||% 0, "\n\n",
-      
-      "### OpenTargets Platform Integration\n",
-      "- Query method: Mock data (for demonstration)\n", # Changed as it uses mock data
-      "- Data types: Clinical drugs, druggability, safety\n",
-      "- Evidence threshold: >0.5 (configurable)\n", # Use a more generic description
-      "- Targets processed: ", results$summary$opentargets$targets_with_data %||% 0, "\n\n",
-      
-      "## Network Analysis\n\n",
-      "**Network Statistics**:\n",
-      "- Nodes: ", results$summary$network$total_nodes %||% 0, "\n",
-      "- Edges: ", results$summary$network$total_edges %||% 0, "\n",
-      "- Density: ", round((results$summary$network$network_density %||% 0) * 100, 2), "%\n\n", # Corrected network density access
-      
-      "## Quality Control\n\n",
-      "- Gene ID conversion validated using HGNC symbols\n",
-      "- Cross-database entity matching performed\n",
-      "- Activity values log-transformed for analysis (if applicable)\n", # Conditional
-      "- Clinical phase taken from OpenTargets clinical stage data (exact stage match)\n\n",
-
-      "## Statistical Methods\n\n",
-      "- Priority scoring: number of DEG targets, DGIdb interaction confidence, highest clinical phase, publication/source counts and DGIdb-OpenTargets agreement (no bioactivity values)\n",
-      "- Clinical maturity: tiers of the highest clinical phase (not a safety assessment)\n\n",
-      
-      "---\n",
-      "*Technical report generated on ", Sys.Date(), "*"
-    )
-  }
   
   # ============================================================================
   # DRUG-TARGET ANALYSIS FUNCTIONS
@@ -83228,70 +81607,8 @@ document.addEventListener("DOMContentLoaded", function() {
     }
   }
   
-  create_ultra_simple_network <- function(drug_data, selected_genes) {
-    print("=== ULTRA SIMPLE NETWORK CREATION ===")
-    
-    if (nrow(drug_data) == 0) {
-      print("No data, returning empty")
-      return(list(
-        nodes = data.frame(id = character(0), label = character(0), stringsAsFactors = FALSE),
-        edges = data.frame(from = character(0), to = character(0), stringsAsFactors = FALSE)
-      ))
-    }
-    
-    print("Creating basic nodes...")
-    
-    # Ultra simple nodes - just IDs and labels
-    genes <- unique(drug_data$gene_name)[1:min(5, length(unique(drug_data$gene_name)))]  # Limit to 5
-    drugs <- unique(drug_data$molecule_name)[1:min(5, length(unique(drug_data$molecule_name)))]  # Limit to 5
-    
-    nodes <- data.frame(
-      id = c(genes, drugs),
-      label = c(genes, drugs),
-      stringsAsFactors = FALSE
-    )
-    
-    print("Creating basic edges...")
-    
-    # Ultra simple edges - just connections
-    sample_edges <- drug_data[1:min(5, nrow(drug_data)), ]  # Limit to 5 edges
-    edges <- data.frame(
-      from = sample_edges$molecule_name,
-      to = sample_edges$gene_name,
-      stringsAsFactors = FALSE
-    )
-    
-    print(paste("Created network with", nrow(nodes), "nodes and", nrow(edges), "edges"))
-    return(list(nodes = nodes, edges = edges))
-  }
   
   # 2. ULTRA SIMPLE PRIORITIZATION FUNCTION (No complex operations)
-  create_ultra_simple_prioritization <- function(drug_data, analysis_focus) {
-    print("=== ULTRA SIMPLE PRIORITIZATION ===")
-    
-    if (nrow(drug_data) == 0) {
-      print("No data, returning empty prioritization")
-      return(data.frame(
-        drug_name = character(0),
-        n_targets = integer(0),
-        priority_score = numeric(0),
-        stringsAsFactors = FALSE
-      ))
-    }
-    
-    print("Creating basic prioritization...")
-    
-    # Just count drugs - no complex operations
-    simple_priority <- data.frame(
-      drug_name = unique(drug_data$molecule_name)[1:min(3, length(unique(drug_data$molecule_name)))],
-      n_targets = c(1, 2, 1),  # Fixed values
-      priority_score = c(0.8, 0.9, 0.7),  # Fixed values
-      stringsAsFactors = FALSE
-    )
-    
-    print(paste("Created", nrow(simple_priority), "priority entries"))
-    return(simple_priority)
-  }
   
   create_comprehensive_summary_complete_fixed <- function(drug_data, network_data, analysis_focus) {
     
@@ -83663,78 +81980,6 @@ document.addEventListener("DOMContentLoaded", function() {
     return(TRUE)
   }
   
-  prepare_wgcna_gene_selection <- function(expression_data, selected_genes) {
-    print("🔍 Preparing gene selection for WGCNA...")
-    
-    # Get the actual gene names from expression data
-    expr_genes <- rownames(expression_data)
-    print(paste("Expression data has", length(expr_genes), "genes"))
-    print(paste("Sample expression rownames:", paste(head(expr_genes, 5), collapse = ", ")))
-    
-    # Check if selected genes match expression data genes
-    matching_genes <- intersect(selected_genes$all_genes, expr_genes)
-    print(paste("Selected genes that match expression data:", length(matching_genes)))
-    print(paste("Sample selected genes:", paste(head(selected_genes$all_genes, 5), collapse = ", ")))
-    
-    if (length(matching_genes) == 0) {
-      print("⚠️ No selected genes match expression data rownames!")
-      print("This suggests a gene ID format mismatch.")
-      
-      # Try to extract ENSEMBL IDs from expression data if they have suffixes
-      if (any(grepl("ENSG", expr_genes))) {
-        print("🔧 Attempting to fix ENSEMBL ID format mismatch...")
-        
-        # Clean expression gene names (remove suffixes like "_red vs green")
-        clean_expr_genes <- sub("_.*$", "", expr_genes)
-        clean_expr_genes <- sub("\\..*$", "", clean_expr_genes)  # Remove version numbers
-        
-        # Update rownames temporarily for matching
-        names(clean_expr_genes) <- expr_genes
-        
-        # Try matching with cleaned names
-        matching_clean <- intersect(selected_genes$all_genes, clean_expr_genes)
-        
-        if (length(matching_clean) > 0) {
-          print(paste("✅ Found", length(matching_clean), "matches after cleaning gene IDs"))
-          
-          # Return selected genes that actually exist in the data
-          valid_up <- intersect(selected_genes$up_genes, clean_expr_genes)
-          valid_down <- intersect(selected_genes$down_genes, clean_expr_genes)
-          valid_all <- c(valid_up, valid_down)
-          
-          return(list(
-            up_genes = valid_up,
-            down_genes = valid_down,
-            all_genes = valid_all
-          ))
-        }
-      }
-      
-      # If still no matches, return first N genes from expression data
-      print("⚠️ Using first genes from expression data as fallback...")
-      n_genes <- min(20, length(expr_genes))
-      fallback_genes <- expr_genes[1:n_genes]
-      
-      return(list(
-        up_genes = fallback_genes[1:(n_genes/2)],
-        down_genes = fallback_genes[(n_genes/2 + 1):n_genes],
-        all_genes = fallback_genes
-      ))
-    }
-    
-    # If we have matches, filter selected genes to only include matching ones
-    valid_up <- intersect(selected_genes$up_genes, expr_genes)
-    valid_down <- intersect(selected_genes$down_genes, expr_genes)
-    valid_all <- intersect(selected_genes$all_genes, expr_genes)
-    
-    print(paste("✅ Using", length(valid_all), "valid genes for WGCNA"))
-    
-    return(list(
-      up_genes = valid_up,
-      down_genes = valid_down,
-      all_genes = valid_all
-    ))
-  }
   
   
   # HELPER FUNCTIONS FOR PPI ANALYSIS
@@ -84033,8 +82278,9 @@ document.addEventListener("DOMContentLoaded", function() {
       
       # Calculate metrics safely
       density_val <- graph.density(network_graph)
-      diameter_val <- ifelse(is_connected(network_graph), diameter(network_graph), NA)
-      avg_path_length <- mean_distance(network_graph, directed = FALSE)
+      # longest / mean shortest path within connected parts (the network is rarely fully connected)
+      diameter_val <- if (n_nodes > 1) diameter(network_graph, directed = FALSE, unconnected = TRUE) else NA
+      avg_path_length <- mean_distance(network_graph, directed = FALSE, unconnected = TRUE)
       clustering_coef <- transitivity(network_graph, type = "global")
       avg_degree <- mean(degree(network_graph))
       
@@ -84725,21 +82971,12 @@ document.addEventListener("DOMContentLoaded", function() {
       avg_degree <- if (n_nodes > 0) mean(igraph::degree(network_graph, mode = "all")) else 0
       
       # More robust path calculations
-      diameter <- tryCatch({
-        if (n_nodes > 1 && is_connected(network_graph)) {
-          diameter(network_graph, directed = FALSE)
-        } else {
-          0
-        }
-      }, error = function(e) 0)
-      
-      avg_path_length <- tryCatch({
-        if (n_nodes > 1 && is_connected(network_graph)) {
-          mean_distance(network_graph, directed = FALSE)
-        } else {
-          0
-        }
-      }, error = function(e) 0)
+      # longest / mean shortest path within connected parts (the network is rarely fully connected)
+      diameter <- tryCatch(if (n_nodes > 1) diameter(network_graph, directed = FALSE, unconnected = TRUE) else NA,
+                           error = function(e) NA)
+      avg_path_length <- tryCatch(if (n_nodes > 1) mean_distance(network_graph, directed = FALSE, unconnected = TRUE) else NA,
+                                  error = function(e) NA)
+      comps <- igraph::components(network_graph)
       
       return(list(
         n_nodes = n_nodes,
@@ -84748,19 +82985,21 @@ document.addEventListener("DOMContentLoaded", function() {
         clustering_coefficient = clustering_coeff,
         avg_degree = avg_degree,
         diameter = diameter,
-        avg_path_length = avg_path_length
+        avg_path_length = avg_path_length,
+        n_components = comps$no,
+        largest_component_size = max(comps$csize)
       ))
-      
+
     }, error = function(e) {
       print(paste("Error calculating global metrics:", e$message))
       return(list(
         n_nodes = 0,
         n_edges = 0,
-        density = 0,
-        clustering_coefficient = 0,
-        avg_degree = 0,
-        diameter = 0,
-        avg_path_length = 0
+        density = NA,
+        clustering_coefficient = NA,
+        avg_degree = NA,
+        diameter = NA,
+        avg_path_length = NA
       ))
     })
   }
@@ -88096,7 +86335,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                        showNotification(
                                          HTML(paste0(
                                            "<strong>✅ Deconvolution Complete!</strong><br>",
-                                           "• ", deconv_results$summary_stats$deconv$total_cell_types, " cell types identified<br>",
+                                           "• Scores for ", deconv_results$summary_stats$deconv$total_cell_types, " cell types<br>",
                                            "• Method: ", deconv_results$summary_stats$deconv$method %||% "", "",
                                            if (!is.null(deconv_results$group_comparison_note)) paste0("<br>• ", deconv_results$group_comparison_note) else ""
                                          )),
@@ -88118,8 +86357,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                    },
                                    # Default fallback
                                    {
-                                     print("Using debug analysis for unknown type")
-                                     debug_drug_target_analysis(network_rv$selected_genes, analysis_focus)
+                                     stop(paste("Unknown analysis type:", input$network_analysis_type_systems))
                                    }
         )
         
@@ -88505,6 +86743,8 @@ document.addEventListener("DOMContentLoaded", function() {
     # --- FIX END ---
     
     div(
+      div(style = "text-align: right; margin-bottom: 10px;",
+          downloadButton("download_grn_results", "Download results (Excel)", class = "btn-primary btn-sm")),
       # Results Header
       # div(class = "results-header",
       #     fluidRow(
@@ -93084,7 +91324,11 @@ document.addEventListener("DOMContentLoaded", function() {
     topology_stats <- list(
       density = network_metrics$global_metrics$density,
       avg_degree = network_metrics$global_metrics$avg_degree,
-      clustering_coefficient = network_metrics$global_metrics$clustering_coefficient
+      clustering_coefficient = network_metrics$global_metrics$clustering_coefficient,
+      diameter = network_metrics$global_metrics$diameter,
+      avg_path_length = network_metrics$global_metrics$avg_path_length,
+      n_components = network_metrics$global_metrics$n_components,
+      largest_component_size = network_metrics$global_metrics$largest_component_size
     )
     
     return(list(
@@ -94111,10 +92355,11 @@ document.addEventListener("DOMContentLoaded", function() {
 
       DT::datatable(
         safety_table,
+        extensions = 'Buttons',
         options = list(
           pageLength = 15,
           scrollX = TRUE,
-          dom = 'frtip',
+          dom = 'Bfrtip', buttons = c('csv', 'excel'),
           columnDefs = list(
             list(width = '120px', targets = c(0)),  # Drug
             list(width = '100px', targets = c(1)),  # Clinical Phase
@@ -94141,7 +92386,7 @@ document.addEventListener("DOMContentLoaded", function() {
         options = list(dom = 't'), rownames = FALSE
       ))
     })
-  })
+  }, server = FALSE)
   
   output$safety_overview_plot <- renderPlotly({
     req(network_rv$current_results)
@@ -94421,10 +92666,11 @@ document.addEventListener("DOMContentLoaded", function() {
       
       DT::datatable(
         clinical_table,
+        extensions = 'Buttons',
         options = list(
           pageLength = 15,
           scrollX = TRUE,
-          dom = 'frtip'
+          dom = 'Bfrtip', buttons = c('csv', 'excel')
         ),
         rownames = FALSE
       ) %>%
@@ -94454,7 +92700,7 @@ document.addEventListener("DOMContentLoaded", function() {
         options = list(dom = 't'), rownames = FALSE
       ))
     })
-  })
+  }, server = FALSE)
   
   create_analysis_parameters_summary <- function(results) {
     
@@ -97486,38 +95732,6 @@ document.addEventListener("DOMContentLoaded", function() {
     ))
   }
   
-  prepare_wgcna_gene_selection <- function(expression_data, selected_genes) {
-    print("🔍 Preparing gene selection for WGCNA...")
-    
-    # Get the actual gene names from expression data
-    expr_genes <- rownames(expression_data)
-    print(paste("Expression data has", length(expr_genes), "genes"))
-    
-    # Check if selected genes match expression data genes
-    matching_genes <- intersect(selected_genes$all_genes, expr_genes)
-    print(paste("Selected genes that match expression data:", length(matching_genes)))
-    
-    if (length(matching_genes) == 0) {
-      print("⚠️ No selected genes match expression data rownames!")
-      print("Sample expression genes:", paste(head(expr_genes, 5), collapse = ", "))
-      print("Sample selected genes:", paste(head(selected_genes$all_genes, 5), collapse = ", "))
-      
-      # Use the selected gene indices instead if available
-      if (!is.null(selected_genes$up_indices) && !is.null(selected_genes$down_indices)) {
-        up_genes <- expr_genes[selected_genes$up_indices]
-        down_genes <- expr_genes[selected_genes$down_indices]
-        all_genes <- c(up_genes, down_genes)
-        
-        return(list(
-          up_genes = up_genes,
-          down_genes = down_genes,
-          all_genes = all_genes
-        ))
-      }
-    }
-    
-    return(selected_genes)
-  }
   
   
   
@@ -100273,52 +98487,29 @@ document.addEventListener("DOMContentLoaded", function() {
     if (!is.null(network_rv$current_results$deconv_data$marker_genes)) {
       # Filter to show only genes with meaningful cell type associations
       marker_table <- network_rv$current_results$deconv_data$marker_genes %>%
-        dplyr::filter(specificity_score >= 0.5) %>%  # Only show genes with moderate-to-high specificity
-        dplyr::mutate(
-          Specificity_Level = dplyr::case_when(
-            specificity_score >= 0.8 ~ "High",
-            specificity_score >= 0.6 ~ "Medium",
-            TRUE ~ "Low"
-          ),
-          log2FC_rounded = round(log2FoldChange, 2)
-        ) %>%
-        dplyr::arrange(desc(specificity_score)) %>%
-        dplyr::select(
+        dplyr::filter(adj_p < 0.05, spearman_rho > 0) %>%
+        dplyr::arrange(adj_p, dplyr::desc(spearman_rho)) %>%
+        dplyr::transmute(
           Gene = gene,
-          "Cell Type" = cell_type,
-          "Log2FC" = log2FC_rounded,
-          "Regulation" = regulation,
-          "Expression Level" = expression_level,
-          "Specificity" = Specificity_Level
+          "Cell type" = cell_type,
+          "Spearman rho" = spearman_rho,
+          "Adj. P" = signif(adj_p, 3),
+          Log2FC = round(log2FoldChange, 2),
+          Regulation = regulation
         )
-      
+      if (nrow(marker_table) == 0) {
+        return(DT::datatable(data.frame(Message = "No DE gene co-varies significantly with a cell-type score (adjusted P < 0.05).")))
+      }
       DT::datatable(
         marker_table,
-        options = list(
-          pageLength = 15,
-          dom = 'Bfrtip',
-          buttons = c('copy', 'csv', 'excel')
-        ),
+        options = list(pageLength = 15, dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel')),
         extensions = 'Buttons',
         rownames = FALSE
       ) %>%
-        DT::formatStyle(
-          'Specificity',
-          backgroundColor = DT::styleEqual(
-            c("High", "Medium", "Low"),
-            c('#d4edda', '#fff3cd', '#f8d7da')
-          )
-        ) %>%
-        DT::formatStyle(
-          'Regulation',
-          color = DT::styleEqual(
-            c("Up", "Down"),
-            c('#27ae60', '#e74c3c')
-          )
-        )
+        DT::formatStyle('Regulation', color = DT::styleEqual(c("Up", "Down"), c('#27ae60', '#e74c3c')))
     } else {
       DT::datatable(
-        data.frame(Message = "Linking DE genes to cell-type markers is not available in this version. The cell-type estimates in the other tabs are unaffected.")
+        data.frame(Message = "DE genes could not be linked to cell types (needs DE results and at least 6 samples).")
       )
     }
   })
@@ -102751,7 +100942,7 @@ document.addEventListener("DOMContentLoaded", function() {
     n_edges_val <- metrics$n_edges %||% 0
     density_val <- metrics$density %||% 0
     avg_degree_val <- metrics$avg_degree %||% 0
-    clustering_val <- metrics$clustering_coefficient %||% 0.3
+    clustering_val <- metrics$clustering_coefficient %||% NA
     
     data.frame(
       Metric = c(
@@ -103020,15 +101211,20 @@ document.addEventListener("DOMContentLoaded", function() {
       
       stats <- network_rv$current_results$summary_stats
       metrics_df <- data.frame(
-        Metric = c("Total Proteins", "Total Interactions", "Network Density", 
-                   "Average Degree", "Clustering Coefficient", "Network Diameter"),
+        Metric = c("Total Proteins", "Total Interactions", "Network Density",
+                   "Average Degree", "Clustering Coefficient",
+                   "Network Diameter (within connected parts)", "Average Path Length (within connected parts)",
+                   "Connected Components", "Largest Component (proteins)"),
         Value = c(
           stats$basic_stats$total_proteins %||% 0,
           stats$basic_stats$total_interactions %||% 0,
           round(stats$topology_stats$density %||% 0, 4),
           round(stats$topology_stats$avg_degree %||% 0, 2),
-          round(stats$topology_stats$clustering_coefficient %||% 0, 3),
-          stats$topology_stats$diameter %||% NA
+          round(stats$topology_stats$clustering_coefficient %||% NA, 3),
+          stats$topology_stats$diameter %||% NA,
+          round(stats$topology_stats$avg_path_length %||% NA, 2),
+          stats$topology_stats$n_components %||% NA,
+          stats$topology_stats$largest_component_size %||% NA
         )
       )
       
@@ -110660,7 +108856,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     
     # Create conversion for ranked genes (sample to avoid too many)
     sample_ranked <- if (length(gene_names_in_ranked) > 1000) {
-      sample(gene_names_in_ranked, 1000)
+      tx_seeded_sample(gene_names_in_ranked, 1000)
     } else {
       gene_names_in_ranked
     }
