@@ -20284,7 +20284,9 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-15", tag = "Improved", text = "Drug prioritisation scores each drug on its best-supported DEG target (significance among the DEGs, weighted by the kind of evidence: known mechanism, interaction, or clinical association) instead of the number of DEG targets, and shows whether the drug's action would oppose or reinforce the observed change of that target."),
+  list(date = "2026-10-15", tag = "Fixed", text = "TCGA expression box plots use the Wilcoxon rank-sum test (named on the plot) instead of an unlabelled t-test."),
+  list(date = "2026-10-15", tag = "Improved", text = "What's New is easier to read, and 'See all updates' is split into New, Improved and Fixed."),
+list(date = "2026-10-15", tag = "Improved", text = "Drug prioritisation scores each drug on its best-supported DEG target (significance among the DEGs, weighted by the kind of evidence: known mechanism, interaction, or clinical association) instead of the number of DEG targets, and shows whether the drug's action would oppose or reinforce the observed change of that target."),
 list(date = "2026-10-15", tag = "Improved", text = "PPI networks: built from the most significant DEGs (up to 'Maximum proteins') with all interactions among them, instead of the highest-scoring interactions; hubs are ranked by a DEG-neighbourhood test (are a protein's STRING partners enriched for DEGs?), which corrects for proteins that have many partners anyway."),
 list(date = "2026-10-15", tag = "Fixed", text = "WGCNA module-trait correlations: significance uses P values adjusted across all module-trait pairs; two-level traits are labelled with their direction (e.g. 'group (PMEC vs CMEC)'); the grey (unassigned) module is left out."),
 list(date = "2026-10-15", tag = "New", text = "Gene regulatory networks: a Differential TF Activity tab compares each transcription factor's activity between your groups (limma on VIPER scores, batch-adjusted, FDR), next to the TF's own expression change. The degree-based list is now labelled as prior knowledge."),
@@ -20320,18 +20322,31 @@ list(date = "2026-10-06", tag = "New",      text = "Analyse public RNA-seq data 
 
 tx_tag_colours <- c(New = "#2e7d32", Improved = "#1565c0", Fixed = "#e65100")
 
-tx_changelog_entry <- function(e) {
+tx_changelog_entry <- function(e, short = FALSE) {
   col <- tx_tag_colours[[e$tag]]
   if (is.null(col)) col <- "#555"
+  txt <- e$text
+  if (short && nchar(txt) > 110) txt <- paste0(sub("\\s+\\S*$", "", substr(txt, 1, 108)), "\u2026")
   tags$div(
     class = "tx-cl-entry",
     tags$span(class = "tx-cl-chip", style = sprintf("background:%s;", col), e$tag),
     tags$span(class = "tx-cl-date", e$date),
-    tags$span(class = "tx-cl-text", e$text)
+    tags$span(class = "tx-cl-text", title = if (short) e$text else NULL, txt)
   )
 }
 
-tx_changelog_footer <- function(n = 3) tagList(lapply(head(tx_changelog, n), tx_changelog_entry))
+tx_changelog_footer <- function(n = 3) tagList(lapply(head(tx_changelog, n), tx_changelog_entry, short = TRUE))
+
+# "See all updates": one tab per kind of change, newest first
+tx_changelog_tabs <- function() {
+  tabs <- lapply(c("New", "Improved", "Fixed"), function(tg) {
+    items <- Filter(function(e) identical(e$tag, tg), tx_changelog)
+    tabPanel(paste0(tg, " (", length(items), ")"),
+             tags$div(class = "tx-cl-modal tx-cl-tab", style = "margin-top:14px;",
+                      if (length(items)) tagList(lapply(items, tx_changelog_entry)) else tags$p("Nothing yet.")))
+  })
+  do.call(tabsetPanel, c(list(id = "tx_changelog_tabs", type = "tabs"), tabs))
+}
 
 tx_whats_new_pill <- function(max_age_days = 30) {
   latest <- as.Date(tx_changelog[[1]]$date)
@@ -20604,7 +20619,7 @@ tags$script(HTML("
     tags$style(HTML("
       .tx-home-footer { background:linear-gradient(180deg,#0f172a 0%,#0b1226 100%); color:#cbd5e1; padding:60px 30px 28px; margin-top:48px; font-family:'Inter',sans-serif; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
       .tx-hf-inner { max-width:1180px; margin:0 auto; }
-      .tx-hf-top { display:grid; grid-template-columns:1.7fr 1fr 1fr; gap:48px; padding-bottom:34px; border-bottom:1px solid rgba(255,255,255,0.12); }
+      .tx-hf-top { display:grid; grid-template-columns:1.2fr 1.6fr 0.9fr; gap:44px; padding-bottom:34px; border-bottom:1px solid rgba(255,255,255,0.12); }
       .tx-hf-about .tx-hf-logo { display:flex; align-items:center; gap:11px; color:#fff; font-weight:700; font-size:22px; margin-bottom:16px; }
       .tx-hf-mark { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:9px; background:linear-gradient(135deg,#38bdf8,#34d399); color:#06203a; font-weight:800; font-size:15px; }
       .tx-hf-about p { font-size:14.5px; line-height:1.7; color:#aeb9cb; max-width:380px; margin:0; }
@@ -20614,7 +20629,9 @@ tags$script(HTML("
       .tx-hf-link:hover { color:#fff !important; text-decoration:underline; }
       .tx-hf-btn { background:#2563eb !important; color:#fff !important; border:none; font-weight:600; font-size:14px; padding:10px 20px; border-radius:8px; }
       .tx-hf-btn:hover { background:#1d4ed8 !important; color:#fff !important; }
-      .tx-hf-cl .tx-cl-entry { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; font-size:14px !important; line-height:1.5 !important; }
+      .tx-hf-cl .tx-cl-entry { display:grid; grid-template-columns:auto 1fr; align-items:center; column-gap:10px; row-gap:5px; margin-bottom:16px; font-size:14px !important; line-height:1.5 !important; }
+      .tx-hf-cl .tx-cl-text { grid-column:1 / -1; }
+      .tx-cl-tab .tx-cl-entry { display:grid; grid-template-columns:96px 96px 1fr; align-items:baseline; }
       .tx-hf-cl .tx-cl-chip { color:#fff !important; font-size:11px !important; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:3px 9px !important; border-radius:11px; flex:0 0 auto; }
       .tx-hf-cl .tx-cl-date { color:#9aa6bb !important; font-variant-numeric:tabular-nums; flex:0 0 auto; font-size:13px !important; }
       .tx-hf-cl .tx-cl-text { color:#dde4f0 !important; }
@@ -30602,7 +30619,7 @@ server <- function(input, output, session) {
   observeEvent(input$tx_changelog_seeall, {
     showModal(modalDialog(
       title = tagList(icon("bullhorn"), " What's New in TransXplorer"),
-      tags$div(class = "tx-cl-modal", tx_changelog_full()),
+      tx_changelog_tabs(),
       easyClose = TRUE, size = "l", footer = modalButton("Close")
     ))
   })
@@ -106200,13 +106217,13 @@ tcga_data_filtered <- tcga_data[, valid_samples]
             panel.grid.major.x = element_blank()
           )
         
-        # Perform t-test
-        stat_test <- t.test(log2_expression ~ SampleType, data = gene_expression)
+        # Wilcoxon rank-sum test (groups are unequal in size and expression is skewed)
+        stat_test <- suppressWarnings(stats::wilcox.test(log2_expression ~ SampleType, data = gene_expression, exact = FALSE))
         p <- p + annotate(
           "text",
           x = 1.5,
           y = max(gene_expression$log2_expression),
-          label = paste("p-value =", format(stat_test$p.value, scientific = TRUE, digits = 3)),
+          label = paste("Wilcoxon rank-sum P =", format(stat_test$p.value, scientific = TRUE, digits = 3)),
           size = 4
         )
         
@@ -106226,7 +106243,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     req(rv_boxplot$boxplot)
     rv_boxplot$boxplot
   }, res = 96, height = function() {
-    session$clientData$output_expression_boxplot_width * 0.75
+    min(session$clientData$output_expression_boxplot_width * 0.75, 780)   # fits the 800 px panel (axis labels visible)
   })
   
   output$download_boxplot <- downloadHandler(
@@ -106262,7 +106279,9 @@ tcga_data_filtered <- tcga_data[, valid_samples]
   
   output$detailed_stats_box <- renderPrint({
     req(rv_boxplot$boxplot_data)
-    t.test(log2_expression ~ SampleType, data = rv_boxplot$boxplot_data)
+    d <- rv_boxplot$boxplot_data
+    print(stats::aggregate(log2_expression ~ SampleType, data = d, FUN = function(v) c(n = length(v), median = round(stats::median(v), 3))))
+    suppressWarnings(stats::wilcox.test(log2_expression ~ SampleType, data = d, exact = FALSE))
   })
   
   
@@ -106524,7 +106543,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     rv_survival$survival_plot <- p
     return(p)
   }, res = 96, height = function() {
-    session$clientData$output_survival_plot_width * 0.75
+    min(session$clientData$output_survival_plot_width * 0.75, 780)   # fits the 800 px panel
   })
   
   # Render expression distribution with improved resolution
