@@ -1673,23 +1673,23 @@ create_complete_compact_network_ui <- function() {
                           column(6,
                                  # Max interactions with smart suggestions
                                  numericInput(
-                                   "ppi_max_interactions",
+                                   "ppi_max_proteins",
                                    div(
-                                     "Maximum Interactions:",
+                                     "Maximum proteins:",
                                      tags$span(
                                        class = "fa fa-info-circle",
                                        style = "color: #3498db; margin-left: 5px; cursor: help;",
-                                       title = "Limits results for faster processing. Higher = more comprehensive but slower."
+                                       title = "If there are more DEGs, the most significant are used (adjusted P, then fold change), with all STRING interactions among them."
                                      )
                                    ),
-                                   value = 1000,
-                                   min = 100,
-                                   max = 5000,
-                                   step = 100
+                                   value = 500,
+                                   min = 50,
+                                   max = 3000,
+                                   step = 50
                                  ),
                                  div(
                                    style = "margin-top: 5px; font-size: 0.8em; color: #7f8c8d;",
-                                   "💡 Suggested: 500-1000 for balanced results"
+                                   "Most significant DEGs used to build the network"
                                  )
                           )
                         ),
@@ -15026,6 +15026,46 @@ query_string_database_safe_raw <- function(genes, organism = "human", confidence
 
 # Local STRING links table for one species and network type ("physical" or "full"),
 # cached as RDS. Used by the PPI query and by first-shell expansion.
+# DEG-neighbourhood test (local STRING data): for each protein, among its STRING partners (at the same
+# confidence and network type) that were tested in the DE analysis, are DEGs over-represented?
+# Hypergeometric test against all tested genes; Benjamini-Hochberg across the proteins tested.
+tx_ppi_neighbourhood_test <- function(network_genes, deg_genes, tested_genes, species_id, confidence = 0.4,
+                                      network_type = "full", data_path = Sys.getenv("STRING_DATA_PATH", "/srv/string_data")) {
+  rds <- file.path(tempdir(), "string_cache", paste0(species_id, "_aliases_symbols_ids.rds"))
+  if (!file.exists(rds)) return(NULL)          # alias map is built by the first local STRING query
+  amap <- as.data.frame(readRDS(rds), stringsAsFactors = FALSE)
+  amap <- amap[!duplicated(toupper(amap$alias)), , drop = FALSE]
+  key <- function(g) toupper(sub("^(ENS[A-Z]*[GTP][0-9]+)\\.[0-9]+$", "\\1", as.character(g)))
+  alias_up <- toupper(amap$alias)
+  sid_of <- function(g) amap$string_id[match(key(g), alias_up)]
+  links <- tryCatch(tx_string_local_links(species_id, network_type, data_path), error = function(e) NULL)
+  if (is.null(links)) return(NULL)
+  # base R only (data.table syntax needs data.table attached, which the app does not do)
+  p1 <- as.character(links[[1]]); p2 <- as.character(links[[2]]); sc <- links[[3]]
+  U <- unique(stats::na.omit(sid_of(tested_genes)))
+  D <- intersect(unique(stats::na.omit(sid_of(deg_genes))), U)
+  if (length(U) < 10 || length(D) < 2) return(NULL)
+  keep <- sc >= as.integer(round(confidence * 1000)) & p1 %in% U & p2 %in% U
+  p1 <- p1[keep]; p2 <- p2[keep]
+  ns <- sid_of(network_genes)
+  nsu <- unique(stats::na.omit(ns))
+  K_u <- tabulate(match(p1, nsu), nbins = length(nsu))
+  k_u <- tabulate(match(p1[p2 %in% D], nsu), nbins = length(nsu))
+  N <- length(U); n <- length(D)
+  Kv <- K_u[match(ns, nsu)]; Kv[is.na(Kv)] <- 0L
+  kv <- k_u[match(ns, nsu)]; kv[is.na(kv)] <- 0L
+  p <- ifelse(is.na(ns) | Kv == 0, NA_real_, stats::phyper(kv - 1, n, N - n, Kv, lower.tail = FALSE))
+  expct <- Kv * n / N
+  data.frame(gene = network_genes,
+             partners_tested = as.integer(Kv),
+             deg_partners = as.integer(kv),
+             expected_deg_partners = round(expct, 2),
+             neighbourhood_enrichment = ifelse(expct > 0, round(kv / expct, 2), NA_real_),
+             neighbourhood_p = signif(p, 3),
+             neighbourhood_adj_p = signif(stats::p.adjust(p, "BH"), 3),
+             stringsAsFactors = FALSE)
+}
+
 tx_string_local_links <- function(species_id, network_type = "full",
                                   data_path = Sys.getenv("STRING_DATA_PATH", "/srv/string_data")) {
   type <- if (identical(network_type, "physical")) "physical" else "full"
@@ -20244,7 +20284,9 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-15", tag = "Fixed", text = "WGCNA module-trait correlations: significance uses P values adjusted across all module-trait pairs; two-level traits are labelled with their direction (e.g. 'group (PMEC vs CMEC)'); the grey (unassigned) module is left out."),
+  list(date = "2026-10-15", tag = "Improved", text = "Drug prioritisation scores each drug on its best-supported DEG target (significance among the DEGs, weighted by the kind of evidence: known mechanism, interaction, or clinical association) instead of the number of DEG targets, and shows whether the drug's action would oppose or reinforce the observed change of that target."),
+list(date = "2026-10-15", tag = "Improved", text = "PPI networks: built from the most significant DEGs (up to 'Maximum proteins') with all interactions among them, instead of the highest-scoring interactions; hubs are ranked by a DEG-neighbourhood test (are a protein's STRING partners enriched for DEGs?), which corrects for proteins that have many partners anyway."),
+list(date = "2026-10-15", tag = "Fixed", text = "WGCNA module-trait correlations: significance uses P values adjusted across all module-trait pairs; two-level traits are labelled with their direction (e.g. 'group (PMEC vs CMEC)'); the grey (unassigned) module is left out."),
 list(date = "2026-10-15", tag = "New", text = "Gene regulatory networks: a Differential TF Activity tab compares each transcription factor's activity between your groups (limma on VIPER scores, batch-adjusted, FDR), next to the TF's own expression change. The degree-based list is now labelled as prior knowledge."),
 list(date = "2026-10-15", tag = "Improved", text = "Cell-type deconvolution (xCell, MCP-counter) now shows one panel per informative cell type on its own scale, with the group-difference FDR, instead of all cell types on one shared axis."),
 list(date = "2026-10-14", tag = "Fixed", text = "Cell-type deconvolution defaults to \"Other tissues / General\" (xCell), so the method used no longer depends on whether the method menu was opened."),
@@ -73824,7 +73866,44 @@ document.addEventListener("DOMContentLoaded", function() {
     if (!"sources" %in% colnames(combined_data)) combined_data$sources <- combined_data$database_source %||% "Unknown"
     if (!"database_source" %in% colnames(combined_data)) combined_data$database_source <- "Unknown"
     if (!"disease_area" %in% colnames(combined_data)) combined_data$disease_area <- "Not specified"
-    
+
+    # Evidence of each target from the DE results: significance rank among the DEGs (1 = most
+    # significant, then by |log2FC|), plus its direction of change
+    ds <- selected_genes$deg_stats
+    combined_data$target_evidence <- NA_real_; combined_data$target_log2FC <- NA_real_; combined_data$target_padj <- NA_real_
+    if (!is.null(ds) && nrow(ds) > 0) {
+      ds <- ds[order(ds$padj, -abs(ds$log2FC)), , drop = FALSE]
+      ds <- ds[!duplicated(toupper(ds$gene)), , drop = FALSE]
+      ds$evidence <- 1 - (seq_len(nrow(ds)) - 1) / nrow(ds)
+      m <- match(toupper(combined_data$gene_name), toupper(ds$gene))
+      combined_data$target_evidence <- ds$evidence[m]
+      combined_data$target_log2FC <- ds$log2FC[m]
+      combined_data$target_padj <- ds$padj[m]
+    }
+    act <- tolower(as.character(combined_data$interaction_type))
+    combined_data$drug_action <- dplyr::case_when(
+      grepl("inhibit|antagon|block|negative|inverse|suppress|antisense|degrad|cleav|disrupt", act) ~ "decreases",
+      grepl("agonist|activat|positive|induc|potentiat|stimulat|opener", act) ~ "increases",
+      TRUE ~ NA_character_)
+    combined_data$effect_on_change <- dplyr::case_when(
+      is.na(combined_data$drug_action) | is.na(combined_data$target_log2FC) ~ "unknown",
+      (combined_data$drug_action == "decreases") == (combined_data$target_log2FC > 0) ~ "opposes",
+      TRUE ~ "reinforces")
+    # Best target, from the strongest kind of evidence the drug has: (1) targets with a known mechanism
+    # of action (inhibitor, agonist...), (2) interactions without a reported mechanism, (3) Open Targets
+    # "Clinical association" genes (disease-association genes, not targets the drug acts on)
+    combined_data$evidence_tier <- ifelse(!is.na(combined_data$drug_action), 1L,
+                                   ifelse(grepl("clinical association", as.character(combined_data$interaction_type), ignore.case = TRUE), 3L, 2L))
+    tier_label <- c("known mechanism", "interaction, mechanism not reported", "clinical association only")
+    combined_data <- combined_data %>%
+      dplyr::group_by(molecule_name) %>%
+      dplyr::mutate(
+        best_tier = if (any(!is.na(target_evidence))) min(evidence_tier[!is.na(target_evidence)]) else NA_integer_,
+        ev_for_best = if (is.na(best_tier[1])) target_evidence else ifelse(evidence_tier == best_tier[1], target_evidence, NA_real_),
+        best_basis = if (is.na(best_tier[1])) "no DEG evidence" else tier_label[best_tier[1]]
+      ) %>%
+      dplyr::ungroup()
+
     tryCatch({
       drug_scores <- combined_data %>%
         dplyr::group_by(molecule_name) %>%
@@ -73832,6 +73911,15 @@ document.addEventListener("DOMContentLoaded", function() {
           n_targets = dplyr::n_distinct(gene_name),
           target_genes = paste(unique(gene_name), collapse = ", "),
           avg_confidence = mean(confidence_score, na.rm = TRUE),
+          best_target_evidence = if (all(is.na(ev_for_best))) 0 else max(ev_for_best, na.rm = TRUE),
+          best_target = if (all(is.na(ev_for_best))) gene_name[1] else gene_name[which.max(ev_for_best)],
+          best_target_log2FC = if (all(is.na(ev_for_best))) NA_real_ else round(target_log2FC[which.max(ev_for_best)], 3),
+          best_target_adj_p = if (all(is.na(ev_for_best))) NA_real_ else signif(target_padj[which.max(ev_for_best)], 3),
+          best_target_basis = best_basis[1],
+          best_tier = best_tier[1],
+          effect_on_best_target = if (all(is.na(ev_for_best))) "unknown" else effect_on_change[which.max(ev_for_best)],
+          n_opposing_targets = dplyr::n_distinct(gene_name[effect_on_change == "opposes"]),
+          n_reinforcing_targets = dplyr::n_distinct(gene_name[effect_on_change == "reinforces"]),
           max_clinical_phase = if (all(is.na(clinical_phase))) NA_real_ else max(clinical_phase, na.rm = TRUE),
           
           # DGIdb-specific aggregations
@@ -73859,8 +73947,9 @@ document.addEventListener("DOMContentLoaded", function() {
           .groups = 'drop'
         ) %>%
         dplyr::mutate(
-          # Scoring components
-          target_score = log2(n_targets + 1),
+          # Scoring components: the best-supported DEG target (0-1), not the number of targets, weighted by
+          # the kind of evidence (known mechanism 1, interaction without mechanism 0.5, clinical association 0.25)
+          target_score = best_target_evidence * ifelse(is.na(best_tier), 0, c(1, 0.5, 0.25)[pmin(pmax(best_tier, 1L), 3L)]),
           # Unknown phase (NA) earns no clinical credit
           clinical_score = ifelse(is.na(max_clinical_phase), 0, pmax(max_clinical_phase, 0) / 4),
           confidence_score_adj = avg_confidence,
@@ -73918,6 +74007,13 @@ document.addEventListener("DOMContentLoaded", function() {
           comprehensive_score,
           n_targets,
           target_genes,
+          best_target,
+          best_target_log2FC,
+          best_target_adj_p,
+          best_target_basis,
+          effect_on_best_target,
+          n_opposing_targets,
+          n_reinforcing_targets,
           max_clinical_phase,
           priority_level,
           evidence_summary,
@@ -80495,9 +80591,13 @@ document.addEventListener("DOMContentLoaded", function() {
 
     # Start from hub_proteins; left-join centrality (for MCC/MNC/DMNC/EPC
     # columns that live only on centrality_measures) and druggability_summary.
+    has_nb <- "neighbourhood_adj_p" %in% names(hub_data)
     display_table <- hub_data %>%
       mutate(
         Protein = gene,
+        `DEG partners` = if (has_nb) paste0(deg_partners, " / ", partners_tested) else NA_character_,
+        `Enrichment` = if (has_nb) neighbourhood_enrichment else NA_real_,
+        `Neighbourhood adj. P` = if (has_nb) neighbourhood_adj_p else NA_real_,
         Degree = degree,
         `Hub Type` = hub_type,
         `Hub Score` = round(hub_score, 3),
@@ -80537,11 +80637,13 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     display_table <- display_table %>%
-      select(Protein, Degree, `Hub Type`, `Hub Score`, Source, Regulation,
+      select(Protein, `DEG partners`, `Enrichment`, `Neighbourhood adj. P`, Degree, `Hub Type`, `Hub Score`, Source, Regulation,
              Betweenness, Closeness, Eigenvector,
              MCC, MNC, DMNC, EPC,
-             Druggable, `Drug count`, `Approval stage`) %>%
-      arrange(desc(Degree))
+             Druggable, `Drug count`, `Approval stage`)
+    display_table <- if (has_nb) display_table[order(is.na(display_table$`Neighbourhood adj. P`), display_table$`Neighbourhood adj. P`, -display_table$Degree), ]
+                     else dplyr::arrange(display_table, dplyr::desc(Degree))
+    if (!has_nb) display_table <- display_table[, setdiff(names(display_table), c("DEG partners", "Enrichment", "Neighbourhood adj. P"))]
 
     DT::datatable(
       display_table,
@@ -80588,7 +80690,12 @@ document.addEventListener("DOMContentLoaded", function() {
   build_ppi_top_hubs_barplot <- function(hub_data, n_top = 15) {
     if (is.null(hub_data) || nrow(hub_data) == 0) return(NULL)
 
-    top_hubs <- hub_data[order(-hub_data$degree), ][seq_len(min(n_top, nrow(hub_data))), ]
+    by_nb <- "neighbourhood_adj_p" %in% names(hub_data) && any(!is.na(hub_data$neighbourhood_adj_p))
+    if (by_nb) {
+      hub_data <- hub_data[!is.na(hub_data$neighbourhood_adj_p), ]
+      hub_data$degree <- hub_data$deg_partners      # bar = number of DEG partners in STRING
+    }
+    top_hubs <- hub_data[if (by_nb) order(hub_data$neighbourhood_adj_p, -hub_data$deg_partners) else order(-hub_data$degree), ][seq_len(min(n_top, nrow(hub_data))), ]
     top_hubs$gene       <- factor(top_hubs$gene, levels = rev(top_hubs$gene))
     top_hubs$Regulation <- ifelse(top_hubs$regulation %in% c("Up", "Down"),
                                   top_hubs$regulation, "Unspecified")
@@ -80604,9 +80711,9 @@ document.addEventListener("DOMContentLoaded", function() {
                                    "Unspecified" = "#95a5a6"),
                         drop = FALSE) +
       scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
-      labs(title = paste0("Top ", nrow(top_hubs),
-                          " Hub Proteins by Network Degree"),
-           x = NULL, y = "Degree") +
+      labs(title = if (by_nb) paste0("Top ", nrow(top_hubs), " DEG-neighbourhood hubs (ranked by adjusted P)")
+                   else paste0("Top ", nrow(top_hubs), " Hub Proteins by Network Degree"),
+           x = NULL, y = if (by_nb) "STRING partners that are DEGs" else "Degree") +
       theme_bw(base_size = 13) +
       theme(plot.background  = element_rect(fill = "white", color = NA),
             panel.background = element_rect(fill = "white", color = NA),
@@ -84225,7 +84332,9 @@ document.addEventListener("DOMContentLoaded", function() {
             up_genes = up_genes,
             down_genes = down_genes,
             all_genes = all_genes,
-            gene_counts = drug_target_gene_counts
+            gene_counts = drug_target_gene_counts,
+            deg_stats = data.frame(gene = sig_ids[has_id], log2FC = as.numeric(sig_degs[[fc_col]][has_id]),
+                                   padj = as.numeric(sig_degs[[p_value_col]][has_id]), stringsAsFactors = FALSE)
           )
           
         } else if (input$network_analysis_type_systems %in% c("ppi", "wgcna", "deconv")) {
@@ -84887,7 +84996,23 @@ document.addEventListener("DOMContentLoaded", function() {
                                        up_genes <- extract_gene_ids(up_regulated_data)
                                        down_genes <- extract_gene_ids(down_regulated_data)
                                        all_genes <- unique(c(up_genes, down_genes))
-                                       
+                                       all_degs_full <- all_genes   # full DEG set, used by the neighbourhood test
+
+                                       # Network size is set by proteins: keep the most significant DEGs
+                                       # (adjusted P, then |log2FC|) and all interactions among them
+                                       max_proteins <- isolate(input$ppi_max_proteins %||% 500)
+                                       if (length(all_genes) > max_proteins) {
+                                        sig_rows <- rbind(up_regulated_data, down_regulated_data)
+                                        sig_rows <- sig_rows[order(sig_rows[[pval_column]], -abs(sig_rows$log2FC)), , drop = FALSE]
+                                        keep_genes <- head(unique(extract_gene_ids(sig_rows)), max_proteins)
+                                        up_genes <- intersect(up_genes, keep_genes)
+                                        down_genes <- intersect(down_genes, keep_genes)
+                                        all_genes <- unique(c(up_genes, down_genes))
+                                        showNotification(paste0("PPI network built from the ", length(all_genes), " most significant of ",
+                                                                length(all_degs_full), " DEGs (change 'Maximum proteins' to include more)."),
+                                                         type = "message", duration = 8)
+                                       }
+
                                        print(paste("Cleaned protein-coding genes:"))
                                        print(paste("  • Up-regulated:", length(up_genes)))
                                        print(paste("  • Down-regulated:", length(down_genes)))
@@ -84922,7 +85047,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                        organism_param <- isolate(input$organism_deg_main %||% "human")
                                        confidence_threshold <- isolate(input$ppi_confidence_threshold %||% 0.4)
                                        network_type <- isolate(input$ppi_network_type %||% "physical")
-                                       max_interactions <- isolate(input$ppi_max_interactions %||% 1000)
+                                       max_interactions <- 1e6   # all interactions among the selected proteins
                                        expand_network <- isolate(input$ppi_expand_network %||% FALSE)
                                        filter_isolated <- isolate(input$ppi_filter_isolated %||% TRUE)
                                        detect_modules <- isolate(input$ppi_detect_modules %||% TRUE)
@@ -85253,6 +85378,16 @@ document.addEventListener("DOMContentLoaded", function() {
                                                  incProgress(0.8, detail = "Calculating network centrality measures...")
                                                  
                                                  hub_proteins <- create_safe_hub_analysis(network_graph, all_genes, up_genes, down_genes)
+                                           nb_test <- tryCatch(
+                                             tx_ppi_neighbourhood_test(hub_proteins$gene, all_degs_full, extract_gene_ids(deg_data),
+                                                                       species_id, confidence_threshold, network_type),
+                                             error = function(e) { print(paste("DEG-neighbourhood test failed:", e$message)); NULL })
+                                           if (!is.null(nb_test) && nrow(hub_proteins) > 0) {
+                                             hub_proteins <- cbind(hub_proteins, nb_test[match(hub_proteins$gene, nb_test$gene), -1, drop = FALSE])
+                                             hub_proteins$deg_neighbourhood_hub <- !is.na(hub_proteins$neighbourhood_adj_p) & hub_proteins$neighbourhood_adj_p < 0.05
+                                             hub_proteins <- hub_proteins[order(is.na(hub_proteins$neighbourhood_adj_p), hub_proteins$neighbourhood_adj_p,
+                                                                                -hub_proteins$deg_partners, -hub_proteins$degree), ]
+                                           }
                                                  
                                                  print(paste("🎯 Hub protein analysis:"))
                                                  print(paste("  • Total proteins in network:", nrow(hub_proteins)))
