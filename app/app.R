@@ -3815,7 +3815,7 @@ create_complete_compact_network_ui <- function() {
                           box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;",
                                        h4(icon("chart-area"), " Correlation Heatmap", 
                                           style = "margin-top: 0; color: #495057;"),
-                                       p("Cell values show Pearson correlation coefficients between module eigengenes and traits. * indicates p < 0.05",
+                                       p("Cell values show Pearson correlation coefficients between module eigengenes and traits; * adjusted P < 0.05 (Benjamini-Hochberg across all module-trait pairs). Two-level traits are coded 0/1 as named, e.g. 'group (PMEC vs CMEC)': a positive correlation means a higher eigengene in the first-named level. The grey module (unassigned genes) is not shown.",
                                          style = "color: #666; font-size: 14px;"),
                                        plotOutput("module_trait_heatmap", height = "700px"),
                                        downloadButton("download_trait_heatmap", "Download Heatmap", 
@@ -3828,7 +3828,7 @@ create_complete_compact_network_ui <- function() {
                           box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
                                        h4(icon("table"), " Significant Module-Trait Associations", 
                                           style = "margin-top: 0; color: #495057;"),
-                                       p("Associations with p < 0.05, sorted by correlation strength.",
+                                       p("Associations with adjusted P < 0.05, sorted by correlation strength.",
                                          style = "color: #666; font-size: 14px; margin-bottom: 15px;"),
                                        
                                        DT::dataTableOutput("module_trait_summary_table"),
@@ -3964,7 +3964,7 @@ create_complete_compact_network_ui <- function() {
                               class = "summary-card",
                               style = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;",
                               h3(textOutput("total_cell_types"), style = "margin: 10px 0; font-size: 36px;"),
-                              p("Cell Types Detected", style = "margin: 0; font-size: 14px; opacity: 0.9;")
+                              p("Cell Types Scored", style = "margin: 0; font-size: 14px; opacity: 0.9;")
                             )
                           ),
                           column(
@@ -3973,7 +3973,7 @@ create_complete_compact_network_ui <- function() {
                               class = "summary-card",
                               style = "background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;",
                               h3(textOutput("dominant_cell_type"), style = "margin: 10px 0; font-size: 24px;"),
-                              p("Dominant Cell Type (EPIC only)", style = "margin: 0; font-size: 14px; opacity: 0.9;")
+                              uiOutput("deconv_card2_label")
                             )
                           ),
                           column(
@@ -4039,7 +4039,12 @@ create_complete_compact_network_ui <- function() {
                                     #   downloadButton("download_deconv_barplot", "Download Plot", 
                                     #                  class = "btn-sm btn-primary")
                                     # ),
-                                    plotlyOutput("deconv_barplot", height = "500px")
+                                    checkboxInput("deconv_show_all_celltypes",
+                                                  "Show all informative cell types (default: the 20 with the strongest group differences)",
+                                                  value = FALSE),
+                                    p(class = "text-muted", style = "font-size: 12px; margin-bottom: 8px;",
+                                      "Cell types scored zero in most samples are hidden. Each panel has its own scale: scores compare samples within a cell type, not cell types with each other. In pure cell cultures the scores mostly reflect shared marker genes rather than cell composition."),
+                                    uiOutput("deconv_barplot_container")
                                   )
                                 )
                               )
@@ -6268,7 +6273,29 @@ format_deconv_group_comparison_table <- function(group_comp) {
 
 
 # VISUALIZATION FUNCTIONS
-create_cell_composition_barplot <- function(deconv_results, method, sample_groups = NULL) {
+# Score-based deconvolution (xCell, MCP-counter): cell types worth showing are scored (non-zero) in at
+# least 3 samples and vary; ordered by the group-difference FDR, then by relative variation.
+tx_deconv_informative <- function(mat, min_nonzero = 3) {
+  # xCell returns tiny floating-point values (~1e-17) instead of exact zeros: treat < 1e-6 as zero
+  keep <- apply(mat, 1, function(v) sum(is.finite(v) & abs(v) > 1e-6) >= min_nonzero && isTRUE(stats::sd(v, na.rm = TRUE) > 0))
+  rownames(mat)[keep]
+}
+tx_deconv_panel_types <- function(deconv_results, method, group_comparison = NULL, show_all = FALSE, top_n = 20) {
+  mat <- if (identical(method, "epic")) t(as.matrix(deconv_results)) else as.matrix(deconv_results)
+  mat <- drop_xcell_aggregate_scores(mat, method)
+  inf <- tx_deconv_informative(mat)
+  if (!length(inf)) return(character(0))
+  padj <- if (!is.null(group_comparison) && all(c("cell_type", "p_adjusted") %in% names(group_comparison)))
+    group_comparison$p_adjusted[match(inf, group_comparison$cell_type)] else rep(NA_real_, length(inf))
+  cv <- apply(mat[inf, , drop = FALSE], 1, function(v) stats::sd(v) / max(mean(abs(v)), 1e-12))
+  inf <- inf[order(ifelse(is.na(padj), Inf, padj), -cv)]
+  if (!isTRUE(show_all)) inf <- head(inf, top_n)
+  inf
+}
+tx_deconv_plot_height <- function(n_panels, ncol = 4) max(380, ceiling(n_panels / ncol) * 210 + 110)
+
+create_cell_composition_barplot <- function(deconv_results, method, sample_groups = NULL,
+                                            group_comparison = NULL, show_all = FALSE, top_n = 20) {
 
   cat("Creating cell type composition plot...\n")
 
@@ -6320,32 +6347,34 @@ create_cell_composition_barplot <- function(deconv_results, method, sample_group
     n_samples <- length(unique(plot_data$sample))
 
     if (!is_fraction) {
-      # Score-based methods: per-cell-type distribution across samples (no stacking to 100%)
-      p <- ggplot(plot_data, aes(x = cell_type, y = value, fill = group)) +
-        geom_boxplot(outlier.size = 0.8, alpha = 0.7) +
-        coord_flip() +
-        labs(
-          title = paste(toupper(gsub("_", "-", method)), "cell type scores (n =", n_samples, "samples)"),
-          x = "Cell Type",
-          y = value_label,
-          fill = "Group"
-        ) +
-        theme_minimal() +
-        theme(
-          axis.text.y = element_text(size = 8),
-          axis.title = element_text(size = 12, face = "bold"),
-          legend.position = "right",
-          plot.title = element_text(hjust = 0.5, size = 13, face = "bold")
-        ) +
-        scale_fill_viridis_d(option = "turbo", direction = -1)
-
-      p_interactive <- ggplotly(p, height = 550) %>%
-        layout(
-          font = list(family = "Arial, sans-serif"),
-          legend = list(orientation = "v", x = 1.02, y = 1),
-          margin = list(l = 160, r = 150, t = 60, b = 60)
-        )
-
+      # Score-based methods: one panel per informative cell type, each on its own scale (scores compare
+      # samples within a cell type, not cell types with each other)
+      types <- tx_deconv_panel_types(deconv_results, method, group_comparison, show_all, top_n)
+      n_inf <- length(tx_deconv_informative(cell_type_matrix))
+      if (!length(types)) {
+        return(plotly::plot_ly() %>% plotly::layout(title = "No cell type has a non-zero score in at least 3 samples",
+                                                    xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)))
+      }
+      pd <- plot_data[plot_data$cell_type %in% types, ]
+      padj <- if (!is.null(group_comparison) && all(c("cell_type", "p_adjusted") %in% names(group_comparison)))
+        group_comparison$p_adjusted[match(types, group_comparison$cell_type)] else rep(NA_real_, length(types))
+      lab <- stats::setNames(paste0(types, ifelse(is.na(padj), "", paste0("  (FDR ", formatC(padj, format = "g", digits = 2), ")"))), types)
+      pd$panel <- factor(lab[as.character(pd$cell_type)], levels = unname(lab))
+      ncol_f <- 4
+      p <- ggplot(pd, aes(x = group, y = value, colour = group,
+                          text = paste0("Sample: ", sample, "<br>Group: ", group, "<br>Score: ", signif(value, 3)))) +
+        stat_summary(aes(group = group), fun = stats::median, geom = "crossbar", width = 0.5, colour = "grey45", linewidth = 0.3) +
+        geom_jitter(width = 0.15, height = 0, size = 1.6, alpha = 0.85) +
+        facet_wrap(~ panel, scales = "free_y", ncol = ncol_f) +
+        labs(title = paste0(toupper(gsub("_", "-", method)), " scores: ", length(types), " of ", n_inf,
+                            " informative cell types",
+                            if (n_inf > length(types)) " (strongest group differences first)" else ""),
+             x = NULL, y = "Score (own scale per cell type)", colour = "Group") +
+        theme_bw(base_size = 10) +
+        theme(strip.text = element_text(size = 8.5), axis.text.x = element_text(size = 8),
+              legend.position = "top", plot.title = element_text(size = 12, face = "bold"))
+      p_interactive <- ggplotly(p, height = tx_deconv_plot_height(length(types), ncol_f), tooltip = "text") %>%
+        layout(font = list(family = "Arial, sans-serif"), margin = list(t = 90, l = 60))
       cat("Score plot created successfully\n")
       return(p_interactive)
     }
@@ -8005,12 +8034,14 @@ prepare_traits_for_correlation <- function(trait_data) {
       
       # Binary encoding (0/1)
       if (n_unique == 2) {
-        encoded <- as.numeric(factor(col_data, levels = unique_vals)) - 1
-        prepared_traits[[col_name]] <- encoded
+        # sorted levels (independent of row order); the name states the direction of a positive correlation
+        lv <- sort(as.character(unique_vals))
+        encoded <- as.numeric(factor(as.character(col_data), levels = lv)) - 1
+        prepared_traits[[paste0(col_name, " (", lv[2], " vs ", lv[1], ")")]] <- encoded
         trait_encoding_info[[col_name]] <- list(
           type = "binary",
-          encoding = paste(unique_vals[1], "=0,", unique_vals[2], "=1"),
-          original_values = unique_vals
+          encoding = paste(lv[1], "=0,", lv[2], "=1"),
+          original_values = lv
         )
         print(paste("  ✅", col_name, "- Binary trait encoded:", 
                     unique_vals[1], "=0,", unique_vals[2], "=1"))
@@ -8173,7 +8204,7 @@ create_module_trait_summary <- function(correlation_results, modules,
       Module = module_name,
       Trait = trait_name,
       Correlation = round(cor_value, 3),
-      P_Value = format(p_value, scientific = TRUE, digits = 3),
+      Adj_P_Value = format(p_value, scientific = TRUE, digits = 3),
       Direction = cor_direction,
       Strength = cor_strength,
       Module_Size = module_size,
@@ -8270,7 +8301,7 @@ plot_module_trait_heatmap <- function(correlation_results, significance_threshol
     ) +
     labs(
       title = "Module-Trait Correlations",
-      subtitle = paste("* indicates p <", significance_threshold),
+      subtitle = paste("* adjusted P <", significance_threshold, "(Benjamini-Hochberg)"),
       x = "Trait",
       y = "Module"
     )
@@ -8349,7 +8380,8 @@ perform_module_trait_analysis <- function(wgcna_result,
   # Subset data
   trait_data_matched <- trait_data[common_samples, , drop = FALSE]
   ME_matched <- wgcna_result$module_eigengenes[common_samples, , drop = FALSE]
-  
+  ME_matched <- ME_matched[, colnames(ME_matched) != "MEgrey", drop = FALSE]   # grey = genes not assigned to a module
+
   print("Preparing traits for correlation...")
   trait_prep <- prepare_traits_for_correlation(trait_data_matched)
   
@@ -8379,6 +8411,9 @@ perform_module_trait_analysis <- function(wgcna_result,
     }
   }
   
+  # Benjamini-Hochberg across all module x trait pairs; significance and display use the adjusted P
+  p_raw <- p_values
+  p_values <- matrix(stats::p.adjust(p_raw, method = "BH"), nrow = nrow(p_raw), dimnames = dimnames(p_raw))
   n_significant <- sum(p_values < 0.05, na.rm = TRUE)
   print(paste("Significant associations (p<0.05):", n_significant))
   
@@ -8430,6 +8465,7 @@ perform_module_trait_analysis <- function(wgcna_result,
     has_results = TRUE,
     correlations = correlations,
     p_values = p_values,
+    p_values_raw = p_raw,
     summary_table = summary_table,
     heatmap_plot = heatmap_plot,
     n_significant = n_significant,
@@ -20208,7 +20244,10 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
-  list(date = "2026-10-14", tag = "Fixed", text = "Cell-type deconvolution defaults to \"Other tissues / General\" (xCell), so the method used no longer depends on whether the method menu was opened."),
+  list(date = "2026-10-15", tag = "Fixed", text = "WGCNA module-trait correlations: significance uses P values adjusted across all module-trait pairs; two-level traits are labelled with their direction (e.g. 'group (PMEC vs CMEC)'); the grey (unassigned) module is left out."),
+list(date = "2026-10-15", tag = "New", text = "Gene regulatory networks: a Differential TF Activity tab compares each transcription factor's activity between your groups (limma on VIPER scores, batch-adjusted, FDR), next to the TF's own expression change. The degree-based list is now labelled as prior knowledge."),
+list(date = "2026-10-15", tag = "Improved", text = "Cell-type deconvolution (xCell, MCP-counter) now shows one panel per informative cell type on its own scale, with the group-difference FDR, instead of all cell types on one shared axis."),
+list(date = "2026-10-14", tag = "Fixed", text = "Cell-type deconvolution defaults to \"Other tissues / General\" (xCell), so the method used no longer depends on whether the method menu was opened."),
   list(date = "2026-10-14", tag = "Fixed", text = "Some figure downloads (e.g. PPI network metrics) no longer fail with a server error."),
   list(date = "2026-10-14", tag = "Improved", text = "Drug-target tables (overview, priorities, clinical evidence, clinical maturity) can be exported as CSV or Excel."),
   list(date = "2026-10-14", tag = "Improved", text = "Cell-type deconvolution links each DE gene to the cell type whose score it follows most closely across samples within groups (Spearman correlation adjusted for group, with multiple-testing correction), replacing the earlier marker table."),
@@ -30081,6 +30120,60 @@ tx_seeded_sample <- function(x, size, seed = 1L) {
 }
 
 options(device = function(...) grDevices::pdf(file = NULL, ...))
+
+# Differential TF activity between two sample groups: limma on VIPER activity scores (TF x sample),
+# adjusting for the batch variable chosen by batch detection when it is estimable alongside the groups.
+tx_grn_differential_activity <- function(tf_activities, sample_groups, batch_detection = NULL, de_table = NULL) {
+  if (is.null(tf_activities) || !nrow(tf_activities) || is.null(sample_groups) ||
+      !all(c("tf", "sample", "activity") %in% names(tf_activities)) || !all(c("sample", "group") %in% names(sample_groups))) return(NULL)
+  A <- tapply(tf_activities$activity, list(tf_activities$tf, tf_activities$sample), mean)
+  smp <- colnames(A)
+  grp <- factor(sample_groups$group[match(smp, sample_groups$sample)])
+  ok <- !is.na(grp)
+  A <- A[, ok, drop = FALSE]; smp <- smp[ok]; grp <- droplevels(grp[ok])
+  if (nlevels(grp) != 2 || any(table(grp) < 2)) return(NULL)
+  A <- A[rowSums(is.finite(A)) == ncol(A), , drop = FALSE]
+  A <- A[apply(A, 1, stats::sd) > 0, , drop = FALSE]
+  if (nrow(A) < 2) return(NULL)
+  col <- if (isTRUE(batch_detection$has_batch) && !is.null(batch_detection$recommended_batch)) batch_detection$recommended_batch else NULL
+  cov <- if (!is.null(col) && col %in% names(sample_groups)) factor(sample_groups[[col]][match(smp, sample_groups$sample)]) else NULL
+  X <- stats::model.matrix(~ grp); cov_used <- NA_character_
+  if (!is.null(cov) && !anyNA(cov) && nlevels(cov) > 1) {
+    Xc <- stats::model.matrix(~ cov + grp)
+    if (qr(Xc)$rank == ncol(Xc)) { X <- Xc; cov_used <- col }
+  }
+  fit <- limma::eBayes(limma::lmFit(A, X))
+  tt <- limma::topTable(fit, coef = ncol(X), number = Inf, sort.by = "none")
+  lv <- levels(grp)
+  nt <- tf_activities$n_targets[match(rownames(tt), tf_activities$tf)]
+  out <- data.frame(
+    tf = rownames(tt),
+    n_targets = if (is.null(nt)) NA else nt,
+    higher_in = ifelse(tt$logFC > 0, lv[2], lv[1]),
+    activity_difference = round(tt$logFC, 3),
+    t = round(tt$t, 2),
+    p_value = signif(tt$P.Value, 3),
+    adj_p = signif(tt$adj.P.Val, 3),
+    stringsAsFactors = FALSE)
+  out[[paste0("mean_activity_", lv[1])]] <- round(rowMeans(A[out$tf, grp == lv[1], drop = FALSE]), 3)
+  out[[paste0("mean_activity_", lv[2])]] <- round(rowMeans(A[out$tf, grp == lv[2], drop = FALSE]), 3)
+  if (!is.null(de_table) && nrow(de_table)) {
+    idc <- intersect(c("gene_symbol", "gene", "symbol", "gene_id"), names(de_table))
+    fcc <- intersect(c("log2FC", "log2FoldChange", "logFC"), names(de_table))[1]
+    pc <- intersect(c("adj.P.Val", "padj", "FDR"), names(de_table))[1]
+    if (length(idc) && !is.na(fcc)) {
+      m <- rep(NA_integer_, nrow(out))
+      for (ic in idc) m[is.na(m)] <- match(out$tf[is.na(m)], as.character(de_table[[ic]]))
+      out$tf_expression_log2FC <- round(as.numeric(de_table[[fcc]][m]), 3)
+      if (!is.na(pc)) out$tf_expression_adj_p <- signif(as.numeric(de_table[[pc]][m]), 3)
+    }
+  }
+  out <- out[order(out$adj_p, -abs(out$t)), , drop = FALSE]
+  rownames(out) <- NULL
+  attr(out, "comparison") <- paste(lv[2], "vs", lv[1])
+  attr(out, "covariate") <- cov_used
+  out
+}
 
 tx_expression_scale <- function(m) {
   v <- as.numeric(as.matrix(m))
@@ -81065,7 +81158,8 @@ document.addEventListener("DOMContentLoaded", function() {
           plot_result <- create_cell_composition_barplot(
             deconv_results = network_rv$current_results$raw_deconv_results,
             method = network_rv$current_results$method,
-            sample_groups = network_rv$current_results$data_info$sample_groups
+            sample_groups = network_rv$current_results$data_info$sample_groups,
+            group_comparison = network_rv$current_results$group_comparison
           )
           
           # Get the plotly object
@@ -84574,6 +84668,12 @@ document.addEventListener("DOMContentLoaded", function() {
                                        return()
                                      }
                                      
+                                     grn_results$tf_differential <- tryCatch(
+                                       tx_grn_differential_activity(grn_results$tf_activities, rv_deg_main$sample_groups,
+                                                                    rv_deg_main$batch_detection_results,
+                                                                    tryCatch(deg_data(), error = function(e) NULL)),
+                                       error = function(e) { print(paste("Differential TF activity failed:", e$message)); NULL })
+
                                      # Validate results structure
                                      if (is.null(grn_results) || !is.list(grn_results) ||
                                          is.null(grn_results$network_data) ||
@@ -84640,6 +84740,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                        tf_pathway_enrichment = grn_results$tf_pathway_enrichment,  # ✅ ADD THIS
                                        target_pathway_enrichment = grn_results$target_pathway_enrichment,  # ✅ ADD THIS
                                        tf_activities = grn_results$tf_activities,
+                                       tf_differential = grn_results$tf_differential,
                                        summary_stats = grn_results$summary_stats,
                                        analysis_params = list(
                                          analysis_focus = "grn",
@@ -86984,14 +87085,26 @@ document.addEventListener("DOMContentLoaded", function() {
                            )
                   ),
                   
+                  tabPanel("📊 Differential TF Activity",
+                           value = "grn_tf_differential",
+                           div(style = "margin-top: 15px;",
+                               h4("Transcription factors whose activity differs between your groups"),
+                               p("Activity of each transcription factor per sample (VIPER on its DoRothEA targets), compared between the two groups with limma; ",
+                                 "the batch variable used in the DE model is included when it can be estimated. P values are adjusted (Benjamini-Hochberg). ",
+                                 "The TF's own expression change is shown for comparison: a TF can change in activity without changing in expression."),
+                               uiOutput("grn_tf_differential_note"),
+                               DT::dataTableOutput("grn_tf_differential_table")
+                           )
+                  ),
+
                   tabPanel("👑 Master Regulators",
                            value = "grn_master_regs",
                            div(style = "margin-top: 15px;",
                                fluidRow(
                                  column(8.5,
                                         div(class = "table-container",
-                                            h4("Top Master Regulators"),
-                                            p("Transcription factors with the highest regulatory influence on your DEGs."),
+                                            h4("Most-connected regulators (prior knowledge)"),
+                                            p("Ranked by how many of your DEGs each transcription factor is annotated to regulate in DoRothEA. This reflects prior knowledge, not activity measured in your samples: see 'Differential TF Activity' for that."),
                                             DT::dataTableOutput("grn_master_regulators_table")
                                         )
                                  ),
@@ -87004,7 +87117,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                             p(strong("Repressor:"), ">70% repressing interactions"),
                                             p(strong("Mixed:"), "Both activating and repressing"),
                                             hr(),
-                                            p(strong("Interpretation:"), "Higher-ranked TFs are more likely to be key controllers of your experimental phenotype.")
+                                            p(strong("Interpretation:"), "Candidate regulators from prior knowledge. Broadly connected TFs (e.g. SP1, MYC) rank high for most gene lists; check their activity in 'Differential TF Activity'.")
                                           )
                                         ),
                                         wellPanel(
@@ -90437,6 +90550,23 @@ document.addEventListener("DOMContentLoaded", function() {
   })
   
   # Download GRN results
+  output$grn_tf_differential_note <- renderUI({
+    td <- network_rv$current_results$tf_differential
+    if (is.null(td)) {
+      return(div(class = "alert alert-info", "Needs TF activities (keep 'Calculate TF activities' on) and exactly two sample groups with at least 2 samples each."))
+    }
+    cv <- attr(td, "covariate")
+    p(strong(attr(td, "comparison")), " · ", sum(td$adj_p < 0.05, na.rm = TRUE), " of ", nrow(td), " TFs differ (adjusted P < 0.05)",
+      if (!is.null(cv) && !is.na(cv)) paste0(" · adjusted for '", cv, "'") else "", style = "margin: 8px 0;")
+  })
+
+  output$grn_tf_differential_table <- DT::renderDataTable({
+    td <- network_rv$current_results$tf_differential
+    req(td)
+    DT::datatable(td, rownames = FALSE, extensions = 'Buttons',
+                  options = list(pageLength = 15, scrollX = TRUE, dom = 'Bfrtip', buttons = c('csv', 'excel')))
+  }, server = FALSE)
+
   output$download_grn_results <- downloadHandler(
     filename = function() {
       paste0("GRN_Analysis_Results_", Sys.Date(), ".xlsx")
@@ -90460,6 +90590,10 @@ document.addEventListener("DOMContentLoaded", function() {
       if (!is.null(network_rv$grn_results$tf_activities)) {
         openxlsx::addWorksheet(wb, "TF_Activities")
         openxlsx::writeData(wb, "TF_Activities", network_rv$grn_results$tf_activities)
+      }
+      if (!is.null(network_rv$grn_results$tf_differential)) {
+        openxlsx::addWorksheet(wb, "TF_Differential_Activity")
+        openxlsx::writeData(wb, "TF_Differential_Activity", network_rv$grn_results$tf_differential)
       }
       
       if (!is.null(network_rv$grn_results$tf_pathway_enrichment)) {
@@ -97461,14 +97595,17 @@ document.addEventListener("DOMContentLoaded", function() {
       # Combine correlations and p-values
       cors <- network_rv$current_results$module_trait_analysis$correlations
       pvals <- network_rv$current_results$module_trait_analysis$p_values
-      
+      praw <- network_rv$current_results$module_trait_analysis$p_values_raw %||% pvals
+
       # Create comprehensive export
       export_data <- data.frame(
         Module = rep(rownames(cors), ncol(cors)),
         Trait = rep(colnames(cors), each = nrow(cors)),
         Correlation = as.vector(cors),
-        P_Value = as.vector(pvals),
-        Significant = as.vector(pvals) < 0.05
+        P_Value = as.vector(praw),
+        Adj_P_Value_BH = as.vector(pvals),
+        Significant_adj = as.vector(pvals) < 0.05,
+        check.names = FALSE
       )
       
       write.csv(export_data, file, row.names = FALSE)
@@ -97760,7 +97897,7 @@ document.addEventListener("DOMContentLoaded", function() {
           class = "info-card",
           style = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);",
           h4(stats$total_cell_types),
-          p("Cell Types Detected")
+          p("Cell Types Scored")
         )
       ),
       column(
@@ -97805,7 +97942,9 @@ document.addEventListener("DOMContentLoaded", function() {
     plot_result <- create_cell_composition_barplot(
       deconv_results = rv_deg_main$exploratory_deconv$raw_deconv_results,
       method = rv_deg_main$exploratory_deconv$method,
-      sample_groups = rv_deg_main$exploratory_deconv$data_info$sample_groups
+      sample_groups = rv_deg_main$exploratory_deconv$data_info$sample_groups,
+      group_comparison = rv_deg_main$exploratory_deconv$group_comparison,
+      top_n = 8   # fits the fixed-height exploratory panel
     )
     
     # Store full data for drill-down modal
@@ -98313,10 +98452,23 @@ document.addEventListener("DOMContentLoaded", function() {
   output$dominant_cell_type <- renderText({
     req(network_rv$current_results)
     req(input$network_analysis_type_systems == "deconv")
-    
-    if (!is.null(network_rv$current_results$summary_stats$deconv)) {
-      as.character(network_rv$current_results$summary_stats$deconv$dominant_cell_type)
-    } else { "N/A" }
+    res <- network_rv$current_results
+    if (deconv_is_fraction_method(res$method)) {
+      return(as.character(res$summary_stats$deconv$dominant_cell_type %||% "N/A"))
+    }
+    req(res$raw_deconv_results)
+    mat <- drop_xcell_aggregate_scores(as.matrix(res$raw_deconv_results), res$method)
+    inf <- tx_deconv_informative(mat)
+    gc <- res$group_comparison
+    n_diff <- if (!is.null(gc) && "p_adjusted" %in% names(gc)) sum(gc$cell_type %in% inf & gc$p_adjusted < 0.05, na.rm = TRUE) else NA
+    if (is.na(n_diff)) paste(length(inf), "informative") else paste0(n_diff, " of ", length(inf))
+  })
+
+  output$deconv_card2_label <- renderUI({
+    req(network_rv$current_results)
+    txt <- if (deconv_is_fraction_method(network_rv$current_results$method)) "Dominant Cell Type"
+           else "Informative cell types differing between groups (FDR < 0.05)"
+    p(txt, style = "margin: 0; font-size: 14px; opacity: 0.9;")
   })
   
   output$deconv_confidence <- renderText({
@@ -98373,6 +98525,16 @@ document.addEventListener("DOMContentLoaded", function() {
   
   
   # Bar Plot
+  output$deconv_barplot_container <- renderUI({
+    req(network_rv$current_results$raw_deconv_results)
+    m <- network_rv$current_results$method
+    h <- if (deconv_is_fraction_method(m)) 500 else
+      tx_deconv_plot_height(length(tx_deconv_panel_types(network_rv$current_results$raw_deconv_results, m,
+                                                         network_rv$current_results$group_comparison,
+                                                         isTRUE(input$deconv_show_all_celltypes))))
+    plotlyOutput("deconv_barplot", height = paste0(h, "px"))
+  })
+
   output$deconv_barplot <- renderPlotly({
     req(network_rv$current_results)
     req(input$network_analysis_type_systems == "deconv")
@@ -98382,7 +98544,9 @@ document.addEventListener("DOMContentLoaded", function() {
       plot_result <- create_cell_composition_barplot(
         deconv_results = network_rv$current_results$raw_deconv_results,
         method = network_rv$current_results$method,
-        sample_groups = network_rv$current_results$data_info$sample_groups
+        sample_groups = network_rv$current_results$data_info$sample_groups,
+        group_comparison = network_rv$current_results$group_comparison,
+        show_all = isTRUE(input$deconv_show_all_celltypes)
       )
       
       # ✅ Handle list return (new format) or direct plot (old format)
