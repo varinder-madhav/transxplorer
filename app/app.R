@@ -20284,6 +20284,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-10-16", tag = "New", text = "Drug Targets is now a Systems Biology module: upload a DE table (gene, log2FC, adjusted P) or a plain gene list, or send your Transcriptome or TCGA DE results, and rank drugs from DGIdb and Open Targets on their best-supported target. TCGA results also have buttons to continue in Enrichment, PPI and GRN."),
   list(date = "2026-10-16", tag = "Fixed", text = "FASTQ processing of public runs (SRA/ENA): the next run is now really downloaded while the current one is processed; before, it was downloaded a second time, adding 15-20 minutes per run."),
   list(date = "2026-10-15", tag = "Fixed", text = "TCGA expression box plots use the Wilcoxon rank-sum test (named on the plot) instead of an unlabelled t-test."),
   list(date = "2026-10-15", tag = "Improved", text = "What's New is easier to read, and 'See all updates' is split into New, Improved and Fixed."),
@@ -24775,7 +24776,7 @@ tags$script(HTML("
       # Hero Section
       div(class = "systems-bio-hero",
           h1(icon("network-wired"), " Systems Biology Analyses"),
-          p("Perform advanced network analyses independently - WGCNA, GRN, and PPI")
+          p("Run network and drug analyses on their own - WGCNA, GRN, PPI and drug targets - from your own data, a DE table or a gene list")
       ),
       
       # Module Selection
@@ -24783,7 +24784,7 @@ tags$script(HTML("
           h3("Select Analysis Module", style = "text-align: center; margin-bottom: 30px;"),
           
           fluidRow(
-            column(4,
+            column(3,
                    div(
                      class = "systems-module-card",
                      id = "wgcna_module_card",
@@ -24801,7 +24802,7 @@ tags$script(HTML("
                    )
             ),
             
-            column(4,
+            column(3,
                    div(
                      class = "systems-module-card",
                      id = "grn_module_card",
@@ -24819,7 +24820,7 @@ tags$script(HTML("
                    )
             ),
             
-            column(4,
+            column(3,
                    div(
                      class = "systems-module-card",
                      id = "ppi_module_card",
@@ -24835,6 +24836,24 @@ tags$script(HTML("
                          )
                      )
                    )
+            ),
+
+            column(3,
+                   div(
+                     class = "systems-module-card",
+                     id = "drug_module_card",
+                     onclick = "Shiny.setInputValue('select_systems_module', 'drug', {priority: 'event'})",
+                     div(style = "text-align: center;",
+                         icon("pills", style = "font-size: 48px; margin-bottom: 15px;"),
+                         h4("Drug Targets"),
+                         p("Drug prioritisation from a DE table or gene list"),
+                         tags$ul(style = "text-align: left; margin-top: 15px;",
+                                 tags$li("DGIdb and Open Targets"),
+                                 tags$li("Ranked on the best-supported target"),
+                                 tags$li("Opposes or reinforces the change")
+                         )
+                     )
+                   )
             )
           )
       ),
@@ -24842,9 +24861,10 @@ tags$script(HTML("
       # Reuse results from Transcriptome Analysis (no re-upload needed)
       div(class = "info-box", style = "max-width: 1150px; margin: 0 auto 25px auto;",
           h4(icon("link"), " Already ran a differential expression analysis?", style = "margin-top: 0;"),
-          p("No need to re-upload anything. Load the significant genes (adjusted p < 0.05, |log2FC| \u2265 1) from your Transcriptome Analysis into PPI or GRN, or run these analyses directly on your DE results in Advanced Analysis, which also runs WGCNA on your normalised counts, drug-target prioritisation and cell-type deconvolution (human samples)."),
+          p("No need to re-upload anything. Load the significant genes (adjusted p < 0.05, |log2FC| \u2265 1) from your Transcriptome Analysis into PPI or GRN, or your DE table (with its thresholds) into Drug Targets, or run these analyses directly on your DE results in Advanced Analysis, which also runs WGCNA on your normalised counts and cell-type deconvolution (human samples). TCGA results can be sent here from the TCGA tab."),
           actionButton("sb_use_degs_ppi", "Use my DEGs for PPI", icon = icon("share-alt"), class = "btn btn-default"),
           actionButton("sb_use_degs_grn", "Use my DEGs for GRN", icon = icon("sitemap"), class = "btn btn-default"),
+          actionButton("sb_use_degs_drug", "Use my DEGs for drug targets", icon = icon("pills"), class = "btn btn-default"),
           actionButton("sb_open_advanced", "Open Advanced Analysis on my DE results", icon = icon("arrow-right"), class = "btn btn-primary"),
           actionButton("sb_open_deconv", "Cell-type deconvolution (human)", icon = icon("layer-group"), class = "btn btn-default")
       ),
@@ -24861,6 +24881,80 @@ tags$script(HTML("
       
       # Analysis Panels (conditionally displayed)
       
+      # ============================================================================
+      # DRUG TARGETS STANDALONE PANEL (DE table or gene list)
+      # ============================================================================
+      conditionalPanel(
+        condition = "input.select_systems_module == 'drug'",
+
+        div(class = "standalone-analysis-panel",
+            div(class = "standalone-header",
+                h3(icon("pills"), " Drug Targets - Drug Prioritisation from a DE Table or Gene List"),
+                p("Find approved and investigational drugs acting on your genes (DGIdb, Open Targets) and rank them", style = "margin: 0;")
+            ),
+
+            div(class = "info-box",
+                icon("info-circle"), strong(" About drug-target prioritisation:"),
+                p("Each drug is ranked on its best-supported target among your genes: the target's significance among the genes analysed (when adjusted P values are given), weighted by the kind of evidence (known mechanism of action 1, interaction without a reported mechanism 0.5, clinical association only 0.25), plus clinical phase, interaction confidence and publication and database support. When log2 fold changes are given, the table also says whether the drug's action would oppose or reinforce the change of that target. Same method as the drug-target analysis in Advanced Analysis. Human genes only. The results are hypotheses for follow-up, not treatment recommendations.",
+                  style = "margin: 10px 0 0 0;")
+            ),
+
+            div(class = "standalone-upload-section",
+                h4(icon("upload"), " Step 1: Your Genes"),
+                fileInput("drug_sa_file", "Upload a DE table or gene list (.csv, .tsv, .txt)",
+                          accept = c(".csv", ".tsv", ".txt"), placeholder = "DE table or gene list"),
+                div(style = "text-align: center; margin: 15px 0;",
+                    tags$hr(style = "width: 45%; display: inline-block; margin: 0 10px;"),
+                    tags$span("OR", style = "font-weight: bold; color: #666;"),
+                    tags$hr(style = "width: 45%; display: inline-block; margin: 0 10px;")
+                ),
+                textAreaInput("drug_sa_text", "Paste genes or a table",
+                              placeholder = "One gene per line, or a table with a header, e.g.\ngene,log2FC,padj\nEGFR,2.4,1e-6\nCNR1,-3.1,2e-5",
+                              rows = 7, width = "100%"),
+                actionButton("drug_sa_use_text", "Use pasted text", icon = icon("check"), class = "btn-sm btn-info"),
+                actionButton("drug_sa_use_degs", "Use my DE results (Transcriptome Analysis)", icon = icon("link"), class = "btn-sm btn-default"),
+                div(class = "warning-box", style = "margin-top: 15px;",
+                    icon("exclamation-triangle"), strong(" Input:"),
+                    tags$ul(style = "margin: 10px 0 0 20px;",
+                            tags$li("DE table with a header: a gene column (gene symbol or Ensembl gene ID) and, if available, log2 fold change (log2FC, logFC, log2FoldChange) and adjusted P (padj, adj.P.Val, FDR). The thresholds in Step 2 select the genes."),
+                            tags$li("Gene list: one gene per line, or the first column of a file. Without P values every gene counts the same; without fold changes the effect on the target (opposes / reinforces) is not available."),
+                            tags$li("TCGA results can be sent here with the 'Drug targets' button in the TCGA differential expression results.")
+                    )
+                ),
+                uiOutput("drug_sa_input_status")
+            ),
+
+            div(class = "standalone-params-section",
+                h4(icon("sliders-h"), " Step 2: Parameters"),
+                fluidRow(
+                  column(4,
+                         radioButtons("drug_sa_focus", "Databases",
+                                      choices = c("DGIdb + Open Targets (recommended)" = "comprehensive",
+                                                  "DGIdb drug-gene interactions only" = "drug_discovery",
+                                                  "Open Targets clinical evidence only" = "disease_context"),
+                                      selected = "comprehensive"),
+                         tags$small(class = "text-muted", "Mechanisms of action (inhibitor, agonist...) come from DGIdb, so the evidence weighting and the opposes / reinforces flag need DGIdb.")
+                  ),
+                  column(4,
+                         numericInput("drug_sa_padj", "Adjusted P below", value = 0.05, min = 0, max = 1, step = 0.01),
+                         numericInput("drug_sa_lfc", "|log2FC| at least", value = 1, min = 0, step = 0.25),
+                         tags$small(class = "text-muted", "Applied only to the statistics present in your input.")
+                  ),
+                  column(4,
+                         sliderInput("drug_sa_max_drugs", "Maximum drugs per gene", min = 1, max = 20, value = 5, step = 1),
+                         sliderInput("drug_sa_min_conf", "Minimum interaction confidence", min = 0, max = 1, value = 0.2, step = 0.1)
+                  )
+                )
+            ),
+
+            div(style = "text-align: center; margin-top: 30px;",
+                actionButton("drug_sa_run", "Run Drug Prioritisation", class = "standalone-run-btn", icon = icon("play-circle"))
+            ),
+
+            uiOutput("drug_sa_results_ui")
+        )
+      ),
+
       # ============================================================================
       # WGCNA STANDALONE PANEL
       # ============================================================================
@@ -28045,6 +28139,16 @@ tags$script(HTML("
                                              )
                                       )
                                     ),
+                                    div(style = "background: #f3f6fb; border: 1px solid #dbe3ef; border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;",
+                                        strong(icon("share-square"), " Continue with these DEGs"),
+                                        tags$span(class = "text-muted", " (significant genes at this analysis' thresholds; the drug module also receives fold changes and adjusted P values)"),
+                                        div(style = "margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;",
+                                            actionButton("tcga_send_enrichment", "Enrichment (ORA)", icon = icon("sitemap"), class = "btn btn-default btn-sm"),
+                                            actionButton("tcga_send_ppi", "PPI network", icon = icon("share-alt"), class = "btn btn-default btn-sm"),
+                                            actionButton("tcga_send_grn", "Regulatory network (GRN)", icon = icon("project-diagram"), class = "btn btn-default btn-sm"),
+                                            actionButton("tcga_send_drug", "Drug targets", icon = icon("pills"), class = "btn btn-primary btn-sm")
+                                        )
+                                    ),
                                     tabsetPanel(
                                       id = "tcga_deg_subtabs",
                                       type = "tabs",
@@ -30580,6 +30684,347 @@ server <- function(input, output, session) {
     shinyjs::runjs("Shiny.setInputValue('select_systems_module', 'grn', {priority: 'event'})")
     showNotification(sprintf("Loaded %d significant DE genes into the GRN gene list.", length(genes)), type = "message", duration = 6)
   })
+  # ===== Systems Biology: Drug Targets from a DE table or gene list =====
+  drug_sa_rv <- reactiveValues(genes = NULL, source = NULL, results = NULL, used = NULL, params = NULL)
+
+  # gene / log2FC / padj from a table (NA where the input has no such column); Ensembl IDs -> symbols
+  tx_drug_input_table <- function(df) {
+    if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(NULL)
+    nm <- names(df); low <- tolower(nm)
+    pick <- function(cands) { i <- match(cands, low); i <- i[!is.na(i)]; if (length(i)) nm[i[1]] else NA_character_ }
+    gc <- pick(c("gene_name", "gene_symbol", "symbol", "hgnc_symbol", "gene", "genes", "gene_id", "geneid", "ensembl_id", "ensembl", "id"))
+    fc <- pick(c("log2fc", "logfc", "log2foldchange", "log2_fold_change", "lfc"))
+    pa <- pick(c("padj", "adj.p.val", "adj_p_val", "fdr", "p.adjust", "qvalue", "q_value", "adjusted_pvalue", "adj_pvalue", "p_adj"))
+    if (is.na(gc)) {
+      chr <- nm[vapply(df, function(x) is.character(x) || is.factor(x), logical(1))]
+      gc <- if (length(chr)) chr[1] else NA_character_
+    }
+    genes <- if (is.na(gc)) rownames(df) else as.character(df[[gc]])
+    # version suffixes only on Ensembl IDs (clone-based names such as AL365181.2 are distinct genes)
+    out <- data.frame(gene = sub("^(ENS[A-Z]*G[0-9]+)\\.[0-9]+$", "\\1", trimws(genes)),
+                      log2FC = if (is.na(fc)) NA_real_ else suppressWarnings(as.numeric(df[[fc]])),
+                      padj = if (is.na(pa)) NA_real_ else suppressWarnings(as.numeric(df[[pa]])),
+                      stringsAsFactors = FALSE)
+    out <- out[!is.na(out$gene) & nzchar(out$gene), , drop = FALSE]
+    ens <- grepl("^ENSG[0-9]+$", out$gene)
+    if (any(ens) && requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
+      sym <- tryCatch(suppressMessages(AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db, keys = unique(out$gene[ens]),
+                                                              keytype = "ENSEMBL", column = "SYMBOL", multiVals = "first")),
+                      error = function(e) NULL)
+      if (!is.null(sym)) { m <- unname(sym[out$gene[ens]]); out$gene[ens] <- ifelse(is.na(m), out$gene[ens], m) }
+    }
+    if (nrow(out) == 0) return(NULL)
+    attr(out, "columns") <- c(gene = gc, log2FC = fc, padj = pa)
+    out
+  }
+
+  # Text (pasted or file lines): a table with a header, or a plain list of genes
+  tx_drug_read_lines <- function(lines) {
+    lines <- trimws(lines); lines <- lines[nzchar(lines) & !startsWith(lines, "#")]
+    if (!length(lines)) return(NULL)
+    as_list <- function(tokens) {
+      g <- trimws(gsub('"', "", tokens)); g <- g[nzchar(g)]
+      g <- g[!tolower(g) %in% c("gene", "genes", "symbol", "gene_symbol", "gene_name", "gene_id", "id")]
+      tx_drug_input_table(data.frame(gene = g, stringsAsFactors = FALSE))
+    }
+    if (!any(grepl("[,\t;]", lines))) return(as_list(unlist(strsplit(lines, "\\s+"))))
+    sep <- if (sum(grepl("\t", lines)) >= sum(grepl(",", lines))) "\t" else if (any(grepl(",", lines))) "," else ";"
+    df <- tryCatch(utils::read.table(text = lines, sep = sep, header = TRUE, quote = "\"", comment.char = "",
+                                     check.names = FALSE, stringsAsFactors = FALSE, fill = TRUE),
+                   error = function(e) NULL)
+    known <- c("gene_name", "gene_symbol", "symbol", "hgnc_symbol", "gene", "genes", "gene_id", "geneid", "ensembl_id",
+               "ensembl", "id", "log2fc", "logfc", "log2foldchange", "log2_fold_change", "lfc", "padj", "adj.p.val",
+               "adj_p_val", "fdr", "p.adjust", "qvalue", "q_value", "adjusted_pvalue", "adj_pvalue", "p_adj")
+    # no recognisable header (e.g. "TP53, EGFR, MYC"): every entry is a gene
+    if (is.null(df) || !any(tolower(names(df)) %in% known)) return(as_list(unlist(strsplit(lines, "[,\t;]"))))
+    tx_drug_input_table(df)
+  }
+
+  # Genes passing the thresholds (only for the statistics present); one row per gene, most significant kept
+  tx_drug_select <- function(g, p_cut, lfc_cut) {
+    has_p <- any(!is.na(g$padj)); has_fc <- any(!is.na(g$log2FC))
+    keep <- rep(TRUE, nrow(g)); rule <- character(0)
+    if (has_p) { keep <- keep & !is.na(g$padj) & g$padj < p_cut; rule <- c(rule, paste0("adjusted P < ", p_cut)) }
+    if (has_fc) { keep <- keep & !is.na(g$log2FC) & abs(g$log2FC) >= lfc_cut; rule <- c(rule, paste0("|log2FC| ≥ ", lfc_cut)) }
+    sel <- g[keep, , drop = FALSE]
+    sel <- sel[order(sel$padj, -abs(sel$log2FC)), , drop = FALSE]
+    sel <- sel[!duplicated(toupper(sel$gene)), , drop = FALSE]
+    attr(sel, "rule") <- if (length(rule)) paste(rule, collapse = " and ") else "all genes in the list"
+    sel
+  }
+
+  tx_drug_load <- function(df, source, p = NULL, lfc = NULL) {
+    if (is.null(df) || nrow(df) == 0) {
+      showNotification("No genes found in the input.", type = "warning", duration = 8)
+      return(invisible(FALSE))
+    }
+    drug_sa_rv$genes <- df; drug_sa_rv$source <- source; drug_sa_rv$results <- NULL
+    if (!is.null(p)) updateNumericInput(session, "drug_sa_padj", value = p)
+    if (!is.null(lfc)) updateNumericInput(session, "drug_sa_lfc", value = lfc)
+    invisible(TRUE)
+  }
+
+  tx_open_systems_module <- function(module) {
+    updateNavbarPage(session, "main_tabs", selected = "systems_biology_standalone")
+    shinyjs::delay(300, shinyjs::runjs(sprintf("Shiny.setInputValue('select_systems_module', '%s', {priority: 'event'})", module)))
+  }
+
+  observeEvent(input$drug_sa_file, {
+    f <- input$drug_sa_file; req(f)
+    lines <- tryCatch(readLines(f$datapath, warn = FALSE, encoding = "UTF-8"), error = function(e) character(0))
+    tx_drug_load(tx_drug_read_lines(lines), paste0("file ", f$name))
+  })
+  observeEvent(input$drug_sa_use_text, {
+    tx_drug_load(tx_drug_read_lines(strsplit(input$drug_sa_text %||% "", "\n")[[1]]), "pasted text")
+  })
+
+  # DE results of the Transcriptome Analysis (comparison shown on the DE page), with its thresholds
+  tx_drug_from_de <- function() {
+    res <- rv_deg_main$deg_results
+    if (is.null(res) || !is.data.frame(res) || nrow(res) == 0) {
+      showNotification("No DE results yet. Run a differential expression analysis in Transcriptome Analysis first.", type = "warning", duration = 8)
+      return(invisible(FALSE))
+    }
+    act <- tryCatch(deg_rows_for_active_comparison(res, rv_deg_main$active_deg_comparison), error = function(e) res)
+    pcol <- if (identical(input$pvalue_type_main %||% "adjusted", "adjusted")) "adj.P.Val" else "P.Value"
+    pcol <- intersect(c(pcol, "adj.P.Val", "padj", "FDR"), colnames(act))[1]
+    fcol <- intersect(c("log2FC", "logFC", "log2FoldChange"), colnames(act))[1]
+    gcol <- intersect(c("gene_symbol", "SYMBOL", "gene_name", "gene_id"), colnames(act))[1]
+    genes <- if (is.na(gcol)) rownames(act) else as.character(act[[gcol]])
+    df <- tx_drug_input_table(data.frame(gene = genes,
+                                         log2FC = if (is.na(fcol)) NA_real_ else act[[fcol]],
+                                         padj = if (is.na(pcol)) NA_real_ else act[[pcol]], stringsAsFactors = FALSE))
+    lfc <- suppressWarnings(as.numeric(rv_deg_main$log2fc_max_main %||% input$log2fc_max_main %||% input$log2fc_max %||% 1))
+    cmp <- rv_deg_main$active_deg_comparison
+    src <- paste0("Transcriptome Analysis DE results", if (!is.null(cmp) && nzchar(cmp)) paste0(" (", cmp, ")") else "",
+                  ", ", format(nrow(df), big.mark = ","), " genes tested")
+    tx_drug_load(df, src, p = input$p_val_threshold_main %||% 0.05, lfc = if (is.na(lfc)) 1 else abs(lfc))
+  }
+  observeEvent(input$drug_sa_use_degs, { tx_drug_from_de() })
+  observeEvent(input$sb_use_degs_drug, { if (isTRUE(tx_drug_from_de())) tx_open_systems_module("drug") })
+
+  output$drug_sa_input_status <- renderUI({
+    g <- drug_sa_rv$genes
+    if (is.null(g)) return(tags$p(class = "text-muted", style = "margin-top: 12px;", icon("info-circle"), " No genes loaded yet."))
+    has_p <- any(!is.na(g$padj)); has_fc <- any(!is.na(g$log2FC))
+    sel <- tx_drug_select(g, input$drug_sa_padj %||% 0.05, input$drug_sa_lfc %||% 1)
+    stats <- if (has_p && has_fc) "log2FC and adjusted P found" else if (has_fc) "log2FC found, no adjusted P" else
+      if (has_p) "adjusted P found, no log2FC" else "no statistics (gene list)"
+    div(class = "info-box", style = "margin-top: 15px; margin-bottom: 0;",
+        strong(icon("check-circle"), " Loaded: "), drug_sa_rv$source, br(),
+        sprintf("%s genes; %s.", format(nrow(g), big.mark = ","), stats), br(),
+        strong(sprintf("%s genes will be analysed", format(nrow(sel), big.mark = ","))), sprintf(" (%s).", attr(sel, "rule")),
+        if (nrow(sel) > 3000) tags$div(style = "color: #c62828; margin-top: 6px;", "More than 3000 genes: use stricter thresholds or a shorter list.")
+    )
+  })
+
+  observeEvent(input$drug_sa_run, {
+    g <- drug_sa_rv$genes
+    if (is.null(g)) { showNotification("Load a DE table or gene list first (Step 1).", type = "warning", duration = 8); return() }
+    sel <- tx_drug_select(g, input$drug_sa_padj %||% 0.05, input$drug_sa_lfc %||% 1)
+    n <- nrow(sel)
+    if (n == 0) { showNotification("No genes pass the thresholds.", type = "warning", duration = 8); return() }
+    if (n > 3000) {
+      showNotification(sprintf("%s genes pass the thresholds; the limit is 3000. Use stricter thresholds or a shorter list.",
+                               format(n, big.mark = ",")), type = "error", duration = 10)
+      return()
+    }
+    up <- unique(sel$gene[!is.na(sel$log2FC) & sel$log2FC > 0]); down <- unique(sel$gene[!is.na(sel$log2FC) & sel$log2FC < 0])
+    selected_genes <- list(up_genes = up, down_genes = down, all_genes = unique(sel$gene),
+                           gene_counts = list(total = n, upregulated = length(up), downregulated = length(down)),
+                           deg_stats = data.frame(gene = sel$gene, log2FC = sel$log2FC, padj = sel$padj, stringsAsFactors = FALSE))
+    shinyjs::disable("drug_sa_run"); on.exit(shinyjs::enable("drug_sa_run"), add = TRUE)
+    t0 <- Sys.time()
+    res <- withProgress(message = "Drug-target prioritisation", value = 0.2,
+                        detail = sprintf("%d genes: querying drug databases...", n), {
+      tryCatch(run_comprehensive_drug_target_analysis_optimized_fixed(
+        selected_genes = selected_genes, analysis_focus = input$drug_sa_focus %||% "comprehensive",
+        max_drugs_per_gene = input$drug_sa_max_drugs %||% 5, min_confidence = input$drug_sa_min_conf %||% 0.2,
+        organism = "human"),
+        error = function(e) { showNotification(paste("Drug-target analysis failed:", conditionMessage(e)), type = "error", duration = 10); NULL })
+    })
+    if (is.null(res)) return()
+    drug_sa_rv$results <- res; drug_sa_rv$used <- sel
+    drug_sa_rv$params <- list(
+      input = drug_sa_rv$source, gene_selection = attr(sel, "rule"), genes_analysed = n,
+      statistics = if (any(!is.na(sel$padj))) "adjusted P (and log2FC if given)" else if (any(!is.na(sel$log2FC))) "log2FC only" else "none (gene list)",
+      databases = c(comprehensive = "DGIdb + Open Targets", drug_discovery = "DGIdb", disease_context = "Open Targets")[[input$drug_sa_focus %||% "comprehensive"]],
+      max_drugs_per_gene = input$drug_sa_max_drugs %||% 5, min_confidence = input$drug_sa_min_conf %||% 0.2,
+      run_seconds = round(as.numeric(difftime(Sys.time(), t0, units = "secs"))), run_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"))
+    npr <- if (is.data.frame(res$drug_prioritization)) nrow(res$drug_prioritization) else 0L
+    showNotification(sprintf("Drug prioritisation complete: %d drugs for %d genes.", npr, n), type = "message", duration = 8)
+  })
+
+  tx_drug_sa_table <- reactive({
+    pr <- drug_sa_rv$results$drug_prioritization
+    req(is.data.frame(pr), nrow(pr) > 0)
+    if (!"drug_name" %in% names(pr) && "molecule_name" %in% names(pr)) pr$drug_name <- pr$molecule_name
+    pr <- pr[order(-pr$comprehensive_score), , drop = FALSE]
+    pr$comprehensive_score <- round(pr$comprehensive_score, 3)
+    cols <- intersect(c("drug_name", "comprehensive_score", "best_target", "best_target_log2FC", "best_target_adj_p",
+                        "best_target_basis", "effect_on_best_target", "max_clinical_phase", "n_targets", "target_genes",
+                        "n_opposing_targets", "n_reinforcing_targets", "mechanisms", "evidence_summary", "disease_areas",
+                        "total_publications", "all_sources"), names(pr))
+    pr[, cols, drop = FALSE]
+  })
+
+  output$drug_sa_results_ui <- renderUI({
+    res <- drug_sa_rv$results; req(res)
+    pr <- res$drug_prioritization
+    if (!is.data.frame(pr) || nrow(pr) == 0) {
+      return(div(class = "warning-box", style = "margin-top: 25px;", icon("exclamation-triangle"),
+                 " No drugs were found for these genes in the selected databases."))
+    }
+    used <- drug_sa_rv$used; prm <- drug_sa_rv$params
+    no_p <- all(is.na(used$padj)); no_fc <- all(is.na(used$log2FC))
+    card <- function(v, l, col) div(style = sprintf("flex: 1; min-width: 150px; background: #fff; border-radius: 8px; padding: 14px; border-top: 4px solid %s; box-shadow: 0 1px 4px rgba(0,0,0,0.08); text-align: center;", col),
+                                     div(style = "font-size: 26px; font-weight: 700;", v), div(style = "color: #555;", l))
+    div(style = "margin-top: 30px;",
+        h4(icon("chart-bar"), " Results"),
+        div(style = "display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0 12px 0;",
+            card(format(nrow(used), big.mark = ","), "Genes analysed", "#667eea"),
+            card(format(nrow(pr), big.mark = ","), "Drugs found", "#26a69a"),
+            card(format(length(unique(stats::na.omit(pr$best_target))), big.mark = ","), "Genes as best target", "#42a5f5"),
+            card(format(sum(pr$best_target_basis == "known mechanism", na.rm = TRUE), big.mark = ","), "Drugs with a known mechanism", "#ab47bc"),
+            card(format(sum(pr$max_clinical_phase >= 4, na.rm = TRUE), big.mark = ","), "Approved (phase 4)", "#ef6c00")),
+        tags$p(class = "text-muted", sprintf("Input: %s. Genes: %s. Databases: %s. Run time %d s.",
+                                             prm$input, prm$gene_selection, prm$databases, prm$run_seconds)),
+        if (no_p || no_fc) div(class = "warning-box",
+                               icon("exclamation-triangle"),
+                               if (no_p) " No adjusted P values: every gene counts the same as a target, so drugs are ranked by the kind of evidence, clinical phase and database support." else "",
+                               if (no_fc) " No fold changes: the effect on the target (opposes / reinforces the change) is 'unknown'." else ""),
+        tabsetPanel(id = "drug_sa_tabs",
+                    tabPanel("Prioritised drugs", br(), div(style = "overflow-x: auto;", DT::dataTableOutput("drug_sa_table"))),
+                    tabPanel("Top drugs", br(), plotOutput("drug_sa_plot", height = "640px"),
+                             downloadButton("drug_sa_plot_png", "Download plot (PNG)", class = "btn-sm")),
+                    tabPanel("All interactions", br(), div(style = "overflow-x: auto;", DT::dataTableOutput("drug_sa_interactions"))),
+                    tabPanel("Genes analysed", br(), div(style = "overflow-x: auto;", DT::dataTableOutput("drug_sa_genes")))),
+        br(),
+        downloadButton("drug_sa_download_xlsx", "Download all results (Excel)", class = "btn-success")
+    )
+  })
+
+  # Long text cells (disease areas, sources...) are shortened on screen (full text on hover and in the exports)
+  tx_dt_buttons <- function(df, name) {
+    txt_cols <- unname(which(vapply(df, function(x) is.character(x) && any(nchar(x) > 60, na.rm = TRUE), logical(1)))) - 1L
+    p_cols <- names(df)[grepl("adj_p|padj|p_value|pvalue|^p\\.", names(df), ignore.case = TRUE) & vapply(df, is.numeric, logical(1))]
+    # cells arrive HTML-escaped by DT (escape = TRUE), so they can go into the title attribute as they are
+    short <- DT::JS("function(data, type) { if (type !== 'display' || data === null || data.length <= 60) return data;",
+                    "return '<span title=\"' + data + '\">' + data.substr(0, 57) + '...</span>'; }")
+    dt <- DT::datatable(df, rownames = FALSE, filter = "top", extensions = "Buttons", escape = TRUE,
+                  options = list(pageLength = 15, scrollX = FALSE, dom = "Bfrtip",
+                                 columnDefs = if (length(txt_cols)) list(list(targets = txt_cols, render = short)) else list(),
+                                 buttons = list(list(extend = "csv", filename = name), list(extend = "excel", filename = name))))
+    if (length(p_cols)) dt <- DT::formatSignif(dt, p_cols, digits = 3)
+    dt
+  }
+  output$drug_sa_table <- DT::renderDataTable({ tx_dt_buttons(tx_drug_sa_table(), "drug_prioritisation") }, server = FALSE)
+  output$drug_sa_interactions <- DT::renderDataTable({
+    raw <- drug_sa_rv$results$raw_data; req(is.data.frame(raw), nrow(raw) > 0)
+    tx_dt_buttons(raw, "drug_target_interactions")
+  }, server = FALSE)
+  tx_drug_sa_genes <- reactive({
+    used <- drug_sa_rv$used; req(used)
+    raw <- drug_sa_rv$results$raw_data
+    hit <- if (is.data.frame(raw) && "gene_name" %in% names(raw)) table(toupper(raw$gene_name)) else integer(0)
+    data.frame(gene = used$gene, log2FC = used$log2FC, adj_p = signif(used$padj, 3),
+               drug_interactions = as.integer(ifelse(is.na(hit[toupper(used$gene)]), 0L, hit[toupper(used$gene)])),
+               stringsAsFactors = FALSE)
+  })
+  output$drug_sa_genes <- DT::renderDataTable({ tx_dt_buttons(tx_drug_sa_genes(), "drug_genes_analysed") }, server = FALSE)
+
+  tx_drug_sa_plot <- reactive({
+    pr <- utils::head(tx_drug_sa_table(), 20)
+    pr$label <- paste0(pr$drug_name, " (", pr$best_target, ")")
+    pr$label <- factor(pr$label, levels = rev(unique(pr$label)))
+    eff <- if ("effect_on_best_target" %in% names(pr)) pr$effect_on_best_target else "unknown"
+    pr$effect <- factor(ifelse(is.na(eff), "unknown", eff), levels = c("opposes", "reinforces", "unknown"))
+    ggplot2::ggplot(pr, ggplot2::aes(x = comprehensive_score, y = label, fill = effect)) +
+      ggplot2::geom_col(width = 0.7) +
+      ggplot2::scale_fill_manual(values = c(opposes = "#1f78b4", reinforces = "#e66101", unknown = "#9e9e9e"), drop = TRUE,
+                                 name = "Effect on the change\nof the best target") +
+      ggplot2::labs(x = "Priority score", y = NULL, title = "Top drugs (best-supported target in brackets)",
+                    subtitle = paste0(drug_sa_rv$params$input, "; ", drug_sa_rv$params$gene_selection)) +
+      ggplot2::theme_minimal(base_size = 13) +
+      ggplot2::theme(panel.grid.major.y = ggplot2::element_blank(), plot.title.position = "plot",
+                     plot.subtitle = ggplot2::element_text(size = 10, colour = "#555"))
+  })
+  output$drug_sa_plot <- renderPlot({ tx_drug_sa_plot() })
+  output$drug_sa_plot_png <- downloadHandler(
+    filename = function() paste0("drug_prioritisation_top20_", Sys.Date(), ".png"),
+    content = function(file) ggplot2::ggsave(file, tx_drug_sa_plot(), width = 10, height = 8, dpi = 300, bg = "white"))
+  output$drug_sa_download_xlsx <- downloadHandler(
+    filename = function() paste0("drug_prioritisation_", Sys.Date(), ".xlsx"),
+    content = function(file) {
+      wb <- openxlsx::createWorkbook()
+      prm <- drug_sa_rv$params
+      sheets <- list("Prioritised drugs" = tx_drug_sa_table(),
+                     "All interactions" = drug_sa_rv$results$raw_data,
+                     "Genes analysed" = tx_drug_sa_genes(),
+                     "Parameters" = data.frame(parameter = names(prm), value = vapply(prm, function(v) paste(v, collapse = "; "), character(1)),
+                                               stringsAsFactors = FALSE))
+      for (nm in names(sheets)) {
+        openxlsx::addWorksheet(wb, nm)
+        if (is.data.frame(sheets[[nm]])) openxlsx::writeData(wb, nm, sheets[[nm]])
+      }
+      openxlsx::saveWorkbook(wb, file, overwrite = TRUE)
+    })
+
+  # ===== TCGA: continue with the significant DEGs in other analyses =====
+  tx_tcga_sig <- function() {
+    res <- tcga_rv$deg_data; info <- tcga_rv$results$analysis_info
+    if (is.null(res) || !is.data.frame(res) || nrow(res) == 0 || is.null(info)) {
+      showNotification("Run the TCGA differential expression analysis first.", type = "warning", duration = 8)
+      return(NULL)
+    }
+    g <- as.character(res$gene_name); g[is.na(g) | !nzchar(g)] <- as.character(res$ensembl_id)[is.na(g) | !nzchar(g)]
+    sig <- !is.na(res$adj.P.Val) & res$adj.P.Val <= info$pval_threshold & !is.na(res$log2FC) & abs(res$log2FC) >= info$fc_threshold
+    o <- order(res$adj.P.Val[sig])
+    list(res = res, genes = g, sig_genes = unique(g[sig][o]), tested = unique(g[!is.na(g)]), info = info,
+         label = sprintf("%s DE results (%s vs %s)", info$project, info$test_group %||% "", info$reference_group %||% ""))
+  }
+  observeEvent(input$tcga_send_enrichment, {
+    t <- tx_tcga_sig(); req(t)
+    if (!length(t$sig_genes)) { showNotification("No significant TCGA DEGs at these thresholds.", type = "warning"); return() }
+    updateRadioButtons(session, "enrichment_mode", selected = "ora")
+    updateRadioButtons(session, "ora_inputType", selected = "paste")
+    updateTextAreaInput(session, "ora_gene_list", value = paste(t$sig_genes, collapse = "\n"))
+    updateTextAreaInput(session, "ora_background_list", value = paste(t$tested, collapse = "\n"))
+    updateNavbarPage(session, "main_tabs", selected = "enrichment_analysis")
+    showNotification(sprintf("Loaded %d TCGA DEGs into Enrichment Analysis, with all %s tested genes as the background. Pick databases and run ORA.",
+                             length(t$sig_genes), format(length(t$tested), big.mark = ",")), type = "message", duration = 10)
+  })
+  observeEvent(input$tcga_send_ppi, {
+    t <- tx_tcga_sig(); req(t)
+    g <- utils::head(t$sig_genes, 500)
+    if (length(g) < 3) { showNotification("Too few significant TCGA DEGs for a PPI network.", type = "warning"); return() }
+    updateSelectInput(session, "ppi_standalone_organism", selected = "9606")
+    updateTextAreaInput(session, "ppi_standalone_gene_text", value = paste(g, collapse = "\n"))
+    tx_open_systems_module("ppi")
+    showNotification(sprintf("Loaded the %d most significant TCGA DEGs (of %d) into PPI.", length(g), length(t$sig_genes)), type = "message", duration = 8)
+  })
+  observeEvent(input$tcga_send_grn, {
+    t <- tx_tcga_sig(); req(t)
+    g <- utils::head(t$sig_genes, 500)
+    if (length(g) < 10) { showNotification("GRN needs at least 10 significant TCGA DEGs.", type = "warning"); return() }
+    updateRadioButtons(session, "grn_standalone_input_mode", selected = "quick")
+    updateSelectInput(session, "grn_standalone_organism", selected = "human")
+    updateTextAreaInput(session, "grn_standalone_gene_text", value = paste(g, collapse = "\n"))
+    grn_standalone_rv$quick_mode_genes <- g
+    tx_open_systems_module("grn")
+    showNotification(sprintf("Loaded the %d most significant TCGA DEGs (of %d) into GRN.", length(g), length(t$sig_genes)), type = "message", duration = 8)
+  })
+  observeEvent(input$tcga_send_drug, {
+    t <- tx_tcga_sig(); req(t)
+    df <- tx_drug_input_table(data.frame(gene = t$genes, log2FC = t$res$log2FC, padj = t$res$adj.P.Val, stringsAsFactors = FALSE))
+    ok <- tx_drug_load(df, sprintf("%s, %s genes tested", t$label, format(nrow(df), big.mark = ",")),
+                       p = t$info$pval_threshold, lfc = t$info$fc_threshold)
+    if (isTRUE(ok)) {
+      tx_open_systems_module("drug")
+      showNotification("TCGA DE results loaded into Drug Targets with the thresholds of the TCGA analysis. Check Step 2 and run.", type = "message", duration = 10)
+    }
+  })
+
   # Advanced Analysis picks its type through clickable cards (selectAnalysisCard); the cards
   # render after the tab opens, so wait for them before selecting.
   tx_go_advanced <- function(type = NULL, label = "") {
@@ -73892,7 +74337,8 @@ document.addEventListener("DOMContentLoaded", function() {
     if (!is.null(ds) && nrow(ds) > 0) {
       ds <- ds[order(ds$padj, -abs(ds$log2FC)), , drop = FALSE]
       ds <- ds[!duplicated(toupper(ds$gene)), , drop = FALSE]
-      ds$evidence <- 1 - (seq_len(nrow(ds)) - 1) / nrow(ds)
+      # Gene list without P values: no ranking among the genes, each counts the same
+      ds$evidence <- if (all(is.na(ds$padj))) 1 else 1 - (seq_len(nrow(ds)) - 1) / nrow(ds)
       m <- match(toupper(combined_data$gene_name), toupper(ds$gene))
       combined_data$target_evidence <- ds$evidence[m]
       combined_data$target_log2FC <- ds$log2FC[m]
