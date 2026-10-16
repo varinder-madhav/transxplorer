@@ -20284,6 +20284,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-10-16", tag = "Fixed", text = "FASTQ processing of public runs (SRA/ENA): the next run is now really downloaded while the current one is processed; before, it was downloaded a second time, adding 15-20 minutes per run."),
   list(date = "2026-10-15", tag = "Fixed", text = "TCGA expression box plots use the Wilcoxon rank-sum test (named on the plot) instead of an unlabelled t-test."),
   list(date = "2026-10-15", tag = "Improved", text = "What's New is easier to read, and 'See all updates' is split into New, Improved and Fixed."),
 list(date = "2026-10-15", tag = "Improved", text = "Drug prioritisation scores each drug on its best-supported DEG target (significance among the DEGs, weighted by the kind of evidence: known mechanism, interaction, or clinical association) instead of the number of DEG targets, and shows whether the drug's action would oppose or reinforce the observed change of that target."),
@@ -29947,7 +29948,7 @@ fc_files <- character(0); quant_dirs <- character(0)
 
       # 0. Download this run (public data only); usually already fetched in the background
       if (!is.null(s$urls)) {
-        if (!is.null(prefetch) && identical(prefetch$si, si)) {
+        if (!is.null(prefetch) && identical(as.integer(prefetch$si), as.integer(si))) {
           res <- parallel::mccollect(prefetch$job, wait = TRUE)[[1]]
           prefetch <- NULL
         } else {
@@ -29956,7 +29957,7 @@ fc_files <- character(0); quant_dirs <- character(0)
         if (!isTRUE(res)) stop(if (is.character(res)) res else paste0("Download failed for run ", base))
         write_log(sprintf("Downloaded %s (%.2f GB)", base, sum(file.size(s$files)) / 1024^3), "success")
         if (si < n_samples && !is.null(samples[[si + 1]]$urls)) {
-          prefetch <- list(si = si + 1, job = parallel::mcparallel(fetch_run(samples[[si + 1]]), silent = TRUE))
+          prefetch <- list(si = si + 1L, job = parallel::mcparallel(fetch_run(samples[[si + 1]]), silent = TRUE))
         }
       }
 
