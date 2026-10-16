@@ -20284,6 +20284,8 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-10-16", tag = "New", text = "TCGA box plot and survival plot: download the values behind each plot as a CSV file (per sample or per patient), to redraw or re-test them elsewhere."),
+  list(date = "2026-10-16", tag = "Fixed", text = "TCGA survival plot shows a single legend (it repeated the HIGH/LOW groups for the confidence bands)."),
   list(date = "2026-10-16", tag = "Fixed", text = "PPI gene lists: pasted lists are split only at spaces, line breaks, commas and semicolons; mouse and other mixed-case gene symbols containing the letter s (e.g. Tnfrsf1a) were split in two before."),
   list(date = "2026-10-16", tag = "New", text = "Drug Targets is now a Systems Biology module: upload a DE table (gene, log2FC, adjusted P) or a plain gene list, or send your Transcriptome or TCGA DE results, and rank drugs from DGIdb and Open Targets on their best-supported target. TCGA results also have buttons to continue in Enrichment, PPI and GRN."),
   list(date = "2026-10-16", tag = "Fixed", text = "FASTQ processing of public runs (SRA/ENA): the next run is now really downloaded while the current one is processed; before, it was downloaded a second time, adding 15-20 minutes per run."),
@@ -28651,7 +28653,8 @@ tags$script(HTML("
                                   div(style = "position: relative;",
                                       plotOutput("expression_boxplot", height = "800px"),
                                       div(style = "position: absolute; top: 10px; right: 10px;",
-                                          downloadButton("download_boxplot", "Download Plot")
+                                          downloadButton("download_boxplot", "Download Plot"),
+                                          downloadButton("download_boxplot_data", "Data (CSV)")
                                       )
                                   )
                                 ),
@@ -28746,7 +28749,8 @@ tags$script(HTML("
                                   div(style = "position: relative;",
                                       plotOutput("survival_plot", height = "800px"),
                                       div(style = "position: absolute; top: 10px; right: 10px;",
-                                          downloadButton("download_survival", "Download Plot")
+                                          downloadButton("download_survival", "Download Plot"),
+                                          downloadButton("download_survival_data", "Data (CSV)")
                                       )
                                   )
                                 ),
@@ -30982,7 +30986,7 @@ server <- function(input, output, session) {
     sig <- !is.na(res$adj.P.Val) & res$adj.P.Val <= info$pval_threshold & !is.na(res$log2FC) & abs(res$log2FC) >= info$fc_threshold
     o <- order(res$adj.P.Val[sig])
     list(res = res, genes = g, sig_genes = unique(g[sig][o]), tested = unique(g[!is.na(g)]), info = info,
-         label = sprintf("%s DE results (%s vs %s)", info$project, info$test_group %||% "", info$reference_group %||% ""))
+         label = sprintf("%s DE results (%s vs %s)", info$project, gsub("_", " ", info$test_group %||% ""), gsub("_", " ", info$reference_group %||% "")))
   }
   observeEvent(input$tcga_send_enrichment, {
     t <- tx_tcga_sig(); req(t)
@@ -106598,6 +106602,7 @@ normalization = input$normalization_method,
           valid_mask <- compact$sample_type %in% valid_sample_types & first_copy
 
           expr_values <- compact$tpm[row_idx, valid_mask]
+          sample_ids <- compact$barcode[valid_mask]
           sample_types <- compact$sample_type[valid_mask]
 
         } else {
@@ -106620,12 +106625,14 @@ tcga_data_filtered <- tcga_data[, valid_samples]
 
           expr_values <- as.numeric(tcga[gene_id, ])
           sample_types <- tcga_data_filtered@colData$definition
+          sample_ids <- colnames(tcga_data_filtered)
         }
 
         incProgress(0.6, detail = "Building plot...")
 
         # Build expression data frame
         gene_expression <- data.frame(
+          Sample = as.character(sample_ids),
           Expression = as.numeric(expr_values),
           SampleType = factor(sample_types, levels = valid_sample_types),
           stringsAsFactors = FALSE
@@ -106710,6 +106717,15 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     }
   )
   
+  output$download_boxplot_data <- downloadHandler(
+    filename = function() paste0(input$cancer_type_box, "_", input$gene_name_box, "_boxplot_data.csv"),
+    content = function(file) {
+      d <- rv_boxplot$boxplot_data; req(d)
+      names(d)[names(d) == "Expression"] <- "TPM"; names(d)[names(d) == "log2_expression"] <- "log2_TPM_plus_1"
+      utils::write.csv(d, file, row.names = FALSE)
+    }
+  )
+
   output$summary_text_box <- renderText({
     if (!is.null(rv_boxplot$error_message)) {
       return(rv_boxplot$error_message)
@@ -106969,6 +106985,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
       labs(x = "Time (days)",
            y = "Survival Probability",
            color = paste(rv_survival$results$gene_name, "Expression"),
+           fill = paste(rv_survival$results$gene_name, "Expression"),   # same title: one legend for lines and bands
            caption = paste("n =", nrow(rv_survival$results$analysis_data),
                            "patients (", sum(rv_survival$results$analysis_data$deceased), "events)")) +
       theme_minimal() +
@@ -107040,6 +107057,18 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     }
   )
   
+  output$download_survival_data <- downloadHandler(
+    filename = function() paste0(rv_survival$results$cancer_type %||% input$cancer_type, "_", rv_survival$results$gene_name %||% input$gene_name, "_survival_data.csv"),
+    content = function(file) {
+      d <- as.data.frame(rv_survival$results$analysis_data); req(nrow(d) > 0)
+      keep <- intersect(c("case_id", "barcode", "gene_name", "counts", "log2_counts", "strata", "overall_survival", "deceased"), names(d))
+      d <- d[, keep, drop = FALSE]
+      names(d)[names(d) == "counts"] <- "TPM"; names(d)[names(d) == "log2_counts"] <- "log2_TPM_plus_1"
+      names(d)[names(d) == "strata"] <- "group_median_split"; names(d)[names(d) == "overall_survival"] <- "overall_survival_days"
+      utils::write.csv(d, file, row.names = FALSE)
+    }
+  )
+
   output$download_dist <- downloadHandler(
     filename = function() {
       paste0(rv_survival$results$cancer_type %||% input$cancer_type, "_", rv_survival$results$gene_name %||% input$gene_name, "_expression.png")
