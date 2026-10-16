@@ -20284,6 +20284,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-10-16", tag = "New", text = "Batch-correction assessment: download the PCA and UMAP coordinates of every sample, before and after correction, as a CSV file."),
   list(date = "2026-10-16", tag = "New", text = "TCGA box plot and survival plot: download the values behind each plot as a CSV file (per sample or per patient), to redraw or re-test them elsewhere."),
   list(date = "2026-10-16", tag = "Fixed", text = "TCGA survival plot shows a single legend (it repeated the HIGH/LOW groups for the confidence bands)."),
   list(date = "2026-10-16", tag = "Fixed", text = "PPI gene lists: pasted lists are split only at spaces, line breaks, commas and semicolons; mouse and other mixed-case gene symbols containing the letter s (e.g. Tnfrsf1a) were split in two before."),
@@ -23780,7 +23781,9 @@ tags$script(HTML("
                                       class = "btn btn-success btn-lg",
                                       icon = icon("download"),
                                       style = "font-size: 16px; padding: 12px 24px;"
-                                    )
+                                    ),
+                                    downloadButton("download_batch_comparison_data", "Data (CSV)", class = "btn btn-default btn-lg",
+                                                   style = "font-size: 16px; padding: 12px 24px; margin-left: 8px;")
                                   )
                                 ),
                                 
@@ -56760,6 +56763,23 @@ document.addEventListener("DOMContentLoaded", function() {
   })
   
   # Download handler for combined batch correction plots
+  output$download_batch_comparison_data <- downloadHandler(
+    filename = function() paste0("batch_correction_assessment_data_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv"),
+    content = function(file) {
+      plots <- list("PCA before correction" = rv_deg_main$pca_batch_before, "PCA after correction" = rv_deg_main$pca_batch_after,
+                    "UMAP before correction" = rv_deg_main$umap_batch_before, "UMAP after correction" = rv_deg_main$umap_batch_after)
+      plots <- plots[!vapply(plots, function(p) is.null(p) || is.null(p$ggplot), TRUE)]
+      req(length(plots) > 0)
+      out <- do.call(rbind, lapply(names(plots), function(nm) {
+        g <- plots[[nm]]$ggplot; d <- as.data.frame(g$data)
+        xv <- rlang::as_name(g$mapping$x); yv <- rlang::as_name(g$mapping$y)
+        data.frame(plot = nm, SampleID = d$SampleID, Group = d$Group, Batch = d$Batch, x = d[[xv]], y = d[[yv]],
+                   x_label = g$labels$x %||% xv, y_label = g$labels$y %||% yv, stringsAsFactors = FALSE)
+      }))
+      utils::write.csv(out, file, row.names = FALSE)
+    }
+  )
+
   output$download_batch_comparison <- downloadHandler(
     filename = function() {
       paste0("batch_correction_assessment_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".png")
