@@ -15373,8 +15373,8 @@ convert_to_string_ids <- function(genes, organism) {
       print(" • Using enhanced cleaning for yeast IDs...")
       
       # CRITICAL: Ensure genes is a vector, not a single concatenated string
-      if (length(genes) == 1 && grepl("[\\n\\r,]", genes[1])) {
-        genes <- unlist(strsplit(genes, "[,\\n\\r\\t\\s]+"))
+      if (length(genes) == 1 && grepl("[\r\n,]", genes[1])) {
+        genes <- unlist(strsplit(genes, "[[:space:],]+"))
         genes <- trimws(genes)
         genes <- genes[genes != "" & !is.na(genes)]
         genes <- unique(genes)
@@ -15385,7 +15385,7 @@ convert_to_string_ids <- function(genes, organism) {
       # This will split "YDR119W, R(ACG)D" and take "YDR119W"
       genes_cleaned <- sapply(genes, function(g) {
         # Split by comma or space and take the first part
-        parts <- strsplit(g, "[,\\s]+")[[1]]
+        parts <- strsplit(g, "[[:space:],]+")[[1]]
         return(parts[1])
       }, USE.NAMES = FALSE)
       
@@ -15411,7 +15411,7 @@ convert_to_string_ids <- function(genes, organism) {
         genes <- as.character(genes)
         
         # Split ALL elements by newlines, whitespace, commas
-        genes_split <- unlist(strsplit(genes, "[\\n\\r\\t\\s,]+"))
+        genes_split <- unlist(strsplit(genes, "[[:space:],]+"))
         
         # Clean each gene: remove whitespace and empty strings
         genes_clean <- trimws(genes_split)
@@ -20284,6 +20284,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-10-16", tag = "Fixed", text = "PPI gene lists: pasted lists are split only at spaces, line breaks, commas and semicolons; mouse and other mixed-case gene symbols containing the letter s (e.g. Tnfrsf1a) were split in two before."),
   list(date = "2026-10-16", tag = "New", text = "Drug Targets is now a Systems Biology module: upload a DE table (gene, log2FC, adjusted P) or a plain gene list, or send your Transcriptome or TCGA DE results, and rank drugs from DGIdb and Open Targets on their best-supported target. TCGA results also have buttons to continue in Enrichment, PPI and GRN."),
   list(date = "2026-10-16", tag = "Fixed", text = "FASTQ processing of public runs (SRA/ENA): the next run is now really downloaded while the current one is processed; before, it was downloaded a second time, adding 15-20 minutes per run."),
   list(date = "2026-10-15", tag = "Fixed", text = "TCGA expression box plots use the Wilcoxon rank-sum test (named on the plot) instead of an unlabelled t-test."),
@@ -43574,7 +43575,7 @@ server <- function(input, output, session) {
     
     if (nchar(trimws(text_input)) > 0) {
       # Parse genes (comma or newline separated)
-      genes <- unlist(strsplit(text_input, "[,\\n\\r\\t]+"))
+      genes <- unlist(strsplit(text_input, "[[:space:],;]+"))
       genes <- trimws(genes)
       genes <- genes[genes != ""]
       genes <- unique(genes)
@@ -43807,7 +43808,7 @@ server <- function(input, output, session) {
     final_genes <- NULL
 
     if (!is.null(raw_text) && nchar(trimws(raw_text)) > 0) {
-      lines <- unlist(strsplit(raw_text, "[\r\n,;\\s]+"))
+      lines <- unlist(strsplit(raw_text, "[[:space:],;]+"))
       final_genes <- trimws(lines)
       final_genes <- final_genes[!is.na(final_genes) & nchar(final_genes) > 1]
       final_genes <- unique(final_genes)
