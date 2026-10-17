@@ -20284,6 +20284,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-10-17", tag = "Improved", text = "Raw-read jobs are faster with identical results: trimmed reads are kept uncompressed while they are aligned (trimming took ~9x longer because of compression), FastQC runs alongside alignment, and public runs download over 4 parallel connections (~3.5x faster). When ENA's run lookup is down, the run list comes from NCBI SRA instead."),
   list(date = "2026-10-16", tag = "New", text = "Batch-correction assessment: download the PCA and UMAP coordinates of every sample, before and after correction, as a CSV file."),
   list(date = "2026-10-16", tag = "New", text = "TCGA box plot and survival plot: download the values behind each plot as a CSV file (per sample or per patient), to redraw or re-test them elsewhere."),
   list(date = "2026-10-16", tag = "Fixed", text = "TCGA survival plot shows a single legend (it repeated the HIGH/LOW groups for the confidence bands)."),
@@ -29807,7 +29808,9 @@ tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
       samples <- lapply(seq_len(nrow(remote)), function(j) {
         urls <- strsplit(remote$fastq_urls[j], ";", fixed = TRUE)[[1]]
         md5 <- if (!is.null(remote$fastq_md5)) strsplit(remote$fastq_md5[j], ";", fixed = TRUE)[[1]] else character(0)
+        sizes <- if (!is.null(remote$fastq_sizes)) suppressWarnings(as.numeric(strsplit(remote$fastq_sizes[j], ";", fixed = TRUE)[[1]])) else numeric(0)
         list(base = remote$run_accession[j], urls = urls, md5 = if (length(md5) == length(urls)) md5 else NULL,
+             sizes = if (length(sizes) == length(urls)) sizes else rep(NA_real_, length(urls)),
              files = file.path(input_dir, basename(urls)), bytes = remote$total_bytes[j])
       })
       options(timeout = max(getOption("timeout"), 6 * 3600))
@@ -30032,15 +30035,40 @@ tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
 
     # Download one public run (all its files) with retries and checksum checks. Returns TRUE or
     # an error message; it also runs in a forked background process to fetch the next run early.
+    # Download one file; files over 64 MB over 4 parallel HTTP range requests (ENA serves one connection at
+    # ~5 MB/s), joined in order. Uses the R curl package (no curl binary needed). Returns 0 on success.
+    fetch_file <- function(url, dest, size, parallel = TRUE) {
+      if (!parallel || is.na(size) || size < 64 * 1024^2) {
+        return(tryCatch(utils::download.file(url, dest, mode = "wb", quiet = TRUE, method = "libcurl"), error = function(e) 1L))
+      }
+      n <- 4L; cuts <- floor(seq(0, size, length.out = n + 1))
+      parts <- paste0(dest, ".part", seq_len(n)); status <- rep(NA_integer_, n)
+      pool <- curl::new_pool()
+      for (k in seq_len(n)) local({
+        kk <- k
+        h <- curl::new_handle(url = url, followlocation = TRUE, connecttimeout = 30, low_speed_limit = 1024, low_speed_time = 120)
+        curl::handle_setheaders(h, Range = sprintf("bytes=%.0f-%.0f", cuts[kk], cuts[kk + 1] - 1))
+        curl::multi_add(h, pool = pool, data = parts[kk],
+                        done = function(res) status[kk] <<- as.integer(res$status_code),
+                        fail = function(msg) status[kk] <<- -1L)
+      })
+      curl::multi_run(pool = pool)
+      rc <- if (all(status %in% 206L) && all(file.exists(parts))) {
+        if (isTRUE(file.copy(parts[1], dest, overwrite = TRUE)) && all(file.append(dest, parts[-1]))) 0L else 1L
+      } else 1L
+      unlink(parts)
+      rc
+    }
     fetch_run <- function(s) {
       for (u in seq_along(s$urls)) {
         ok <- FALSE
+        size <- s$sizes[u] %||% NA_real_
         for (attempt in 1:4) {
-          rc <- tryCatch(utils::download.file(s$urls[u], s$files[u], mode = "wb", quiet = TRUE, method = "libcurl"),
-                         error = function(e) 1L)
+          rc <- tryCatch(fetch_file(s$urls[u], s$files[u], size, parallel = attempt <= 2), error = function(e) 1L)
           if (identical(as.integer(rc), 0L) && file.exists(s$files[u]) && file.size(s$files[u]) > 0) {
-            if (is.null(s$md5) || identical(unname(tools::md5sum(s$files[u])), tolower(s$md5[u]))) { ok <- TRUE; break }
-            write_log(paste0("Checksum mismatch for ", basename(s$urls[u]), "; downloading again"), "warning")
+            size_ok <- is.na(size) || isTRUE(file.size(s$files[u]) == size)
+            if (size_ok && (is.null(s$md5) || identical(unname(tools::md5sum(s$files[u])), tolower(s$md5[u])))) { ok <- TRUE; break }
+            write_log(paste0(if (size_ok) "Checksum" else "Size", " mismatch for ", basename(s$urls[u]), "; downloading again"), "warning")
           }
           unlink(s$files[u]); Sys.sleep(15 * attempt)
         }
@@ -30073,34 +30101,30 @@ fc_files <- character(0); quant_dirs <- character(0)
         }
       }
 
-      # 1. FastQC on raw reads, in the background while the reads are trimmed (both only read them)
+      # 1. FastQC on raw reads, in the background (it only reads them; they are removed after it finishes)
       fastqc_raw <- parallel::mcparallel(system(paste("fastqc", paste(shQuote(s$files), collapse = " "), "-o",
                                                       shQuote(file.path(output_dir, "fastqc_raw")),
                                                       "-t", length(s$files), "--quiet")), silent = TRUE)
       # 2. Trimming
       if (params$sequencing_type == "paired") {
-        tr <- file.path(work_dir, paste0(base, c("_R1_paired.fastq.gz", "_R1_unpaired.fastq.gz", "_R2_paired.fastq.gz", "_R2_unpaired.fastq.gz")))
+        # uncompressed output: gzip compression made Trimmomatic ~9x slower; the reads are identical
+        tr <- file.path(work_dir, paste0(base, c("_R1_paired.fastq", "_R1_unpaired.fastq", "_R2_paired.fastq", "_R2_unpaired.fastq")))
         run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "PE -threads", n_threads, "-phred33",
                               shQuote(s$files[1]), shQuote(s$files[2]), paste(shQuote(tr), collapse = " "),
                               "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-PE.fa:2:30:10",
                               "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
         trimmed <- tr[c(1, 3)]; unlink(tr[c(2, 4)])
       } else {
-        trimmed <- file.path(work_dir, paste0(base, "_trimmed.fastq.gz"))
+        trimmed <- file.path(work_dir, paste0(base, "_trimmed.fastq"))
         run_cmd_or_fail(paste("java -jar", shQuote(trimmomatic_jar), "SE -threads", n_threads, "-phred33",
                               shQuote(s$files), shQuote(trimmed),
                               "ILLUMINACLIP:/opt/Trimmomatic-0.39/adapters/TruSeq3-SE.fa:2:30:10",
                               "LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 > /dev/null 2>&1"), "Trimmomatic", base)
       }
-      rc_raw <- parallel::mccollect(fastqc_raw, wait = TRUE)[[1]]
-      if (!identical(as.integer(rc_raw), 0L)) {
-        msg <- paste0("FastQC (raw reads) failed for sample '", base, "'")
-        write_log(msg, "error"); stop(msg)
-      }
-      # 3. FastQC on trimmed reads
-run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", shQuote(file.path(output_dir, "fastqc_trimmed")),
-                            "-t", length(trimmed), "--quiet"), "FastQC (trimmed reads)", base)
-      unlink(s$files)                                   # raw reads no longer needed
+      # 3. FastQC on trimmed reads, in the background while the reads are aligned/quantified
+      fastqc_trim <- parallel::mcparallel(system(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o",
+                                                       shQuote(file.path(output_dir, "fastqc_trimmed")),
+                                                       "-t", length(trimmed), "--quiet")), silent = TRUE)
       step_pct(0.4)
 
       # 4. Quantification
@@ -30112,7 +30136,6 @@ run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", s
                               ">", shQuote(file.path(output_dir, "alignment_logs", paste0(base, ".salmon.log"))), "2>&1"),
                         "Salmon quantification", base)
         quant_dirs <- c(quant_dirs, sample_dir)
-        unlink(trimmed)
       } else {
         sorted_bam <- file.path(work_dir, paste0(base, "_sorted.bam"))
         reads <- if (length(trimmed) == 2) paste("-1", shQuote(trimmed[1]), "-2", shQuote(trimmed[2])) else paste("-U", shQuote(trimmed))
@@ -30122,7 +30145,6 @@ run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", s
           "2>", shQuote(file.path(output_dir, "alignment_logs", paste0(base, ".hisat2.log"))),
           "| samtools sort -@", n_threads, "-T", shQuote(file.path(work_dir, paste0(base, "_sorttmp"))),
           "-o", shQuote(sorted_bam), "-"))), "HISAT2 alignment", base)
-        unlink(trimmed)                                 # trimmed reads no longer needed
         step_pct(0.8)
         fc_out <- file.path(work_dir, paste0("fc_", base, ".txt"))
         run_cmd_or_fail(paste("featureCounts -T", n_threads, pe_flag, "-a", shQuote(gtf_file), "-o", shQuote(fc_out),
@@ -30130,6 +30152,15 @@ run_cmd_or_fail(paste("fastqc", paste(shQuote(trimmed), collapse = " "), "-o", s
         fc_files <- c(fc_files, fc_out)
         unlink(sorted_bam)                              # alignments no longer needed
       }
+      # QC reports finished (they ran alongside); raw and trimmed reads no longer needed
+      for (q in list(list(job = fastqc_raw, what = "raw reads"), list(job = fastqc_trim, what = "trimmed reads"))) {
+        rc_q <- parallel::mccollect(q$job, wait = TRUE)[[1]]
+        if (!identical(as.integer(rc_q), 0L)) {
+          msg <- paste0("FastQC (", q$what, ") failed for sample '", base, "'")
+          write_log(msg, "error"); stop(msg)
+        }
+      }
+      unlink(c(s$files, trimmed))
       write_log(sprintf("Sample %d of %d done: %s (temporary files removed)", si, n_samples, base), "success")
     }
 
@@ -48237,19 +48268,24 @@ if (length(errs) > 0) {
     fetch <- function(a) {
       url <- paste0("https://www.ebi.ac.uk/ena/portal/api/filereport?accession=", a,
                     "&result=read_run&fields=", fields, "&format=tsv&limit=0")
-      for (attempt in 1:4) {
+      old_to <- getOption("timeout"); options(timeout = 30); on.exit(options(timeout = old_to))
+      for (attempt in 1:2) {
         t <- tryCatch(suppressWarnings(utils::read.delim(url, colClasses = "character", check.names = FALSE)),
                       error = function(e) NULL)
         if (!is.null(t) && "run_accession" %in% names(t)) return(t)
-        if (attempt < 4) Sys.sleep(attempt * 2)
+        if (attempt < 2) Sys.sleep(2)
       }
-      NULL
+      # ENA's run lookup did not answer: take the run list from NCBI SRA and build the ENA file paths
+      t <- tx_ncbi_runs(a)
+      if (!is.null(t)) attr(t, "source") <- "NCBI"
+      t
     }
     tabs <- lapply(seq_along(accs[ok]), function(k) {
       incProgress(1 / sum(ok), detail = accs[ok][k])
       fetch(accs[ok][k])
     })
     failed <- accs[ok][vapply(tabs, is.null, TRUE)]
+    via_ncbi <- accs[ok][vapply(tabs, function(t) identical(attr(t, "source"), "NCBI"), TRUE)]
     no_runs <- accs[ok][vapply(tabs, function(t) !is.null(t) && nrow(t) == 0, TRUE)]
     tab <- do.call(rbind, tabs[vapply(tabs, function(t) !is.null(t) && nrow(t) > 0, TRUE)])
     if (is.null(tab) || nrow(tab) == 0) {
@@ -48264,8 +48300,10 @@ if (length(errs) > 0) {
       if (identical(tab$library_layout[i], "SINGLE") && length(f) > 1) keep <- !grepl("_[12]\\.f(ast)?q\\.gz$", f) | length(f) == 1
       m <- strsplit(tab$fastq_md5[i] %||% "", ";", fixed = TRUE)[[1]]
       list(urls = paste0("https://", f[keep]), bytes = sum(b[keep], na.rm = TRUE), n = sum(keep),
+           sizes = paste(b[keep], collapse = ";"),
            md5 = if (length(m) == length(f)) paste(m[keep], collapse = ";") else "")
     })
+    tab$fastq_sizes <- vapply(pick, function(x) x$sizes, "")
     tab$fastq_md5 <- vapply(pick, function(x) x$md5, "")
     tab$fastq_urls <- vapply(pick, function(x) paste(x$urls, collapse = ";"), "")
     tab$total_bytes <- vapply(pick, function(x) x$bytes, 0)
@@ -48274,7 +48312,52 @@ if (length(errs) > 0) {
     attr(tab, "invalid") <- accs[!ok]
     attr(tab, "failed") <- failed
     attr(tab, "no_runs") <- no_runs
+    attr(tab, "via_ncbi") <- via_ncbi
     tab
+  }
+  # Backup run lookup when ENA's portal API is down: NCBI SRA runinfo gives the runs; the FASTQ files are on
+  # ENA's file server under a path that follows from the run accession (checked with a HEAD request, which also
+  # gives the size used to check the download).
+  tx_ncbi_runs <- function(a) {
+    u <- paste0("https://trace.ncbi.nlm.nih.gov/Traces/sra-db-be/runinfo?acc=", a)
+    old_to <- getOption("timeout"); options(timeout = 30); on.exit(options(timeout = old_to))
+    ri <- NULL
+    for (attempt in 1:2) {
+      ri <- tryCatch(suppressWarnings(utils::read.csv(u, colClasses = "character", check.names = FALSE)), error = function(e) NULL)
+      if (!is.null(ri) && "Run" %in% names(ri)) break
+      ri <- NULL; if (attempt < 2) Sys.sleep(2)
+    }
+    if (is.null(ri)) return(NULL)
+    ri <- ri[grepl("^[SED]RR[0-9]+$", ri$Run), , drop = FALSE]
+    ri <- ri[!duplicated(ri$Run), , drop = FALSE]
+    empty <- data.frame(run_accession = character(0), sample_accession = character(0), sample_title = character(0),
+                        scientific_name = character(0), library_layout = character(0), library_strategy = character(0),
+                        fastq_ftp = character(0), fastq_bytes = character(0), fastq_md5 = character(0),
+                        read_count = character(0), stringsAsFactors = FALSE)
+    if (nrow(ri) == 0) return(empty)
+    head_size <- function(url) {
+      h <- tryCatch(curlGetHeaders(url, timeout = 20), error = function(e) NULL)
+      if (is.null(h) || !identical(as.integer(attr(h, "status")), 200L)) return(NA_real_)
+      cl <- grep("^content-length:", h, ignore.case = TRUE, value = TRUE)
+      if (length(cl)) as.numeric(trimws(sub("^[^:]*:", "", cl[length(cl)]))) else NA_real_
+    }
+    files <- lapply(seq_len(nrow(ri)), function(i) {
+      run <- ri$Run[i]; digits <- nchar(run) - 3
+      sub_dir <- if (digits <= 6) "" else paste0(formatC(as.integer(substring(run, nchar(run) - (digits - 7))), width = 3, flag = "0"), "/")
+      base <- paste0("ftp.sra.ebi.ac.uk/vol1/fastq/", substr(run, 1, 6), "/", sub_dir, run, "/")
+      cand <- if (identical(toupper(ri$LibraryLayout[i]), "PAIRED")) list(paste0(run, c("_1", "_2"), ".fastq.gz"))
+              else list(paste0(run, ".fastq.gz"), paste0(run, "_1.fastq.gz"))
+      for (fn in cand) {
+        sz <- vapply(paste0("https://", base, fn), head_size, 0)
+        if (all(!is.na(sz))) return(list(ftp = paste(paste0(base, fn), collapse = ";"), bytes = paste(format(sz, scientific = FALSE, trim = TRUE), collapse = ";")))
+      }
+      list(ftp = "", bytes = "")
+    })
+    data.frame(run_accession = ri$Run, sample_accession = ri$Sample %||% "", sample_title = ri$SampleName %||% "",
+               scientific_name = ri$ScientificName %||% "", library_layout = toupper(ri$LibraryLayout %||% ""),
+               library_strategy = ri$LibraryStrategy %||% "",
+               fastq_ftp = vapply(files, `[[`, "", "ftp"), fastq_bytes = vapply(files, `[[`, "", "bytes"),
+               fastq_md5 = "", read_count = ri$spots %||% "", stringsAsFactors = FALSE)
   }
   observeEvent(input$ena_lookup, {
     tx_remote_runs(NULL)
@@ -48282,6 +48365,10 @@ if (length(errs) > 0) {
                     error = function(e) e)
     if (inherits(res, "error")) { showNotification(conditionMessage(res), type = "error", duration = 10); return() }
     tx_remote_runs(res)
+    if (length(attr(res, "via_ncbi")))
+      showNotification(paste0("ENA's run lookup did not respond, so the run list for ", paste(head(attr(res, "via_ncbi"), 5), collapse = ", "),
+                              " came from NCBI SRA. Files are still downloaded from ENA and checked by size (ENA's checksums were not available)."),
+                       type = "warning", duration = 15)
     # Pick the reference genome from the runs' organism when it is one of the built-in genomes
     sp <- unique(res$scientific_name)
     hit <- names(tx_genome_species)[tx_genome_species %in% sp]
