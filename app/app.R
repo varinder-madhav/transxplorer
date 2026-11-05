@@ -29811,7 +29811,8 @@ tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
         sizes <- if (!is.null(remote$fastq_sizes)) suppressWarnings(as.numeric(strsplit(remote$fastq_sizes[j], ";", fixed = TRUE)[[1]])) else numeric(0)
         list(base = remote$run_accession[j], urls = urls, md5 = if (length(md5) == length(urls)) md5 else NULL,
              sizes = if (length(sizes) == length(urls)) sizes else rep(NA_real_, length(urls)),
-             files = file.path(input_dir, basename(urls)), bytes = remote$total_bytes[j])
+             files = file.path(input_dir, basename(urls)), bytes = remote$total_bytes[j],
+             spots = if (!is.null(remote$read_count)) suppressWarnings(as.numeric(remote$read_count[j])) else NA_real_)
       })
       options(timeout = max(getOption("timeout"), 6 * 3600))
       write_log(paste("Public runs to download and process:", paste(remote$run_accession, collapse = ", ")), "info")
@@ -30039,7 +30040,8 @@ tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
     # ~5 MB/s), joined in order. Uses the R curl package (no curl binary needed). Returns 0 on success.
     fetch_file <- function(url, dest, size, parallel = TRUE) {
       if (!parallel || is.na(size) || size < 64 * 1024^2) {
-        return(tryCatch(utils::download.file(url, dest, mode = "wb", quiet = TRUE, method = "libcurl"), error = function(e) 1L))
+        return(tryCatch(utils::download.file(url, dest, mode = "wb", quiet = TRUE, method = "libcurl"),
+                        error = function(e) structure(1L, detail = conditionMessage(e))))
       }
       n <- 4L; cuts <- floor(seq(0, size, length.out = n + 1))
       parts <- paste0(dest, ".part", seq_len(n)); status <- rep(NA_integer_, n)
@@ -30055,20 +30057,76 @@ tx_fastq_pipeline_job <- function(params_file, completion_file, app_dir) {
       curl::multi_run(pool = pool)
       rc <- if (all(status %in% 206L) && all(file.exists(parts))) {
         if (isTRUE(file.copy(parts[1], dest, overwrite = TRUE)) && all(file.append(dest, parts[-1]))) 0L else 1L
-      } else 1L
+      } else structure(1L, detail = paste("HTTP status of the 4 parts:", paste(ifelse(status %in% -1L, "failed", status), collapse = ", ")))
       unlink(parts)
       rc
     }
+    # NCBI keeps every public run as one .sra file on AWS (sra-pub-run-odp); from some servers it downloads
+    # 10-20x faster than ENA's FASTQ files. fasterq-dump (SRA Toolkit, mounted at /opt/sratoolkit) turns it into
+    # the same reads ENA serves. Returns the FASTQ paths, or NULL to fall back to ENA.
+    fasterq_bin <- file.path(Sys.getenv("TX_SRATOOLS_BIN", "/opt/sratoolkit/bin"), "fasterq-dump")
+    fetch_run_ncbi <- function(s) {
+      if (!file.exists(fasterq_bin) || !grepl("^[SED]RR[0-9]+$", s$base)) return(NULL)
+      fallback <- function(why) { write_log(paste0(s$base, ": ", why, "; downloading from ENA instead"), "info"); NULL }
+      url <- paste0("https://sra-pub-run-odp.s3.amazonaws.com/sra/", s$base, "/", s$base)
+      h <- tryCatch(curlGetHeaders(url, timeout = 20), error = function(e) NULL)
+      cl <- grep("^content-length:", h, ignore.case = TRUE, value = TRUE)
+      if (is.null(h) || !identical(as.integer(attr(h, "status")), 200L) || !length(cl)) return(fallback("not available from NCBI (AWS)"))
+      size <- as.numeric(trimws(sub("^[^:]*:", "", cl[length(cl)])))
+      # FASTQ is about 8x the .sra file, and the trimmed reads need as much again
+      free_gb <- tryCatch(as.numeric(strsplit(trimws(system(paste("df -Pk", shQuote(input_dir), "| tail -1"), intern = TRUE)), "\\s+")[[1]][4]) / 1024^2,
+                          error = function(e) NA_real_)
+      if (!is.na(free_gb) && free_gb < 20 * size / 1024^3 + 20) return(fallback("not enough free disk space to convert the NCBI file"))
+      sra <- file.path(input_dir, paste0(s$base, ".sra")); out <- file.path(input_dir, paste0(s$base, "_ncbi"))
+      ok <- FALSE
+      for (attempt in 1:2) {
+        rc <- tryCatch(fetch_file(url, sra, size), error = function(e) structure(1L, detail = conditionMessage(e)))
+        if (identical(as.integer(rc), 0L) && isTRUE(file.size(sra) == size)) { ok <- TRUE; break }
+        write_log(paste0("NCBI download attempt ", attempt, " of 2 failed for ", s$base, " (",
+                         attr(rc, "detail") %||% paste("size", file.size(sra), "of", size), ")"), "warning")
+        unlink(sra)
+      }
+      if (!ok) return(fallback("NCBI download failed"))
+      dir.create(out, showWarnings = FALSE)
+      msg <- suppressWarnings(system2(fasterq_bin, c("--split-3", "--skip-technical", "--threads", "4",
+                                                     "--seq-defline", shQuote("@$ac.$si $si/$ri"), "--qual-defline", "+",
+                                                     "--temp", shQuote(out), "-O", shQuote(out), shQuote(sra)),
+                                      stdout = TRUE, stderr = TRUE))
+      status <- attr(msg, "status") %||% 0L
+      unlink(sra)
+      num <- function(label) suppressWarnings(as.numeric(gsub(",", "", sub(".*:\\s*", "", grep(label, msg, value = TRUE)[1]))))
+      spots <- num("^spots read"); written <- num("^reads written")
+      paired <- params$sequencing_type == "paired"
+      files <- file.path(out, paste0(s$base, if (paired) c("_1.fastq", "_2.fastq") else ".fastq"))
+      if (!paired && !file.exists(files)) files <- file.path(out, paste0(s$base, "_1.fastq"))
+      # every spot must give one read per file (the same reads ENA's files hold) and the count must match SRA's
+      bad <- if (status != 0L) paste("fasterq-dump exit status", status)
+             else if (!all(file.exists(files)) || any(file.size(files) == 0)) "fasterq-dump wrote no reads"
+             else if (is.na(spots) || !identical(written, spots * length(files))) sprintf("%s reads written for %s spots", written, spots)
+             else if (!is.na(s$spots %||% NA_real_) && !identical(spots, s$spots)) sprintf("%s spots converted, SRA lists %s", spots, s$spots)
+             else {
+               # SRA Lite files carry one placeholder quality value; trimming needs the real scores
+               q <- readLines(files[1], n = 4000L)
+               if (length(unique(strsplit(paste(q[seq(4, length(q), 4)], collapse = ""), "")[[1]])) <= 1) "the NCBI file has no base quality scores (SRA Lite)" else ""
+             }
+      if (nzchar(bad)) { unlink(out, recursive = TRUE); return(fallback(paste0("NCBI conversion check failed (", bad, ")"))) }
+      list(files = files, gb = size / 1024^3)
+    }
     fetch_run <- function(s) {
+      ncbi <- fetch_run_ncbi(s)
+      if (!is.null(ncbi)) return(ncbi)
       for (u in seq_along(s$urls)) {
         ok <- FALSE
         size <- s$sizes[u] %||% NA_real_
         for (attempt in 1:4) {
-          rc <- tryCatch(fetch_file(s$urls[u], s$files[u], size, parallel = attempt <= 2), error = function(e) 1L)
+          rc <- tryCatch(fetch_file(s$urls[u], s$files[u], size, parallel = attempt <= 3), error = function(e) structure(1L, detail = conditionMessage(e)))
           if (identical(as.integer(rc), 0L) && file.exists(s$files[u]) && file.size(s$files[u]) > 0) {
             size_ok <- is.na(size) || isTRUE(file.size(s$files[u]) == size)
             if (size_ok && (is.null(s$md5) || identical(unname(tools::md5sum(s$files[u])), tolower(s$md5[u])))) { ok <- TRUE; break }
-            write_log(paste0(if (size_ok) "Checksum" else "Size", " mismatch for ", basename(s$urls[u]), "; downloading again"), "warning")
+            write_log(paste0(if (size_ok) "Checksum" else "Size", " mismatch for ", basename(s$urls[u]), " (attempt ", attempt, " of 4); downloading again"), "warning")
+          } else {
+            write_log(paste0("Download attempt ", attempt, " of 4 failed for ", basename(s$urls[u]), " (",
+                             attr(rc, "detail") %||% "no file received", ")"), "warning")
           }
           unlink(s$files[u]); Sys.sleep(15 * attempt)
         }
@@ -30094,8 +30152,13 @@ fc_files <- character(0); quant_dirs <- character(0)
         } else {
           res <- fetch_run(s)
         }
-        if (!isTRUE(res)) stop(if (is.character(res)) res else paste0("Download failed for run ", base))
-        write_log(sprintf("Downloaded %s (%.2f GB)", base, sum(file.size(s$files)) / 1024^3), "success")
+        if (is.list(res) && !is.null(res$files)) {
+          s$files <- res$files
+          write_log(sprintf("Downloaded %s from NCBI (%.2f GB) and converted to FASTQ", base, res$gb), "success")
+        } else {
+          if (!isTRUE(res)) stop(if (is.character(res)) res else paste0("Download failed for run ", base))
+          write_log(sprintf("Downloaded %s (%.2f GB)", base, sum(file.size(s$files)) / 1024^3), "success")
+        }
         if (si < n_samples && !is.null(samples[[si + 1]]$urls)) {
           prefetch <- list(si = si + 1L, job = parallel::mcparallel(fetch_run(samples[[si + 1]]), silent = TRUE))
         }
@@ -30160,7 +30223,7 @@ fc_files <- character(0); quant_dirs <- character(0)
           write_log(msg, "error"); stop(msg)
         }
       }
-      unlink(c(s$files, trimmed))
+      unlink(c(s$files, trimmed)); unlink(file.path(input_dir, paste0(base, "_ncbi")), recursive = TRUE)
       write_log(sprintf("Sample %d of %d done: %s (temporary files removed)", si, n_samples, base), "success")
     }
 
