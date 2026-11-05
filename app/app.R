@@ -21459,7 +21459,7 @@ tags$script(HTML("
                              br(),
                              "• Maximum 100 GB total file size (samples are processed one at a time)",
                              br(),
-                             "• Supports 5-10 samples typically"
+                             "• Typically 30–50 compressed samples, depending on read depth"
                          )
                        ),
                        
