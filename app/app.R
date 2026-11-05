@@ -20284,6 +20284,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-11-05", tag = "Improved", text = "Public runs (SRA/ENA accessions) now download from NCBI's copy of the SRA and are converted to FASTQ on the server, which is faster than ENA from some locations; reads are identical. If NCBI fails, the run is downloaded from ENA as before, and the job log says why."),
   list(date = "2026-10-17", tag = "Improved", text = "Raw-read jobs are faster with identical results: trimmed reads are kept uncompressed while they are aligned (trimming took ~9x longer because of compression), FastQC runs alongside alignment, and public runs download over 4 parallel connections (~3.5x faster). When ENA's run lookup is down, the run list comes from NCBI SRA instead."),
   list(date = "2026-10-16", tag = "New", text = "Batch-correction assessment: download the PCA and UMAP coordinates of every sample, before and after correction, as a CSV file."),
   list(date = "2026-10-16", tag = "New", text = "TCGA box plot and survival plot: download the values behind each plot as a CSV file (per sample or per patient), to redraw or re-test them elsewhere."),
@@ -20355,7 +20356,27 @@ tx_changelog_tabs <- function() {
   do.call(tabsetPanel, c(list(id = "tx_changelog_tabs", type = "tabs"), tabs))
 }
 
+# Site notice (e.g. a server move): one line "Label|text" in site_notice.txt next to app.R.
+# While the file exists it replaces the What's New pill on the home page; delete it and recycle
+# the workers to remove the notice. Not part of the app code, so nothing to change in app.R.
+tx_site_notice <- function() {
+  f <- "site_notice.txt"
+  if (!file.exists(f)) return(NULL)
+  l <- trimws(readLines(f, warn = FALSE, encoding = "UTF-8"))
+  l <- l[nzchar(l)]
+  if (!length(l)) return(NULL)
+  parts <- strsplit(l[1], "|", fixed = TRUE)[[1]]
+  if (length(parts) < 2) parts <- c("Notice", parts)
+  tags$div(
+    class = "tx-news-pill tx-news-notice", role = "status",
+    tags$span(class = "tx-news-tag", trimws(parts[1])),
+    tags$span(class = "tx-news-text", trimws(paste(parts[-1], collapse = "|")))
+  )
+}
+
 tx_whats_new_pill <- function(max_age_days = 30) {
+  notice <- tx_site_notice()
+  if (!is.null(notice)) return(notice)
   latest <- as.Date(tx_changelog[[1]]$date)
   if (is.na(latest) || as.numeric(Sys.Date() - latest) > max_age_days) return(NULL)
   tags$a(
@@ -20520,6 +20541,11 @@ tags$script(HTML("
       .tx-news-tag { background: #fff; color: #00897b; font-weight: 700; font-size: 12px; letter-spacing: 0.05em;
         text-transform: uppercase; padding: 3px 10px; border-radius: 999px; }
       .tx-news-cta { font-weight: 600; white-space: nowrap; }
+      .tx-news-notice { cursor: default; max-width: 760px; padding: 10px 18px 10px 10px; text-align: left;
+        flex-wrap: nowrap; gap: 14px; border-radius: 18px; }
+      @media (max-width: 600px) { .tx-news-notice { flex-direction: column; gap: 8px; padding: 12px 14px; text-align: center; } }
+      .tx-news-notice:hover { background: rgba(255,255,255,0.16); transform: none; }
+      .tx-news-notice .tx-news-tag { background: #ffd54f; color: #4e3b00; white-space: nowrap; }
       .tx-news-cta i { margin-left: 6px; font-size: 0.85em; }
       @media (prefers-reduced-motion: no-preference) {
         .tx-news-cta i { animation: tx-nudge 1.8s ease-in-out 3; }
