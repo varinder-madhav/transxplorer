@@ -3,7 +3,7 @@
  * The browser streams files to tusd in chunks; a dropped connection or a closed
  * laptop resumes from the last byte the server stored. Shiny only hears about
  * state changes (file added / finished / failed) and a throttled progress
- * summary, so a 40 GB upload never floods the websocket.
+ * summary, so a 100 GB upload never floods the websocket.
  *
  * Shiny inputs set here:
  *   tx_upload_hello  {token}            ask the server for an upload token
@@ -18,7 +18,7 @@
 
   var UPPY_VERSION = '4.18.3';
   var TOKEN_KEY = 'tx_upload_token';
-  var MAX_BYTES = 40 * 1024 * 1024 * 1024;
+  var MAX_BYTES = 100 * 1024 * 1024 * 1024;
   var NAME_RE = /^[A-Za-z0-9._-]+\.(fastq|fq)(\.gz)?$/i;
 
   var uppy = null;
@@ -144,7 +144,7 @@
       hideRetryButton: false,
       showRemoveButtonAfterComplete: false,
       fileManagerSelectionType: 'files',
-      note: 'FASTQ (.fastq, .fq, .fastq.gz, .fq.gz), up to 40 GB in total. ' +
+      note: 'FASTQ (.fastq, .fq, .fastq.gz, .fq.gz), up to 100 GB in total. ' +
             'Uploads resume automatically after a dropped connection; after closing the page, add the same files again to continue.',
       locale: { strings: {
         dropPasteFiles: 'Drop FASTQ files here or %{browseFiles}',

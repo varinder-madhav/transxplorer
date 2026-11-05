@@ -1,9 +1,9 @@
 #!/bin/sh
 # tusd pre-create hook: only accept FASTQ uploads from a live TransXplorer session,
-# within the 40 GB limit, and only while the disk keeps a safety margin.
+# within the 100 GB limit, and only while the disk keeps a safety margin.
 UPLOAD_ROOT=/srv/transxplorer/uploads
 RESERVE=$((50 * 1024 * 1024 * 1024))   # always leave 50 GB free for running jobs
-MAX=$((40 * 1024 * 1024 * 1024))
+MAX=$((100 * 1024 * 1024 * 1024))
 
 reject() {
   jq -n --arg msg "$2" --argjson code "$1" \
@@ -22,7 +22,7 @@ printf '%s' "$token" | grep -Eq '^[a-f0-9]{32}$' || reject 403 "Upload session e
 printf '%s' "$name" | grep -Eiq '^[A-Za-z0-9._-]+\.(fastq|fq)(\.gz)?$' ||
   reject 400 "Only FASTQ files (.fastq, .fq, .fastq.gz, .fq.gz) with letters, digits, dot, dash or underscore in the name can be uploaded."
 [ "$deferred" = "true" ] && reject 400 "File size must be known before upload."
-[ "$size" -gt "$MAX" ] && reject 413 "This file is larger than the 40 GB limit."
+[ "$size" -gt "$MAX" ] && reject 413 "This file is larger than the 100 GB limit."
 avail=$(df -P -B1 "$UPLOAD_ROOT" | awk 'NR==2 {print $4}')
 [ $((avail - size)) -lt "$RESERVE" ] && reject 507 "The server is short of disk space right now. Please try again later."
 

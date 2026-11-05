@@ -112,7 +112,7 @@ services:
       - -behind-proxy
       - -hooks-dir=/hooks
       - -hooks-enabled-events=pre-create
-      - -max-size=42949672960
+      - -max-size=107374182400
       - -disable-download
       - -network-timeout=2m
       - -port=8080

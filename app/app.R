@@ -75,7 +75,7 @@ if (.Platform$OS.type == "unix") {
 }
 
 # Set max upload size
-options(shiny.maxRequestSize = 40000*1024^2)  # 40GB upload limit
+options(shiny.maxRequestSize = 100000*1024^2)  # 100 GB upload limit
 
 select <- dplyr::select
 filter <- dplyr::filter
@@ -20284,6 +20284,7 @@ $(document).ready(function() {
 # ---- Curated changelog (NEWEST FIRST). To add an entry, add ONE line at the top. ----
 # tag must be one of: "New", "Improved", "Fixed"
 tx_changelog <- list(
+  list(date = "2026-11-05", tag = "Improved", text = "TransXplorer moved to a larger server: 12 app processes instead of 4, so analyses wait less often behind each other, and FASTQ uploads can now be up to 100 GB in total (was 40 GB)."),
   list(date = "2026-11-05", tag = "Improved", text = "Public runs (SRA/ENA accessions) now download from NCBI's copy of the SRA and are converted to FASTQ on the server, which is faster than ENA from some locations; reads are identical. If NCBI fails, the run is downloaded from ENA as before, and the job log says why."),
   list(date = "2026-10-17", tag = "Improved", text = "Raw-read jobs are faster with identical results: trimmed reads are kept uncompressed while they are aligned (trimming took ~9x longer because of compression), FastQC runs alongside alignment, and public runs download over 4 parallel connections (~3.5x faster). When ENA's run lookup is down, the run list comes from NCBI SRA instead."),
   list(date = "2026-10-16", tag = "New", text = "Batch-correction assessment: download the PCA and UMAP coordinates of every sample, before and after correction, as a CSV file."),
@@ -20491,7 +20492,7 @@ ui <- fluidPage(
     tags$link(rel = "stylesheet", href = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"),
     tags$link(href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Poppins:wght@700;900&display=swap", rel = "stylesheet"),
     tags$script(src = "custom.js"),
-    tags$script(src = "tx-upload.js?v=8"),
+    tags$script(src = "tx-upload.js?v=9"),
     tags$style(HTML("
       .tx-source { margin-bottom: 4px; }
       .tx-source .btn-group-container-sw, .tx-source .btn-group { width: 100%; }
@@ -21456,7 +21457,7 @@ tags$script(HTML("
                              br(),
                              "• Fast processing for small to medium datasets",
                              br(),
-                             "• Maximum 40 GB total file size (samples are processed one at a time)",
+                             "• Maximum 100 GB total file size (samples are processed one at a time)",
                              br(),
                              "• Supports 5-10 samples typically"
                          )
@@ -21508,7 +21509,7 @@ tags$script(HTML("
                                tags$strong("Naming Convention:"), " SampleName_R1/R2.fastq.gz, SampleName_1/2.fastq.gz or Illumina SampleName_S1_L001_R1_001.fastq.gz"
                              ),
                              tags$li(
-                               tags$strong("Server Limit:"), " Max 40 GB total for server processing"
+                               tags$strong("Server Limit:"), " Max 100 GB total for server processing"
                              )
                            )
                          )
@@ -21533,7 +21534,7 @@ tags$script(HTML("
                              ),
                              div(class = "tx-source-hint",
                                  conditionalPanel("input.fastq_source == 'upload'",
-                                                  "Upload your own FASTQ files (up to 40 GB in total)."),
+                                                  "Upload your own FASTQ files (up to 100 GB in total)."),
                                  conditionalPanel("input.fastq_source == 'public'",
                                                   "Analyse SRA/ENA runs by accession. The server downloads them, so nothing is uploaded from your computer."),
                                  conditionalPanel("input.fastq_source == 'retrieve'",
@@ -46852,11 +46853,11 @@ valid_extensions <- any(grepl("\\.(fastq|fq)(\\.gz)?$", file_names, ignore.case 
       }
     }
     
-    # Check file size (40GB limit for server)
+    # Check file size (100 GB limit for server)
     if (!is.null(fq)) {
       total_size <- sum(fq$size, na.rm = TRUE)
-if (total_size > 40 * 1024^3) {  # 40GB in bytes
-        errors <- c(errors, "Total file size exceeds the 40 GB server limit. Use compressed (.gz) FASTQ files, split the study into batches, or use the Docker option for larger studies.")
+if (total_size > 100 * 1024^3) {  # 100 GB in bytes
+        errors <- c(errors, "Total file size exceeds the 100 GB server limit. Use compressed (.gz) FASTQ files, split the study into batches, or use the Docker option for larger studies.")
       }
     }
     
@@ -115029,7 +115030,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
 }
   
   # Set options for maximum file upload size
-  options(shiny.maxRequestSize = 40000*1024^2)  # 40GB upload limit # Set maximum size to 30 MB
+  options(shiny.maxRequestSize = 100000*1024^2)  # 100 GB upload limit
   # Create Shiny object
   shinyApp(ui = ui, server = server)
   
