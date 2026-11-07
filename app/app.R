@@ -20469,6 +20469,78 @@ tx_map_to_entrez <- function(gene_ids, orgdb) {
   unique(as.character(best[!is.na(best)]))
 }
 
+# ============================================================================
+#  Error reports: errors in TransXplorer's own code, not in the visitor's input
+# ============================================================================
+# An error that ends a visitor's session, or a lost connection reported by the browser after a
+# refresh, is saved as one JSON line in error_reports/errors.jsonl under the results folder. Session
+# errors are also e-mailed to the team (each distinct error at most once every 6 hours); the visitor
+# sees what happened and the report ID (www/tx-errors.js). On the server, manage the reports with
+# ops/scripts/tx_errors.py (list / show / resolve / summary).
+tx_error_dir <- "/srv/transxplorer/results/error_reports"
+
+tx_error_stack <- function(err) {
+  out <- tryCatch(utils::capture.output(shiny::printStackTrace(err), type = "message"),
+                  error = function(e) character(0))
+  out <- trimws(out)
+  head(out[nzchar(out)], 40)
+}
+
+# E-mail one report to the team; the same error (numbers ignored) is sent at most once per 6 hours
+tx_mail_error <- function(rec) {
+  user <- Sys.getenv("TX_SMTP_USER"); pass <- Sys.getenv("TX_SMTP_APP_PASSWORD")
+  to <- Sys.getenv("TX_FEEDBACK_TO", "varinde2+transxplorer@ualberta.ca")
+  if (!nzchar(user) || !nzchar(pass) || !requireNamespace("emayili", quietly = TRUE)) return(invisible(FALSE))
+  sig <- digest::digest(paste(rec$kind, gsub("[0-9]+", "#", rec$message)), algo = "md5")
+  stamp <- file.path(tx_error_dir, "mailed", sig)
+  if (file.exists(stamp) && difftime(Sys.time(), file.mtime(stamp), units = "hours") < 6) return(invisible(FALSE))
+  dir.create(dirname(stamp), showWarnings = FALSE, recursive = TRUE)
+  file.create(stamp)
+  body <- paste(c(
+    sprintf("Report %s (%s UTC), %s", rec$id, rec$time, rec$kind),
+    "", "Error:", rec$message, "",
+    sprintf("App process: %s   Host: %s", rec$worker %||% "", rec$host %||% ""),
+    sprintf("Tab: %s", rec$tab %||% ""),
+    sprintf("Browser: %s", rec$browser %||% ""),
+    "", "Where in the code (most recent first):", rec$stack, "",
+    sprintf("On the server: python3 /srv/transxplorer/ops/scripts/tx_errors.py show %s", rec$id),
+    "The same error is e-mailed at most once every 6 hours; every occurrence is in errors.jsonl."),
+    collapse = "\n")
+  tryCatch({
+    e <- emayili::envelope()
+    e <- emayili::from(e, user)
+    e <- emayili::to(e, to)
+    e <- emayili::subject(e, paste0("[TransXplorer error] ", substr(rec$message, 1, 80)))
+    e <- emayili::text(e, body)
+    smtp <- emayili::server(host = "smtp.gmail.com", port = 587, username = user, password = pass)
+    smtp(e, verbose = FALSE)
+    invisible(TRUE)
+  }, error = function(err) { message("[error report] e-mail failed: ", conditionMessage(err)); invisible(FALSE) })
+}
+
+tx_record_error <- function(kind, message, stack = character(0), session = NULL, extra = list(), mail = TRUE) {
+  id <- sprintf("TX-%s-%s", format(Sys.time(), "%Y%m%d", tz = "UTC"),
+                paste(sample(c(0:9, letters[1:6]), 6, replace = TRUE), collapse = ""))
+  cd <- if (is.null(session)) list() else
+    tryCatch(shiny::isolate(shiny::reactiveValuesToList(session$clientData)), error = function(e) list())
+  port <- as.character(cd$url_port %||% "")
+  rec <- c(list(
+    id = id, time = format(Sys.time(), "%Y-%m-%d %H:%M:%S", tz = "UTC"), kind = kind,
+    message = substr(paste(message, collapse = " "), 1, 2000),
+    worker = cd$url_pathname %||% NA_character_,
+    host = paste0(cd$url_hostname %||% "", if (nzchar(port)) paste0(":", port) else ""),
+    browser = if (is.null(session)) NA_character_ else
+      substr(tryCatch(shiny::isolate(session$input$tx_ua), error = function(e) NULL) %||% "", 1, 300),
+    pid = Sys.getpid()), extra, list(stack = I(as.character(stack))))
+  tryCatch({
+    dir.create(tx_error_dir, showWarnings = FALSE, recursive = TRUE)
+    cat(jsonlite::toJSON(rec, auto_unbox = TRUE, null = "null", na = "null"), "\n", sep = "",
+        file = file.path(tx_error_dir, "errors.jsonl"), append = TRUE)
+  }, error = function(e) message("[error report] could not be saved: ", conditionMessage(e)))
+  if (isTRUE(mail)) tx_mail_error(rec)
+  id
+}
+
 ui <- fluidPage(
   useShinyjs(),
   extendShinyjs(text = "
@@ -20493,6 +20565,7 @@ ui <- fluidPage(
     tags$link(href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Poppins:wght@700;900&display=swap", rel = "stylesheet"),
     tags$script(src = "custom.js"),
     tags$script(src = "tx-upload.js?v=9"),
+    tags$script(src = "tx-errors.js?v=1"),
     tags$style(HTML("
       .tx-source { margin-bottom: 4px; }
       .tx-source .btn-group-container-sw, .tx-source .btn-group { width: 100%; }
@@ -20547,6 +20620,28 @@ tags$script(HTML("
       @media (max-width: 600px) { .tx-news-notice { flex-direction: column; gap: 8px; padding: 12px 14px; text-align: center; } }
       .tx-news-notice:hover { background: rgba(255,255,255,0.16); transform: none; }
       .tx-news-notice .tx-news-tag { background: #ffd54f; color: #4e3b00; white-space: nowrap; }
+      /* Lost connection / app error message (www/tx-errors.js) */
+      #tx-conn-overlay { position: fixed; inset: 0; z-index: 100000; display: flex; align-items: center; justify-content: center;
+        padding: 16px; background: rgba(15, 23, 42, 0.55); }
+      .tx-conn-card { width: 100%; max-width: 520px; max-height: calc(100vh - 32px); overflow-y: auto; background: #fff; color: #1f2937;
+        border-radius: 14px; padding: 26px 28px 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.30); font-size: 15px; line-height: 1.55; }
+      .tx-conn-card h2 { margin: 0 0 10px; font-size: 21px; font-weight: 700; color: #111827; }
+      .tx-conn-card p { margin: 0 0 10px; }
+      .tx-conn-icon { width: 40px; height: 40px; border-radius: 50%; margin-bottom: 12px; display: flex; align-items: center;
+        justify-content: center; font-weight: 800; font-size: 22px; }
+      .tx-conn-crash .tx-conn-icon { background: #fdecea; color: #c62828; }
+      .tx-conn-crash .tx-conn-icon::before { content: '!'; }
+      .tx-conn-lost .tx-conn-icon { background: #fff4e5; color: #b26a00; }
+      .tx-conn-lost .tx-conn-icon::before { content: '↻'; }
+      .tx-conn-sent { background: #e8f5e9; border-left: 3px solid #2e7d32; padding: 8px 12px; border-radius: 6px; }
+      .tx-conn-sent code { font-size: 13px; background: none; color: inherit; padding: 0; }
+      .tx-conn-small { color: #4b5563; font-size: 13.5px; }
+      .tx-conn-btn { margin-top: 6px; background: #1565c0; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px;
+        font-size: 15px; font-weight: 600; cursor: pointer; }
+      .tx-conn-btn:hover { background: #0d47a1; }
+      .tx-conn-btn:focus-visible { outline: 3px solid #90caf9; outline-offset: 2px; }
+      body:has(#tx-conn-overlay) #shiny-disconnected-overlay, body:has(#tx-conn-overlay) #ss-connect-dialog,
+      body:has(#tx-conn-overlay) #ss-overlay { display: none !important; }
       .tx-news-cta i { margin-left: 6px; font-size: 0.85em; }
       @media (prefers-reduced-motion: no-preference) {
         .tx-news-cta i { animation: tx-nudge 1.8s ease-in-out 3; }
@@ -30770,6 +30865,26 @@ convertGeneIDs <- function(gene_data, input_id_type, organism_db) {
 
 # Define server function
 server <- function(input, output, session) {
+
+  # ===== Error reports (tx_record_error, www/tx-errors.js) =====
+  # An error that would end this session is saved and e-mailed, and the browser is told the report
+  # ID so it can explain what happened. A connection lost without such an error is reported by the
+  # browser the next time the page connects.
+  onUnhandledError(function(err) {
+    id <- tx_record_error("session_error", conditionMessage(err), tx_error_stack(err), session,
+                          list(session = session$token, tab = isolate(input$main_tabs) %||% NA_character_))
+    try(session$sendCustomMessage("tx_crash", list(id = id)), silent = TRUE)
+  })
+  observeEvent(input$tx_lost_report, {
+    r <- input$tx_lost_report
+    if (!is.list(r)) return()
+    tx_record_error("lost_connection", "The browser lost its connection to the app (reported after the page was reloaded)",
+                    session = session, mail = FALSE,
+                    extra = list(lost_at = format(as.POSIXct(as.numeric(r$t %||% NA) / 1000, origin = "1970-01-01", tz = "UTC"),
+                                                  "%Y-%m-%d %H:%M:%S"),
+                                 lost_worker = as.character(r$path %||% NA), lost_session = as.character(r$sid %||% NA),
+                                 tab = as.character(r$tab %||% NA)))
+  })  # not ignoreInit: the report is sent as the page connects, so it arrives with the first inputs
 
   # ===== Systems Biology: reuse DE results from Transcriptome Analysis =====
   tx_current_sig_degs <- function(max_n = 500) {
@@ -44135,8 +44250,19 @@ server <- function(input, output, session) {
         module_enrichment <- NULL
         if (detect_modules && nrow(ppi_interactions) >= 5) {
           setProgress(0.55, detail = "Detecting network modules...")
-          network_modules_result <- detect_network_modules(ppi_interactions,
-                                                           method = input$ppi_standalone_cluster_method %||% "louvain")
+          module_method <- input$ppi_standalone_cluster_method %||% "louvain"
+          n_int <- nrow(ppi_interactions)
+          n_prot <- length(unique(c(ppi_interactions$gene_from, ppi_interactions$gene_to)))
+          if (identical(module_method, "edge_betweenness") && as.numeric(n_int)^2 * n_prot > 2e9) {
+            # ~2,000 interactions among 400 proteins already take about 30 s
+            showNotification(sprintf(paste("Modules were not detected: Edge Betweenness is too slow for this network (%s proteins,",
+                                           "%s interactions; it suits up to about 2,000 interactions among 400 proteins).",
+                                           "Choose Louvain, Walktrap or Fast Greedy, or use fewer genes."),
+                                     format(n_prot, big.mark = ","), format(n_int, big.mark = ",")),
+                             type = "warning", duration = 20)
+          } else {
+            network_modules_result <- detect_network_modules(ppi_interactions, method = module_method)
+          }
 
           # Module-specific enrichment
           if (!is.null(network_modules_result) && !is.null(network_modules_result$modules)) {
@@ -46017,8 +46143,9 @@ server <- function(input, output, session) {
   
   
   #webshot::install_phantomjs()#one time run
-  # Set native encoding to UTF-8 without BOM
-  Sys.setlocale(category = "LC_ALL", locale = "C")
+  # C rules for sorting and numbers, but UTF-8 text, so file names in any language work
+  # (plain "C" made basename() fail on names such as Chinese file names)
+  Sys.setlocale(category = "LC_ALL", locale = "C.UTF-8")
   options(encoding = "native.enc")
   
   # Dynamic Docker pull command based on genome selection
@@ -51876,6 +52003,16 @@ document.addEventListener("DOMContentLoaded", function() {
       if (length(text_cols) > 0 && length(text_cols) < ncol(expr_data)) {
         message(paste("Ignoring non-numeric column(s):", paste(text_cols, collapse = ", ")))
         expr_data <- expr_data[, !colnames(expr_data) %in% text_cols, drop = FALSE]
+      }
+      stat_cols <- c("NES", "NOM p-val", "FDR q-val", "FWER p-val", "RANK AT MAX", "log2FoldChange", "lfcSE",
+                     "pvalue", "padj", "baseMean", "logFC", "AveExpr", "P.Value", "adj.P.Val", "PValue", "logCPM")
+      n_stat <- sum(colnames(expr_data) %in% stat_cols)
+      if (n_stat >= 2 && n_stat >= ncol(expr_data) / 2) {
+        stop(paste0("This file looks like a results table (columns such as ",
+                    paste(head(intersect(colnames(expr_data), stat_cols), 3), collapse = ", "),
+                    "), not an expression table. Upload a table with one row per gene and one column of counts ",
+                    "or expression values per sample. Results tables can be used in Enrichment Analysis ",
+                    "(ranked list) or the Systems Biology modules."))
       }
 
       # Handle duplicate gene names: average them, per sample, over the values present
@@ -58731,7 +58868,7 @@ document.addEventListener("DOMContentLoaded", function() {
       
       # Show notification about organism selection
       showNotification(
-        "New dataset loaded! Please select the appropriate organism for gene annotation.",
+        "Please select the organism of this dataset (gene annotation depends on it).",
         type = "warning",
         duration = 5
       )
@@ -62690,21 +62827,21 @@ document.addEventListener("DOMContentLoaded", function() {
   observe({
     # Sync p-value type
     if (!is.null(input$pvalue_type) && !is.null(input$pvalue_type_viz)) {
-      if (input$pvalue_type != input$pvalue_type_viz) {
+      if (!identical(input$pvalue_type, input$pvalue_type_viz)) {
         updateRadioButtons(session, "pvalue_type_viz", selected = input$pvalue_type)
       }
     }
     
     # Sync p-value cutoff
     if (!is.null(input$pathway_pval_cutoff) && !is.null(input$pathway_pval_cutoff_viz)) {
-      if (input$pathway_pval_cutoff != input$pathway_pval_cutoff_viz) {
+      if (!is.na(input$pathway_pval_cutoff) && !identical(input$pathway_pval_cutoff, input$pathway_pval_cutoff_viz)) {
         updateNumericInput(session, "pathway_pval_cutoff_viz", value = input$pathway_pval_cutoff)
       }
     }
     
     # Sync min genes per pathway
     if (!is.null(input$min_genes_per_pathway) && !is.null(input$min_genes_per_pathway_viz)) {
-      if (input$min_genes_per_pathway != input$min_genes_per_pathway_viz) {
+      if (!is.na(input$min_genes_per_pathway) && !identical(input$min_genes_per_pathway, input$min_genes_per_pathway_viz)) {
         updateNumericInput(session, "min_genes_per_pathway_viz", value = input$min_genes_per_pathway)
       }
     }
@@ -113065,7 +113202,8 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     
     if (is.null(combined) || nrow(combined) == 0) return()
     combined <- combined[order(combined$padj), , drop = FALSE]
-    top_n <- if (!is.null(input$enrichment_viz_top)) input$enrichment_viz_top else 20
+    top_n <- suppressWarnings(as.numeric(input$enrichment_viz_top))
+    if (length(top_n) != 1 || is.na(top_n)) top_n <- 20  # box left empty
     combined <- head(combined, max(50, top_n))
     
     pathway_choices <- unique(combined$pathway)
