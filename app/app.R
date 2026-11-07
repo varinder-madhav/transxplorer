@@ -13005,7 +13005,8 @@ calc_epc <- function(g, n_sim = 500, seed = 12345) {
 # bounded; this is surfaced in the log message.
 calculate_centrality_measures <- function(ppi_interactions,
                                           epc_node_cap = 5000,
-                                          epc_n_sim = 500) {
+                                          epc_n_sim = 500,
+                                          mcc_core_cap = 60) {
   print("Calculating centrality measures (CytoHubba-style)...")
 
   tryCatch({
@@ -13049,7 +13050,16 @@ calculate_centrality_measures <- function(ppi_interactions,
     eigenvec    <- igraph::eigen_centrality(g)$vector
 
     # ---- CytoHubba additions ----
-    mcc_vals <- tryCatch(calc_mcc(g),
+    # MCC lists every maximal clique, and their number explodes on densely connected networks:
+    # in the STRING rat network a 500-protein core (k-core 71) has 4.8 million cliques (160 s, 7.7 GB)
+    # and the full 11,578-protein network passed 200 GB. Below k-core 60 it is fast (k-core 56:
+    # 0.3 million cliques, 8 s), so above it MCC is left empty and the caller tells the visitor.
+    max_core <- if (n_edges > 0) max(igraph::coreness(g)) else 0
+    mcc_skipped <- max_core > mcc_core_cap
+    mcc_vals <- if (mcc_skipped) {
+      print(paste0("MCC skipped (largest k-core ", max_core, " > ", mcc_core_cap, ")"))
+      setNames(rep(NA_real_, n_nodes), node_names)
+    } else tryCatch(calc_mcc(g),
                          error = function(e) {
                            print(paste("MCC failed:", e$message))
                            setNames(rep(NA_real_, n_nodes), node_names)
@@ -13096,6 +13106,7 @@ calculate_centrality_measures <- function(ppi_interactions,
 
     print(paste("✅ Calculated 8 centrality measures for",
                 nrow(centrality_df), "proteins"))
+    if (mcc_skipped) attr(centrality_df, "mcc_skipped_core") <- max_core
 
     return(centrality_df)
 
@@ -13103,6 +13114,17 @@ calculate_centrality_measures <- function(ppi_interactions,
     print(paste("❌ Centrality calculation failed:", e$message))
     return(NULL)
   })
+}
+
+# Tell the visitor when MCC was left out (see calculate_centrality_measures)
+tx_notify_mcc_skipped <- function(cm) {
+  core <- attr(cm, "mcc_skipped_core")
+  if (is.null(core)) return(invisible(NULL))
+  try(shiny::showNotification(sprintf(paste("MCC hub scores were not computed: this network is too densely connected",
+                                             "(largest k-core %d), and listing its cliques would exhaust the server's memory.",
+                                             "The other hub measures are shown. Use fewer genes to include MCC."), as.integer(core)),
+                                 type = "warning", duration = 15), silent = TRUE)
+  invisible(NULL)
 }
 
 # Consensus-hub summary: given a centrality_df (from the function above)
@@ -13762,6 +13784,7 @@ perform_ppi_analysis_fixed <- function(selected_genes, deg_data, input_params) {
     # Step 6: Advanced Features
     print("Calculating centrality measures...")
     centrality_measures <- calculate_centrality_measures(ppi_interactions)
+    tx_notify_mcc_skipped(centrality_measures)
     print(paste("✅ Calculated centrality for", nrow(centrality_measures), "proteins"))
     
     # Module Detection
@@ -14960,6 +14983,19 @@ tx_string_taxid <- function(organism) {
 # Trim a PPI edge list to max_nodes. Input genes that have interactions are always kept;
 # the remaining slots go to the highest-degree added (non-input) nodes. An input gene
 # whose only partners were trimmed keeps its highest-scoring edge.
+# Largest gene list standalone PPI accepts. A network of every expressed gene is not interpretable,
+# and its hub and module calculations can exhaust the server's memory (a 12,651-gene rat list did, 7 Nov 2026).
+TX_PPI_MAX_GENES <- 5000
+TX_DE_TABLE_COLUMNS <- tolower(c("log2FoldChange", "log2FC", "logFC", "padj", "adj.P.Val", "P.Value",
+                                 "pvalue", "PValue", "FDR", "baseMean", "lfcSE", "AveExpr"))
+tx_ppi_too_many_genes <- function(n, from_de_table = FALSE, at_upload = FALSE) {
+  paste0(if (at_upload) "PPI will not run on this list: it accepts up to " else "PPI was not run: it accepts up to ", format(TX_PPI_MAX_GENES, big.mark = ","), " genes, and this list has ",
+         format(n, big.mark = ","), ". ",
+         if (from_de_table) "The file is a full differential expression table, so it lists every tested gene, not only the changed ones. " else "",
+         "Use your significant genes instead: filter the table by adjusted p-value and fold change, or use ",
+         "'Use my DEGs for PPI' after a Transcriptome Analysis.")
+}
+
 tx_ppi_limit_nodes <- function(ppi, input_genes, max_nodes) {
   a <- as.character(ppi$gene_from); b <- as.character(ppi$gene_to)
   nodes <- unique(c(a, b))
@@ -15204,7 +15240,7 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
   print(paste("Querying STRING API for species", species_id, "..."))
 
   if (!requireNamespace("httr", quietly = TRUE)) {
-    return(create_mock_ppi_data_safe(genes))
+    stop("The httr package is needed to query STRING for this species; no network was built.", call. = FALSE)
   }
 
   tryCatch({
@@ -15328,7 +15364,7 @@ query_string_api <- function(genes, species_id, confidence = 0.4, max_interactio
     result_df <- data.frame(
       gene_from = clean_and_map(interactions[[p1_col]]),
       gene_to = clean_and_map(interactions[[p2_col]]),
-      combined_score = as.numeric(interactions[[score_col]]) / 1000,
+      combined_score = as.numeric(interactions[[score_col]]),  # the API reports 0-1 (e.g. 0.999)
       stringsAsFactors = FALSE
     )
 
@@ -43860,6 +43896,14 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "ppi_standalone_gene_text", value = paste(genes, collapse = "\n"))
     showNotification(sprintf("Loaded %d genes from %s (first column); they replace the pasted list.",
                              length(genes), f$name), type = "message")
+    # A results table (statistics columns in the header row) lists every tested gene, not a gene list
+    hdr <- tryCatch(tolower(trimws(gsub('^"|"$', "", unlist(data.table::fread(f$datapath, header = FALSE, nrows = 1,
+                      colClasses = "character", sep = if (grepl("\\.csv$", f$name, ignore.case = TRUE)) "," else "auto"))))),
+                    error = function(e) character(0))
+    rv_ppi_standalone$de_table_genes <- if (any(hdr %in% TX_DE_TABLE_COLUMNS)) genes else NULL
+    if (length(genes) > TX_PPI_MAX_GENES)
+      showNotification(tx_ppi_too_many_genes(length(genes), !is.null(rv_ppi_standalone$de_table_genes), at_upload = TRUE),
+                       type = "warning", duration = 25)
   })
 
   # Handle example button
@@ -44064,6 +44108,12 @@ server <- function(input, output, session) {
       showNotification("Please provide at least 2 valid gene IDs.", type = "error")
       return()
     }
+    if (length(final_genes) > TX_PPI_MAX_GENES) {
+      de <- rv_ppi_standalone$de_table_genes
+      from_de <- length(de) > 0 && mean(final_genes %in% de) > 0.9
+      showNotification(tx_ppi_too_many_genes(length(final_genes), from_de), type = "error", duration = 25)
+      return()
+    }
 
     print(paste("PPI Standalone: Processing", length(final_genes), "genes"))
 
@@ -44238,6 +44288,7 @@ server <- function(input, output, session) {
 
         # Centrality measures
         centrality_measures <- calculate_centrality_measures(ppi_interactions)
+        tx_notify_mcc_skipped(centrality_measures)
 
         setProgress(0.5, detail = "Building network visualization...")
 
@@ -86233,6 +86284,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                                      print(paste("[PPI] centrality failed:", e$message)); NULL
                                                    }
                                                  )
+                                                 tx_notify_mcc_skipped(ppi_centrality_measures)
                                                  ppi_hub_consensus <- tryCatch(
                                                    calculate_hub_consensus(ppi_centrality_measures, top_n = 10),
                                                    error = function(e) {
