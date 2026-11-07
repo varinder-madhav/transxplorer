@@ -79532,16 +79532,12 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     
     # Build a clean, lightweight display table
-    display_df <- data.frame(stringsAsFactors = FALSE)
-
-    # Pathway name (prefer Term, then Description)
-    if ("Term" %in% colnames(enrichment)) {
-      display_df$Pathway <- enrichment$Term
-    } else if ("Description" %in% colnames(enrichment)) {
-      display_df$Pathway <- enrichment$Description
-    } else {
-      display_df$Pathway <- rownames(enrichment)
-    }
+    # Pathway name (prefer Term, then Description). The table starts from this column: adding
+    # columns to an empty data.frame() fails with "replacement has N rows, data has 0".
+    pathway <- if ("Term" %in% colnames(enrichment)) enrichment$Term
+               else if ("Description" %in% colnames(enrichment)) enrichment$Description
+               else rownames(enrichment)
+    display_df <- data.frame(Pathway = as.character(pathway), stringsAsFactors = FALSE)
     # Truncate long pathway names
     display_df$Pathway <- sapply(display_df$Pathway, function(x) {
       if (nchar(x) > 60) paste0(substr(x, 1, 57), "...") else x
@@ -79549,7 +79545,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
     if ("Database" %in% colnames(enrichment)) display_df$Database <- enrichment$Database
     if ("Overlap" %in% colnames(enrichment)) display_df$Overlap <- enrichment$Overlap
-    display_df$`Adj. P-value` <- enrichment$pvalue
+    display_df$`Adj. P-value` <- if ("pvalue" %in% colnames(enrichment)) enrichment$pvalue else NA_real_
     if ("Combined.Score" %in% colnames(enrichment)) {
       display_df$Score <- round(enrichment$Combined.Score, 2)
     }
