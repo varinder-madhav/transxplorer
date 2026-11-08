@@ -113002,6 +113002,13 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     }
   }
 
+  # 'Top N terms' as a usable number: a cleared box (NA) made head() end the session
+  # (TX-20261108-cffe75), so it falls back to the box's default of 20
+  enrichment_viz_top_n <- reactive({
+    v <- suppressWarnings(as.numeric(input$enrichment_viz_top))
+    if (length(v) != 1 || is.na(v)) 20 else min(100, max(1, round(v)))
+  })
+
   output$enrichment_visualization <- renderPlot({
     req(enrichment_rv$results)
     req(length(enrichment_rv$results) > 0)
@@ -113056,7 +113063,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
       has_bg <- "BgRatio" %in% names(all_df)
       plot_df <- all_df %>%
         dplyr::arrange(p.adjust) %>%
-        head(input$enrichment_viz_top) %>%
+        head(enrichment_viz_top_n()) %>%
         dplyr::mutate(
           Description_wrapped = wrap_text(Description, 50),
           Description_wrapped = factor(Description_wrapped, levels = rev(Description_wrapped)),
@@ -113073,7 +113080,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
 
       if (input$enrichment_viz_type == "lollipop") {
         build_enrichment_lollipop(plot_df, mode = "ora",
-                                  top_n = input$enrichment_viz_top)
+                                  top_n = enrichment_viz_top_n())
 
       } else if (input$enrichment_viz_type == "barplot") {
         # Bar plot - use Gene Count for fill (not p.adjust which is on x-axis)
@@ -113083,7 +113090,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
           labs(
             x = "-log10(Adjusted P-value)",
             y = "",
-            title = paste("Top", input$enrichment_viz_top, "Enriched Pathways")
+            title = paste("Top", enrichment_viz_top_n(), "Enriched Pathways")
           ) +
           theme_minimal(base_size = 14) +
           theme(
@@ -113123,7 +113130,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
           p.adjust = dplyr::coalesce(padj, p.adjust)
         ) %>%
         dplyr::arrange(p.adjust) %>%
-        head(input$enrichment_viz_top) %>%
+        head(enrichment_viz_top_n()) %>%
         dplyr::mutate(
           Description_wrapped = wrap_text(Description, 50),
           Description_wrapped = factor(Description_wrapped, levels = rev(Description_wrapped)),
@@ -113132,7 +113139,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
       
       if (input$enrichment_viz_type == "lollipop") {
         build_enrichment_lollipop(plot_df, mode = "gsea",
-                                  top_n = input$enrichment_viz_top)
+                                  top_n = enrichment_viz_top_n())
 
       } else if (input$enrichment_viz_type == "barplot") {
         ggplot(plot_df, aes(x = NES, y = Description_wrapped, fill = NES)) +
@@ -113142,7 +113149,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
           labs(
             x = "Normalized Enrichment Score (NES)",
             y = "",
-            title = paste("Top", input$enrichment_viz_top, "Enriched Pathways (GSEA)")
+            title = paste("Top", enrichment_viz_top_n(), "Enriched Pathways (GSEA)")
           ) +
           theme_minimal(base_size = 14) +
           theme(
@@ -113162,7 +113169,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
           scale_size_continuous(name = "Gene Count", range = c(4, 14)) +
           geom_vline(xintercept = 0, linetype = "dashed", color = "gray60") +
           labs(x = "Normalized Enrichment Score (NES)", y = NULL,
-               title = paste("Top", input$enrichment_viz_top, "Enriched Pathways (GSEA)")) +
+               title = paste("Top", enrichment_viz_top_n(), "Enriched Pathways (GSEA)")) +
           theme_minimal(base_size = 14) +
           theme(
             plot.background = element_rect(fill = "white", color = NA),
@@ -113390,7 +113397,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
         has_bg <- "BgRatio" %in% names(all_df)
         plot_df <- all_df %>%
           dplyr::arrange(p.adjust) %>%
-          head(input$enrichment_viz_top) %>%
+          head(enrichment_viz_top_n()) %>%
           dplyr::mutate(
             Description_wrapped = wrap_text(Description, 45),
             Description_wrapped = factor(Description_wrapped, levels = rev(Description_wrapped)),
@@ -113407,7 +113414,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
 
         if (input$enrichment_viz_type == "lollipop") {
           p <- build_enrichment_lollipop(plot_df, mode = "ora",
-                                         top_n = input$enrichment_viz_top,
+                                         top_n = enrichment_viz_top_n(),
                                          base_size = 16)
         } else if (input$enrichment_viz_type %in% c("dotplot", "gsea_classic")) {
           # GSEA-only viz selected while in ORA mode: emit a small notice image.
@@ -113422,7 +113429,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
             geom_col() +
             scale_fill_viridis_c(name = "Gene Count", option = "plasma") +
             labs(x = "-log10(Adjusted P-value)", y = "",
-                 title = paste("Top", input$enrichment_viz_top, "Enriched Pathways")) +
+                 title = paste("Top", enrichment_viz_top_n(), "Enriched Pathways")) +
             theme_minimal(base_size = 14) +
             theme(
               plot.background = element_rect(fill = "white", color = NA),
@@ -113439,7 +113446,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
             p.adjust    = dplyr::coalesce(padj, p.adjust)
           ) %>%
           dplyr::arrange(p.adjust) %>%
-          head(input$enrichment_viz_top) %>%
+          head(enrichment_viz_top_n()) %>%
           dplyr::mutate(
             Description_wrapped = wrap_text(Description, 45),
             Description_wrapped = factor(Description_wrapped, levels = rev(Description_wrapped)),
@@ -113448,7 +113455,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
 
         if (input$enrichment_viz_type == "lollipop") {
           p <- build_enrichment_lollipop(plot_df, mode = "gsea",
-                                         top_n = input$enrichment_viz_top,
+                                         top_n = enrichment_viz_top_n(),
                                          base_size = 16)
         } else if (input$enrichment_viz_type == "dotplot") {
           if (!"Count" %in% names(plot_df)) {
@@ -113460,7 +113467,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
             scale_size_continuous(name = "Gene Count", range = c(4, 14)) +
             geom_vline(xintercept = 0, linetype = "dashed", color = "gray60") +
             labs(x = "Normalized Enrichment Score (NES)", y = NULL,
-                 title = paste("Top", input$enrichment_viz_top, "Enriched Pathways (GSEA)")) +
+                 title = paste("Top", enrichment_viz_top_n(), "Enriched Pathways (GSEA)")) +
             theme_minimal(base_size = 14) +
             theme(
               plot.background = element_rect(fill = "white", color = NA),
@@ -113511,7 +113518,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
                                  midpoint = 0, name = "NES") +
             geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
             labs(x = "Normalized Enrichment Score", y = "",
-                 title = paste("Top", input$enrichment_viz_top, "Enriched Pathways (GSEA)")) +
+                 title = paste("Top", enrichment_viz_top_n(), "Enriched Pathways (GSEA)")) +
             theme_minimal(base_size = 14) +
             theme(
               plot.background = element_rect(fill = "white", color = NA),
@@ -113531,7 +113538,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
       } else {
         max_label_chars <- max(nchar(as.character(plot_df$Description_wrapped)))
         plot_width  <- max(14, 10 + (max_label_chars / 18))
-        plot_height <- max(9, input$enrichment_viz_top * 0.45)
+        plot_height <- max(9, enrichment_viz_top_n() * 0.45)
       }
 
       save_ok <- tryCatch({
