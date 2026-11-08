@@ -104,7 +104,10 @@
     var now = Date.now();
     var send = function () {
       lastSent = Date.now(); pending = null;
-      Shiny.setInputValue('tx_upload_state', summary());
+      var st = summary();
+      window.txUploadActive = st.active; window.txUploadFiles = st.files;  // read by tx-errors.js
+      if (window.txConnRefresh) window.txConnRefresh();
+      Shiny.setInputValue('tx_upload_state', st);
     };
     if (immediate || now - lastSent > 1500) { if (pending) clearTimeout(pending); send(); }
     else if (!pending) pending = setTimeout(send, 1500 - (now - lastSent));
@@ -180,6 +183,7 @@
       var url = file && file.tus && file.tus.uploadUrl ? file.tus.uploadUrl : (file.uploadURL || '');
       var id = url.split('/').filter(Boolean).pop() || '';
       Shiny.setInputValue('tx_upload_done', { name: file.name, id: id, n: Date.now() }, { priority: 'event' });
+      window.txUploadDone = (window.txUploadDone || 0) + 1;  // read by tx-errors.js
       // Finished files move to the "ready on the server" list rendered by Shiny.
       setTimeout(function () { try { uppy.removeFile(file.id); } catch (e) { /* already gone */ } }, 1200);
     });

@@ -20600,8 +20600,8 @@ ui <- fluidPage(
     tags$link(rel = "stylesheet", href = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"),
     tags$link(href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Poppins:wght@700;900&display=swap", rel = "stylesheet"),
     tags$script(src = "custom.js"),
-    tags$script(src = "tx-upload.js?v=9"),
-    tags$script(src = "tx-errors.js?v=1"),
+    tags$script(src = "tx-upload.js?v=10"),
+    tags$script(src = "tx-errors.js?v=2"),
     tags$style(HTML("
       .tx-source { margin-bottom: 4px; }
       .tx-source .btn-group-container-sw, .tx-source .btn-group { width: 100%; }
@@ -20669,6 +20669,14 @@ tags$script(HTML("
       .tx-conn-crash .tx-conn-icon::before { content: '!'; }
       .tx-conn-lost .tx-conn-icon { background: #fff4e5; color: #b26a00; }
       .tx-conn-lost .tx-conn-icon::before { content: '↻'; }
+      .tx-conn-idle .tx-conn-icon { background: #e3f2fd; color: #1565c0; }
+      .tx-conn-idle .tx-conn-icon::before { content: '↻'; }
+      #tx-idle-warning { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 99999;
+        width: calc(100% - 32px); max-width: 560px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+        background: #fff; color: #1f2937; border-left: 4px solid #1565c0; border-radius: 10px; padding: 14px 18px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25); font-size: 15px; line-height: 1.45; }
+      #tx-idle-warning span { flex: 1 1 260px; }
+      #tx-idle-warning .tx-conn-btn { margin-top: 0; }
       .tx-conn-sent { background: #e8f5e9; border-left: 3px solid #2e7d32; padding: 8px 12px; border-radius: 6px; }
       .tx-conn-sent code { font-size: 13px; background: none; color: inherit; padding: 0; }
       .tx-conn-small { color: #4b5563; font-size: 13.5px; }
@@ -31467,30 +31475,34 @@ server <- function(input, output, session) {
     gc(verbose = FALSE)
   })
 
-  # Auto-close idle sessions after 30 minutes of no input
-  idle_timer <- reactiveVal(Sys.time())
-
-  # Reset timer on any input activity
+  # Close a session after TX_IDLE_MINUTES without activity, to free its memory. Activity is any
+  # input change, including the heartbeat www/tx-errors.js sends while the visitor moves the mouse,
+  # scrolls, types or has an upload running. Time R spent busy (a long analysis) also counts, so a
+  # session is never closed just as its results arrive. The page warns 5 minutes ahead, and says
+  # why it closed instead of showing 'connection lost'.
+  TX_IDLE_MINUTES <- 60
+  idle_last <- reactiveVal(Sys.time())
+  idle_checked <- Sys.time()
+  idle_warned <- FALSE
   observe({
     reactiveValuesToList(input)  # triggers on ANY input change
-    idle_timer(Sys.time())
+    idle_last(Sys.time())
   })
-
-  # Check for idle timeout every 5 minutes
   observe({
-    invalidateLater(300000)  # 5 minutes
-    idle_minutes <- as.numeric(difftime(Sys.time(), idle_timer(), units = "mins"))
-    if (idle_minutes > 30) {
-      showModal(modalDialog(
-        title = "Session Idle",
-        p("This session has been idle for 30 minutes and will close to free server resources."),
-        p("If you saved your session, you can restore it using your session ID."),
-        footer = NULL,
-        easyClose = FALSE
-      ))
-      # Give 10 seconds for the modal to render, then close
-      invalidateLater(10000)
-      session$close()
+    invalidateLater(60000)
+    now <- Sys.time()
+    if (as.numeric(difftime(now, idle_checked, units = "mins")) > 3) idle_last(now)  # R was busy
+    idle_checked <<- now
+    idle <- as.numeric(difftime(now, isolate(idle_last()), units = "mins"))
+    if (idle >= TX_IDLE_MINUTES) {
+      session$sendCustomMessage("tx_idle", list(state = "closed", minutes = TX_IDLE_MINUTES))
+      later::later(function() session$close(), 2)  # let the message reach the page first
+    } else if (idle >= TX_IDLE_MINUTES - 5) {
+      if (!idle_warned) session$sendCustomMessage("tx_idle", list(state = "warn", minutes = TX_IDLE_MINUTES))
+      idle_warned <<- TRUE
+    } else if (idle_warned) {
+      session$sendCustomMessage("tx_idle", list(state = "active"))
+      idle_warned <<- FALSE
     }
   })
 
