@@ -14983,6 +14983,19 @@ tx_string_taxid <- function(organism) {
 # Trim a PPI edge list to max_nodes. Input genes that have interactions are always kept;
 # the remaining slots go to the highest-degree added (non-input) nodes. An input gene
 # whose only partners were trimmed keeps its highest-scoring edge.
+# Base-graphics margins (in lines), shrunk to fit the plot: wide fixed margins for long pathway
+# names end the session with 'figure margins too large' when the plot area is narrow, e.g. a small
+# window or a phone (TX-20261111-3d273d). Margins may use up to 60% of the width and height.
+tx_par_mar <- function(mar) {
+  din <- par("din"); csi <- par("csi")
+  fit <- function(a, b, size) {
+    need <- (a + b) * csi; room <- 0.6 * size
+    if (need > room && need > 0) c(a, b) * room / need else c(a, b)
+  }
+  h <- fit(mar[1], mar[3], din[2]); w <- fit(mar[2], mar[4], din[1])
+  invisible(par(mar = c(h[1], w[1], h[2], w[2])))
+}
+
 # Largest gene list standalone PPI accepts. A network of every expressed gene is not interpretable,
 # and its hub and module calculations can exhaust the server's memory (a 12,651-gene rat list did, 7 Nov 2026).
 TX_PPI_MAX_GENES <- 5000
@@ -37638,7 +37651,7 @@ server <- function(input, output, session) {
       dim(textMatrix) <- dim(moduleTraitCor)
       
       # Plot heatmap using WGCNA's labeledHeatmap
-      par(mar = c(8, 10, 3, 3))
+      tx_par_mar(c(8, 10, 3, 3))
       
       # Check if WGCNA labeledHeatmap is available
       if (!exists("labeledHeatmap", mode = "function")) {
@@ -37689,7 +37702,7 @@ server <- function(input, output, session) {
       
       # Save to file
       png(file, width = 1200, height = 1000, res = 150)
-      par(mar = c(8, 10, 3, 3))
+      tx_par_mar(c(8, 10, 3, 3))
       
       labeledHeatmap(
         Matrix = moduleTraitCor,
@@ -45130,7 +45143,7 @@ server <- function(input, output, session) {
           top_pathways <- top_pathways[!is.na(top_pathways[[pval_col]]) & top_pathways[[pval_col]] > 0, ]
           
           if (nrow(top_pathways) > 0) {
-            par(mar = c(5, 15, 4, 2))
+            tx_par_mar(c(5, 15, 4, 2))
             barplot(
               -log10(top_pathways[[pval_col]]),
               names.arg = top_pathways[[desc_col]],
@@ -79716,7 +79729,7 @@ document.addEventListener("DOMContentLoaded", function() {
     top_enrichment <- top_enrichment[nrow(top_enrichment):1, ]
     
     # Plot
-    par(mar = c(5, 18, 4, 2))
+    tx_par_mar(c(5, 18, 4, 2))
     
     colors <- colorRampPalette(c("#27ae60", "#3498db", "#9b59b6"))(nrow(top_enrichment))
     
@@ -79805,7 +79818,7 @@ document.addEventListener("DOMContentLoaded", function() {
     })
     
     # Create dotplot using base R
-    par(mar = c(5, 18, 4, 6))
+    tx_par_mar(c(5, 18, 4, 6))
     
     # Dotplot
     x <- -log10(top_enrichment[[pval_col]])
@@ -79886,7 +79899,7 @@ document.addEventListener("DOMContentLoaded", function() {
           top$display_term <- ifelse(nchar(top[[term_col]]) > 45,
                                      paste0(substr(top[[term_col]], 1, 42), "..."),
                                      top[[term_col]])
-          par(mar = c(5, 22, 4, 4))
+          tx_par_mar(c(5, 22, 4, 4))
           barplot(rev(-log10(top[[pval_col]])),
                   names.arg = rev(top$display_term),
                   horiz = TRUE, las = 1, col = "#3498db",
@@ -79930,7 +79943,7 @@ document.addEventListener("DOMContentLoaded", function() {
           top$display_term <- ifelse(nchar(top[[term_col]]) > 45,
                                      paste0(substr(top[[term_col]], 1, 42), "..."),
                                      top[[term_col]])
-          par(mar = c(5, 22, 4, 6))
+          tx_par_mar(c(5, 22, 4, 6))
           x <- -log10(top[[pval_col]])
           y <- seq_len(nrow(top))
           if ("Database" %in% colnames(top)) {
@@ -80808,7 +80821,7 @@ document.addEventListener("DOMContentLoaded", function() {
     top_terms <- top_terms[nrow(top_terms):1, ]
     
     # Plot
-    par(mar = c(5, 18, 4, 2))
+    tx_par_mar(c(5, 18, 4, 2))
     
     colors <- colorRampPalette(c("#3498db", "#9b59b6", "#e74c3c"))(nrow(top_terms))
     
@@ -101572,7 +101585,7 @@ document.addEventListener("DOMContentLoaded", function() {
       top_terms <- top_terms[nrow(top_terms):1, ]
       
       png(file, width = 1000, height = 600, res = 150)
-      par(mar = c(5, 18, 4, 2))
+      tx_par_mar(c(5, 18, 4, 2))
       colors <- colorRampPalette(c("#3498db", "#9b59b6", "#e74c3c"))(nrow(top_terms))
       barplot(
         -log10(top_terms[[pval_col]]),
