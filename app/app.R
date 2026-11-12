@@ -20586,7 +20586,9 @@ tx_record_error <- function(kind, message, stack = character(0), session = NULL,
     cat(jsonlite::toJSON(rec, auto_unbox = TRUE, null = "null", na = "null"), "\n", sep = "",
         file = file.path(tx_error_dir, "errors.jsonl"), append = TRUE)
   }, error = function(e) message("[error report] could not be saved: ", conditionMessage(e)))
-  if (isTRUE(mail)) tx_mail_error(rec)
+  # Test copies (dev at 127.0.0.1:3839) save reports but never e-mail them: a deliberate test crash
+  # reached the team's inbox on 12 Nov looking like a visitor's error
+  if (isTRUE(mail) && !grepl("^(127\\.0\\.0\\.1|localhost)(:|$)", rec$host %||% "")) tx_mail_error(rec)
   id
 }
 
