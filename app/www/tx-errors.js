@@ -3,6 +3,8 @@
  *
  * - The server sends "tx_crash" with a report ID when an error in the app's own code ends the
  *   session (the report is already saved and e-mailed); we show what happened and that ID.
+ * - The server sends "tx_output_error" when such an error only broke one plot or table: the session
+ *   lives on, so a small notice says so and the visitor keeps working (no refresh).
  * - The server sends "tx_idle" before closing a session that had no activity for an hour; the
  *   visitor is warned 5 minutes ahead and can stay, and a closed idle page is not reported.
  * - Any other lost connection (server restart, an app process stopped, network drop) shows a
@@ -114,8 +116,26 @@
     }
   }
 
+  function showOutputError(m) {
+    var old = document.getElementById('tx-output-error');
+    if (old) old.remove();
+    var n = document.createElement('div');
+    n.id = 'tx-output-error';
+    n.setAttribute('role', 'status');
+    n.innerHTML =
+      '<button type="button" class="tx-oe-close" aria-label="Close">&times;</button>' +
+      '<p><strong>Part of this page could not be shown</strong> because of an error in TransXplorer\'s own code, ' +
+      'not your data.</p>' +
+      '<p>A report has been sent to the TransXplorer team' + (m && m.id ? ' (<code>' + m.id + '</code>)' : '') + '. ' +
+      'The rest of the page still works, so there is no need to refresh.</p>';
+    document.body.appendChild(n);
+    n.querySelector('.tx-oe-close').addEventListener('click', function () { n.remove(); });
+    setTimeout(function () { if (n.parentNode) n.remove(); }, 30000);
+  }
+
   function register() {
     Shiny.addCustomMessageHandler('tx_crash', function (m) { crashId = m && m.id; show('crash'); });
+    Shiny.addCustomMessageHandler('tx_output_error', showOutputError);
     Shiny.addCustomMessageHandler('tx_idle', function (m) {
       if (m && m.minutes) idleMinutes = m.minutes;
       if (m && m.state === 'warn') showIdleWarning(idleMinutes);

@@ -20549,7 +20549,9 @@ tx_mail_error <- function(rec) {
     sprintf("Report %s (%s UTC), %s", rec$id, rec$time, rec$kind),
     "", "Error:", rec$message, "",
     sprintf("App process: %s   Host: %s", rec$worker %||% "", rec$host %||% ""),
-    sprintf("Tab: %s", rec$tab %||% ""),
+    sprintf("Tab: %s   Output: %s", rec$tab %||% "", rec$output %||% "-"),
+    if (identical(rec$kind, "output_error")) "Only this output failed; the visitor's session stayed open and they were told so." else
+      if (identical(rec$kind, "session_error")) "This error ended the visitor's session; they were asked to refresh." else NULL,
     sprintf("Browser: %s", rec$browser %||% ""),
     "", "Where in the code (most recent first):", rec$stack, "",
     sprintf("On the server: python3 /srv/transxplorer/ops/scripts/tx_errors.py show %s", rec$id),
@@ -20616,7 +20618,7 @@ ui <- fluidPage(
     tags$link(href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Poppins:wght@700;900&display=swap", rel = "stylesheet"),
     tags$script(src = "custom.js"),
     tags$script(src = "tx-upload.js?v=10"),
-    tags$script(src = "tx-errors.js?v=2"),
+    tags$script(src = "tx-errors.js?v=3"),
     tags$style(HTML("
       .tx-source { margin-bottom: 4px; }
       .tx-source .btn-group-container-sw, .tx-source .btn-group { width: 100%; }
@@ -20691,6 +20693,16 @@ tags$script(HTML("
         background: #fff; color: #1f2937; border-left: 4px solid #1565c0; border-radius: 10px; padding: 14px 18px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.25); font-size: 15px; line-height: 1.45; }
       #tx-idle-warning span { flex: 1 1 260px; }
+      #tx-output-error { position: fixed; right: 16px; bottom: 16px; z-index: 99998; width: calc(100% - 32px); max-width: 420px;
+        background: #fff; color: #1f2937; border-left: 4px solid #c62828; border-radius: 10px; padding: 12px 36px 12px 16px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25); font-size: 14px; line-height: 1.45; }
+      #tx-output-error p { margin: 0 0 6px; } #tx-output-error p:last-child { margin-bottom: 0; }
+      #tx-output-error code { font-size: 12.5px; background: none; color: inherit; padding: 0; }
+      #tx-output-error .tx-oe-close { position: absolute; top: 6px; right: 8px; border: 0; background: none; font-size: 20px;
+        line-height: 1; color: #6b7280; cursor: pointer; padding: 4px; }
+      /* R cannot draw into a tiny plot area ('figure margins too large' before any plot code runs), and a
+         squeezed layout can report one; a minimum size keeps every plot drawable (TX-20261116-8eb359) */
+      .shiny-plot-output { min-width: 240px; min-height: 160px; }
       #tx-idle-warning .tx-conn-btn { margin-top: 0; }
       .tx-conn-sent { background: #e8f5e9; border-left: 3px solid #2e7d32; padding: 8px 12px; border-radius: 6px; }
       .tx-conn-sent code { font-size: 13px; background: none; color: inherit; padding: 0; }
@@ -30926,13 +30938,29 @@ convertGeneIDs <- function(gene_data, input_id_type, organism_db) {
 server <- function(input, output, session) {
 
   # ===== Error reports (tx_record_error, www/tx-errors.js) =====
-  # An error that would end this session is saved and e-mailed, and the browser is told the report
-  # ID so it can explain what happened. A connection lost without such an error is reported by the
-  # browser the next time the page connects.
+  # Errors in the app's own code are saved and e-mailed, and the browser is told the report ID.
+  # Shiny calls this for two kinds of error: fatal ones end the session (class shiny.error.fatal; the
+  # page shows the crash card and asks for a refresh), and errors inside one output only replace that
+  # plot or table with error text while the session lives on (the page shows a small notice, so the
+  # visitor does not refresh and lose their work). An output that fails again on every redraw (e.g.
+  # window resizing) is recorded once per session. A connection lost without an error is reported by
+  # the browser the next time the page connects.
+  tx_output_errors_seen <- character(0)
   onUnhandledError(function(err) {
-    id <- tx_record_error("session_error", conditionMessage(err), tx_error_stack(err), session,
-                          list(session = session$token, tab = isolate(input$main_tabs) %||% NA_character_))
-    try(session$sendCustomMessage("tx_crash", list(id = id)), silent = TRUE)
+    fatal <- inherits(err, "shiny.error.fatal")
+    stack <- tx_error_stack(err)
+    out <- regmatches(stack, regexpr("output\\$[A-Za-z0-9_.]+", stack))
+    out <- if (length(out)) sub("^output\\$", "", out[1]) else NA_character_
+    if (!fatal) {
+      key <- paste(out, conditionMessage(err))
+      if (key %in% tx_output_errors_seen) return(invisible())
+      tx_output_errors_seen <<- c(tx_output_errors_seen, key)
+    }
+    id <- tx_record_error(if (fatal) "session_error" else "output_error", conditionMessage(err), stack, session,
+                          list(session = session$token, tab = isolate(input$main_tabs) %||% NA_character_,
+                               output = out))
+    try(session$sendCustomMessage(if (fatal) "tx_crash" else "tx_output_error", list(id = id, output = out)),
+        silent = TRUE)
   })
   observeEvent(input$tx_lost_report, {
     r <- input$tx_lost_report
