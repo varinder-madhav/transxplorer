@@ -30562,6 +30562,20 @@ tx_launch_job <- function(job) {
   p$get_pid()
 }
 
+# Shiny 1.9.1's event loop (serviceApp) waits for at most later::next_op_secs(), which is in seconds, but
+# treats the number as milliseconds. A pending later() callback (the FASTQ queue check below is always
+# about 10 s ahead) therefore makes every idle app process wake every ~10 ms instead of every second and
+# use 12-15% of a CPU core (measured 2026-11-23: 5024 loop runs and 2.9 CPU s in 20 idle seconds).
+# Replace that one function with a units-corrected copy, only when it is exactly the 1.9.1 code.
+local({
+  f <- shiny:::serviceApp
+  b <- paste(deparse(body(f)), collapse = "\n")
+  if (grepl("later::next_op_secs())", b, fixed = TRUE) && !grepl("next_op_secs() * 1000", b, fixed = TRUE)) {
+    body(f) <- str2lang(sub("later::next_op_secs())", "later::next_op_secs() * 1000)", b, fixed = TRUE))
+    utils::assignInNamespace("serviceApp", f, ns = "shiny")
+  }
+})
+
 # Every app process looks at the queue every 10 s: it frees the slots of finished or dead jobs
 # and starts waiting ones, so a queued job starts even if its page was closed.
 .tx_queue_state <- new.env(parent = emptyenv())
