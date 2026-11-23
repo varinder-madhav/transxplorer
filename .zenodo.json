@@ -1,0 +1,62 @@
+{
+  "title": "TransXplorer: a no-login web server from raw RNA-seq reads to networks, drugs, and clinical context",
+  "upload_type": "software",
+  "license": "MIT",
+  "version": "v1.0.0",
+  "description": "<p>RNA sequencing experiments often identify thousands of differentially expressed genes, which researchers then interpret through pathways, regulators, networks, drugs, and patient data. Each step usually requires a different tool, which excludes non-programmers and creates problems when results move from one tool to the next. TransXplorer is a free web server that covers this whole path and requires no login. It converts raw reads, or public sequencing runs retrieved by accession, into gene counts, automatically checks sample quality and detects batch effects, and tests differential expression with DESeq2, edgeR, or limma. Downstream modules, which also accept standalone gene lists, perform functional enrichment across ~1900 species, protein-protein interaction hub ranking, transcription factor activity inference, co-expression network analysis, cell-type deconvolution, and drug-target prioritization. Users can also examine genes in 33 cancer cohorts from The Cancer Genome Atlas for tumour expression and survival. On real data, differential expression with the default settings agreed with a DESeq2 reference (precision 0.98, recall 0.92). Among 1000 simulated datasets, batch detection flagged none of the 200 without a batch effect. Two case studies link raw endothelial cell reads to transcriptional regulators and kidney cancer data to MET inhibitors. TransXplorer is available at https://transxplorer.org.</p><p>This release is the version described in the manuscript submitted to Genomics, Proteomics &amp; Bioinformatics (Web Server) and running at https://transxplorer.org.</p>",
+  "creators": [
+    {
+      "name": "Verma, Varinder Madhav",
+      "affiliation": "Department of Biological Sciences, University of Alberta, Edmonton, Canada"
+    },
+    {
+      "name": "Oler, Eponine",
+      "affiliation": "Department of Biological Sciences, University of Alberta, Edmonton, Canada"
+    },
+    {
+      "name": "Syed, Hussain",
+      "affiliation": "Department of Medicine, University of Alberta, Edmonton, Canada"
+    },
+    {
+      "name": "Han, Scott",
+      "affiliation": "Department of Biological Sciences, University of Alberta, Edmonton, Canada"
+    },
+    {
+      "name": "Berjanskii, Mark",
+      "affiliation": "Department of Biological Sciences, University of Alberta, Edmonton, Canada"
+    },
+    {
+      "name": "Mason, Andrew L.",
+      "affiliation": "Department of Medicine, University of Alberta, Edmonton, Canada"
+    },
+    {
+      "name": "Wishart, David",
+      "affiliation": "Department of Biological Sciences, University of Alberta, Edmonton, Canada"
+    },
+    {
+      "name": "Wong, Gane Ka-Shu",
+      "affiliation": "Department of Biological Sciences, University of Alberta, Edmonton, Canada; Department of Medicine, University of Alberta, Edmonton, Canada"
+    }
+  ],
+  "keywords": [
+    "RNA sequencing",
+    "Differential expression",
+    "Batch effect",
+    "Gene regulatory network",
+    "Drug repurposing",
+    "Web server",
+    "Shiny"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.64898/2026.05.15.724657",
+      "relation": "isSupplementTo",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "https://transxplorer.org",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
