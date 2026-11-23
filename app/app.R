@@ -63888,6 +63888,13 @@ document.addEventListener("DOMContentLoaded", function() {
   }
   
   
+  # The normalisation menu below is drawn only once the parameter panel has been shown; until then the
+  # analysis uses the menu's default (TMM for limma/edgeR, median of ratios for DESeq2). Without this the
+  # value was NULL and the analysis-information table failed (TX-20261123-b178e5).
+  tcga_norm_method <- function() {
+    input$normalization_method %||% (if (identical(input$analysis_method, "DESeq2")) "DESeq2_default" else "TMM")
+  }
+
   # Dynamic normalization options based on analysis method
   output$tcga_norm_ui <- renderUI({
     method <- input$analysis_method
@@ -103126,8 +103133,8 @@ document.addEventListener("DOMContentLoaded", function() {
           keep <- edgeR::filterByExpr(dge, design)
           dge <- dge[keep, , keep.lib.sizes = FALSE]
           
-          setProgress(value = 0.5, message = paste("Applying", input$normalization_method, "normalization"))
-          dge <- edgeR::calcNormFactors(dge, method = input$normalization_method)
+          setProgress(value = 0.5, message = paste("Applying", tcga_norm_method(), "normalization"))
+          dge <- edgeR::calcNormFactors(dge, method = tcga_norm_method())
           
           setProgress(value = 0.6, message = "Running voom transformation")
           v <- limma::voom(dge, design, plot = FALSE)
@@ -103156,8 +103163,8 @@ document.addEventListener("DOMContentLoaded", function() {
           keep <- edgeR::filterByExpr(dge, design)
           dge <- dge[keep, , keep.lib.sizes = FALSE]
           
-          setProgress(value = 0.5, message = paste("Applying", input$normalization_method, "normalization"))
-          dge <- edgeR::calcNormFactors(dge, method = input$normalization_method)
+          setProgress(value = 0.5, message = paste("Applying", tcga_norm_method(), "normalization"))
+          dge <- edgeR::calcNormFactors(dge, method = tcga_norm_method())
           
           # Store normalized counts before analysis
           normalized_counts <- edgeR::cpm(dge, log = TRUE)
@@ -103259,7 +103266,7 @@ document.addEventListener("DOMContentLoaded", function() {
             samples_per_group = group_counts,
             total_samples = ncol(counts),
             duplicates_removed = n_duplicates,
-normalization = input$normalization_method,
+normalization = tcga_norm_method(),
             method = input$analysis_method,
             reference_group = levels(coldata$group)[1],
             test_group = test_level,
@@ -103381,8 +103388,9 @@ normalization = input$normalization_method,
     info <- tcga_rv$results$analysis_info
     data.frame(
       Parameter = c("Method", "Normalization", "FC Threshold", "P-val Threshold", "Comparison", "Reference"),
-      Value = c(info$method, info$normalization, info$fc_threshold, info$pval_threshold,
-                paste(info$test_group %||% "", "vs", info$reference_group), info$reference_group)
+      Value = vapply(list(info$method, info$normalization, info$fc_threshold, info$pval_threshold,
+                          paste(info$test_group %||% "", "vs", info$reference_group %||% ""), info$reference_group),
+                     function(x) if (length(x) == 0) "-" else as.character(x[1]), character(1))
     )
   }, striped = TRUE, hover = TRUE, width = "100%")
   
