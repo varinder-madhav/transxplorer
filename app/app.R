@@ -14983,6 +14983,32 @@ tx_string_taxid <- function(organism) {
 # Trim a PPI edge list to max_nodes. Input genes that have interactions are always kept;
 # the remaining slots go to the highest-degree added (non-input) nodes. An input gene
 # whose only partners were trimmed keeps its highest-scoring edge.
+# Uploaded gene lists that are not plain text (an Excel workbook, a compressed file) turn into binary
+# garbage when read as a table, and string functions on it then end the session ('input string 2 is
+# invalid', TX-20261123-cad38c). This returns the path of a UTF-8 text copy to read: UTF-16 text (Excel's
+# 'Unicode Text') and Latin-1 text are converted; anything binary stops with a message for the visitor.
+tx_text_upload <- function(path, name) {
+  raw <- readBin(path, "raw", n = 65536)
+  if (length(raw) == 0) stop(sprintf("'%s' is empty.", name), call. = FALSE)
+  starts <- function(b) length(raw) >= length(b) && all(raw[seq_along(b)] == as.raw(b))
+  if (starts(c(0xFF, 0xFE)) || starts(c(0xFE, 0xFF))) {
+    con <- file(path, encoding = if (starts(c(0xFF, 0xFE))) "UTF-16LE" else "UTF-16BE")
+    txt <- readLines(con, warn = FALSE); close(con)
+    txt[1] <- sub("^\ufeff", "", txt[1])
+    out <- tempfile(fileext = ".txt"); writeLines(txt, out); return(out)
+  }
+  kind <- if (starts(c(0x50, 0x4B, 0x03, 0x04))) "an Excel workbook or a zip archive" else
+          if (starts(c(0xD0, 0xCF, 0x11, 0xE0))) "an Excel (.xls) workbook" else
+          if (starts(c(0x1F, 0x8B))) "a compressed (.gz) file" else
+          if (any(raw == as.raw(0))) "not a text file" else NULL
+  if (!is.null(kind)) stop(sprintf(paste("'%s' is %s, so it cannot be read as a gene list. Save it as plain text first",
+                                       "(in Excel: File > Save As > 'CSV' or 'Text (Tab delimited)'), or uncompress it."),
+                                 name, kind), call. = FALSE)
+  txt <- readLines(path, warn = FALSE)
+  if (all(validUTF8(txt))) return(path)
+  out <- tempfile(fileext = ".txt"); writeLines(iconv(txt, "latin1", "UTF-8"), out); out
+}
+
 # Base-graphics margins (in lines), shrunk to fit the plot: wide fixed margins for long pathway
 # names end the session with 'figure margins too large' when the plot area is narrow, e.g. a small
 # window or a phone (TX-20261111-3d273d). Margins may use up to 60% of the width and height.
@@ -110950,7 +110976,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
       }
     } else if (input$ora_inputType == "upload" && !is.null(input$ora_gene_file)) {
       file_content <- tryCatch({
-        readLines(input$ora_gene_file$datapath, warn = FALSE)
+        readLines(tx_text_upload(input$ora_gene_file$datapath, input$ora_gene_file$name), warn = FALSE)
       }, error = function(e) character(0))
       genes <- parse_gene_list(paste(file_content, collapse = "\n"))
     } else if (input$ora_inputType == "deg_results" && !is.null(deg_data())) {
@@ -111187,7 +111213,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
     req(input$gsea_prerankedFile)
     
     tryCatch({
-      file_path <- input$gsea_prerankedFile$datapath
+      file_path <- tx_text_upload(input$gsea_prerankedFile$datapath, input$gsea_prerankedFile$name)
       file_name <- input$gsea_prerankedFile$name
       file_ext <- tools::file_ext(file_name)
       
@@ -111321,9 +111347,9 @@ tcga_data_filtered <- tcga_data[, valid_samples]
       # Upload gene file
       req(input$ora_gene_file)
       file_content <- tryCatch({
-        readLines(input$ora_gene_file$datapath, warn = FALSE)
+        readLines(tx_text_upload(input$ora_gene_file$datapath, input$ora_gene_file$name), warn = FALSE)
       }, error = function(e) {
-        print(paste("Error reading file:", e$message))
+        showNotification(conditionMessage(e), type = "error", duration = 20)
         character(0)
       })
       genes <- parse_gene_list(paste(file_content, collapse = "\n"))
@@ -111516,7 +111542,7 @@ tcga_data_filtered <- tcga_data[, valid_samples]
       
       tryCatch({
         # Read file
-        file_path <- input$gsea_prerankedFile$datapath
+        file_path <- tx_text_upload(input$gsea_prerankedFile$datapath, input$gsea_prerankedFile$name)
         file_ext <- tools::file_ext(input$gsea_prerankedFile$name)
         file_name <- input$gsea_prerankedFile$name
         
