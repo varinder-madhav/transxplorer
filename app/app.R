@@ -10064,9 +10064,15 @@ check_druggability_chembl <- function(gene_symbols, organism = "Homo sapiens") {
   }
   
   print(paste("🔍 Checking druggability for", length(gene_symbols), "genes via ChEMBL API..."))
+  # When ChEMBL is down every request fails slowly (HTTP 500 after ~5 s on 23 Nov 2026, so TF activity
+  # took 13 min instead of 101 s), and the genes would wrongly look "not in ChEMBL". After two failed
+  # answers in a row the remaining genes are left unknown (NA) and ChEMBL is not asked again.
+  failures <- 0L
+  unavailable <- FALSE
   
   # Process each gene
   for (i in seq_along(gene_symbols)) {
+    if (unavailable) { results$is_druggable[i] <- NA; next }
     gene <- gene_symbols[i]
     
     tryCatch({
@@ -10084,6 +10090,8 @@ check_druggability_chembl <- function(gene_symbols, organism = "Homo sapiens") {
         httr::add_headers("Accept" = "application/json")
       )
       
+      if (httr::status_code(response) != 200) stop("ChEMBL answered HTTP ", httr::status_code(response))
+      failures <- 0L
       if (httr::status_code(response) == 200) {
         content <- httr::content(response, as = "text", encoding = "UTF-8")
         data <- jsonlite::fromJSON(content, flatten = TRUE)
@@ -10169,13 +10177,20 @@ check_druggability_chembl <- function(gene_symbols, organism = "Homo sapiens") {
       Sys.sleep(0.3)
       
     }, error = function(e) {
-      # Silent fail for individual genes, continue with others
+      # This gene stays unknown; two failures in a row mean ChEMBL is not answering
       print(paste("   ⚠️ Could not check", gene, ":", e$message))
+      results$is_druggable[i] <<- NA
+      failures <<- failures + 1L
     })
+    if (failures >= 2L) {
+      unavailable <- TRUE
+      print("⚠️ ChEMBL is not answering; druggability of the remaining genes is left unknown")
+    }
   }
   
   # Summary
-  n_druggable <- sum(results$is_druggable)
+  n_druggable <- sum(results$is_druggable, na.rm = TRUE)
+  if (any(is.na(results$is_druggable))) print(paste("ℹ️ Druggability unknown for", sum(is.na(results$is_druggable)), "genes (ChEMBL not reachable)"))
   n_approved <- sum(results$has_approved_drug)
   print(paste("✅ ChEMBL check complete:", n_druggable, "druggable,", n_approved, "with approved drugs"))
   
@@ -39644,10 +39659,12 @@ server <- function(input, output, session) {
       
       # Check druggability from ChEMBL results
       is_druggable <- FALSE
+      drug_unknown <- FALSE
       drug_info <- ""
       if (!is.null(druggability) && tf$label %in% druggability$gene) {
         drug_row <- druggability[druggability$gene == tf$label, ]
-        is_druggable <- drug_row$is_druggable[1]
+        drug_unknown <- is.na(drug_row$is_druggable[1])   # ChEMBL was not reachable
+        is_druggable <- isTRUE(drug_row$is_druggable[1])
         if (is_druggable && !is.na(drug_row$n_bioactivities[1]) && drug_row$n_bioactivities[1] > 0) {
           drug_info <- paste0(" (", drug_row$n_bioactivities[1], " bioactivities)")
         }
@@ -39672,6 +39689,9 @@ server <- function(input, output, session) {
                     span(icon("pills"), " ChEMBL Target", drug_info,
                          style = "font-size: 0.75em; background: #e8f5e9; color: #2e7d32; 
                                  padding: 2px 8px; border-radius: 10px;")
+                  } else if (drug_unknown) {
+                    span(icon("circle-question", class = "fa-regular"), " ChEMBL not reachable",
+                         style = "font-size: 0.75em; background: #f5f5f5; color: #9e9e9e; padding: 2px 8px; border-radius: 10px;")
                   } else {
                     span(icon("circle", class = "fa-regular"), " Not in ChEMBL", 
                          style = "font-size: 0.75em; background: #f5f5f5; color: #9e9e9e; 
@@ -88760,10 +88780,12 @@ document.addEventListener("DOMContentLoaded", function() {
       
       # Check druggability from ChEMBL results
       is_druggable <- FALSE
+      drug_unknown <- FALSE
       drug_info <- ""
       if (!is.null(druggability) && tf$label %in% druggability$gene) {
         drug_row <- druggability[druggability$gene == tf$label, ]
-        is_druggable <- drug_row$is_druggable[1]
+        drug_unknown <- is.na(drug_row$is_druggable[1])   # ChEMBL was not reachable
+        is_druggable <- isTRUE(drug_row$is_druggable[1])
         if (is_druggable && !is.na(drug_row$n_bioactivities[1])) {
           drug_info <- paste0(" (", drug_row$n_bioactivities[1], " bioactivities)")
         }
@@ -88788,6 +88810,9 @@ document.addEventListener("DOMContentLoaded", function() {
                     span(icon("pills"), " ChEMBL Target", drug_info,
                          style = "font-size: 0.75em; background: #e8f5e9; color: #2e7d32; 
                                  padding: 2px 8px; border-radius: 10px;")
+                  } else if (drug_unknown) {
+                    span(icon("circle-question", class = "fa-regular"), " ChEMBL not reachable",
+                         style = "font-size: 0.75em; background: #f5f5f5; color: #9e9e9e; padding: 2px 8px; border-radius: 10px;")
                   } else {
                     span(icon("question-circle"), " Not in ChEMBL", 
                          style = "font-size: 0.75em; background: #f5f5f5; color: #9e9e9e; 
